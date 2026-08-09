@@ -174,6 +174,16 @@ const TopicStudio = ({ courseId, topic, subjectName, onClose, onApplied }) => {
     const modelChoices = useMemo(() => {
         const list = []
         for (const provider of options?.providers || []) {
+            // The included allowance is one opaque choice: we manage which
+            // model runs it and fail over between several behind the scenes.
+            if (provider.is_managed) {
+                list.push({
+                    value: `${provider.provider}:`,
+                    label: provider.provider_label || 'Included AI',
+                    isDefault: provider.is_active,
+                })
+                continue
+            }
             for (const name of provider.models || []) {
                 list.push({
                     value: `${provider.provider}:${name}`,

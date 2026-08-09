@@ -53,6 +53,11 @@ class Resolution:
     provider: ResolvedProvider
     settings_obj: AISettings
 
+    @property
+    def chain(self):
+        """Every provider to try, in order — the first plus its fallbacks."""
+        return self.provider.chain
+
 
 def month_start(now=None):
     now = now or timezone.now()
@@ -192,6 +197,20 @@ def platform_available(tenant, allocation=None):
     return model, ''
 
 
+def platform_chain(allocation):
+    """The granted models as one callable provider with the rest as fallbacks.
+
+    Every caller that spends the allowance goes through here, so failover
+    behaves identically for a student's chat and an admin's course generation.
+    """
+    chain = [ResolvedProvider.from_platform_model(m) for m in allocation.candidate_models()]
+    if not chain:
+        return None
+    primary = chain[0]
+    primary.fallbacks = chain[1:]
+    return primary
+
+
 def _legacy_platform_provider(tenant, allocation):
     """The pre-allocation fallback: one env key, one cheap model.
 
@@ -254,7 +273,7 @@ def resolve(tenant, student=None) -> Resolution:
     model, reason = platform_available(tenant, allocation)
     if model is not None:
         return Resolution(
-            provider=ResolvedProvider.from_platform_model(model),
+            provider=platform_chain(allocation),
             settings_obj=ai_settings,
         )
 
@@ -383,7 +402,10 @@ def usage_summary(tenant, days=30):
         'total_tokens': totals['total_tokens'] or 0,
         'prompt_tokens': totals['prompt_tokens'] or 0,
         'completion_tokens': totals['completion_tokens'] or 0,
-        'estimated_cost_usd': float(totals['cost'] or 0),
+        # The tenant's own spend only. What the platform pays on the included
+        # allowance is our business, and quoting it would also expose the
+        # relative price of models we deliberately don't name.
+        'estimated_cost_usd': cost_used(tenant, since, source=AIUsageRecord.SOURCE_TENANT),
         'month_tokens': tokens_used(tenant, month_start()),
         'platform_grant_tokens': granted,
         'platform_used_tokens': used,

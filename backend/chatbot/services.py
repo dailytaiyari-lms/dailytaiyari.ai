@@ -11,6 +11,7 @@ import time
 
 from . import resolver
 from .course_context import course_context_for
+from .models import AIUsageRecord
 from .providers import AIProviderError, Usage
 from .tenancy import tenant_of_student
 
@@ -189,6 +190,19 @@ def unavailable_message(exc):
     return UNAVAILABLE_TEMPLATE.format(reason=exc.message)
 
 
+def public_model_label(resolved):
+    """What a student may be told about which model answered them.
+
+    On the included allowance the real name is withheld: it is an operational
+    choice we change and fail over between, and the tenant-facing panels go to
+    some length not to name it — leaking it in a chat frame would undo that.
+    The true model is still recorded on ``AIUsageRecord`` for our own billing.
+    """
+    if resolved.source == AIUsageRecord.SOURCE_PLATFORM:
+        return 'included'
+    return (resolved.model or '')[:50]
+
+
 class ChatService:
     """Service for managing chat sessions and messages."""
 
@@ -253,7 +267,7 @@ class ChatService:
     @staticmethod
     def process_question(session, question, image=None):
         """Answer a question without streaming (used by the simple endpoint)."""
-        from .providers import complete
+        from .providers import complete_with_failover
 
         user_message = ChatService.add_message(session, 'user', question)
         if image:
@@ -276,7 +290,7 @@ class ChatService:
         messages = build_messages(session, history, resolution.settings_obj)
 
         try:
-            content, usage, elapsed = complete(resolution.provider, messages)
+            used, content, usage, elapsed = complete_with_failover(resolution.chain, messages)
         except AIProviderError as exc:
             resolver.record_usage(
                 tenant=tenant,
@@ -302,7 +316,7 @@ class ChatService:
             tenant=tenant,
             student=session.student,
             session=session,
-            resolved=resolution.provider,
+            resolved=used,
             usage=usage,
             response_time_ms=elapsed,
         )
@@ -311,7 +325,7 @@ class ChatService:
             session,
             'assistant',
             content,
-            model_used=resolution.provider.model[:50],
+            model_used=public_model_label(used),
             tokens_used=usage.total_tokens,
             response_time_ms=elapsed,
         )
@@ -324,7 +338,7 @@ class ChatService:
         Yields ``{'content': delta, 'done': False}`` chunks and a terminal
         ``{'done': True, ...}`` object carrying the saved message id.
         """
-        from .providers import stream
+        from .providers import stream_with_failover
 
         user_message = ChatService.add_message(session, 'user', question)
         if image:
@@ -359,9 +373,13 @@ class ChatService:
             started = time.time()
             full_content = ''
             usage = Usage()
+            # Which model ends up answering can change under us if the first
+            # one fails before emitting anything, so track it for the metering.
+            used = resolution.provider
 
             try:
-                for delta, chunk_usage in stream(resolution.provider, messages):
+                for rp, delta, chunk_usage in stream_with_failover(resolution.chain, messages):
+                    used = rp
                     if chunk_usage is not None:
                         usage = chunk_usage
                     if delta:
@@ -372,7 +390,7 @@ class ChatService:
                     tenant=tenant,
                     student=session.student,
                     session=session,
-                    resolved=resolution.provider,
+                    resolved=used,
                     usage=Usage(),
                     was_successful=False,
                     error_message=str(exc),
@@ -410,7 +428,7 @@ class ChatService:
                 tenant=tenant,
                 student=session.student,
                 session=session,
-                resolved=resolution.provider,
+                resolved=used,
                 usage=usage,
                 response_time_ms=elapsed,
             )
@@ -419,7 +437,7 @@ class ChatService:
                 session,
                 'assistant',
                 full_content,
-                model_used=resolution.provider.model[:50],
+                model_used=public_model_label(used),
                 tokens_used=usage.total_tokens,
                 response_time_ms=elapsed,
             )
@@ -429,7 +447,7 @@ class ChatService:
                     'done': True,
                     'success': True,
                     'full_content': full_content,
-                    'model': resolution.provider.model,
+                    'model': public_model_label(used),
                     'message_id': str(ai_message.id),
                 }
             ) + '\n'

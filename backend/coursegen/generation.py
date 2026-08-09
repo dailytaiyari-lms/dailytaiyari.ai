@@ -25,7 +25,12 @@ from django.conf import settings
 
 from chatbot import resolver
 from chatbot.models import AIProviderConfig, AIUsageRecord
-from chatbot.providers import AIProviderError, ResolvedProvider, Usage, complete
+from chatbot.providers import (
+    AIProviderError,
+    ResolvedProvider,
+    Usage,
+    complete_with_failover,
+)
 
 from . import prompts, schema
 from .material import existing_material_text
@@ -76,29 +81,22 @@ def available_models(tenant):
 
     allocation = resolver.get_allocation(tenant)
     granted_model, reason = resolver.platform_available(tenant, allocation)
-    if granted_model is not None:
-        # Only the models the super admin granted, so an admin cannot spend the
-        # platform's money on a model it never agreed to pay for.
-        selectable = allocation.selectable_models()
+    legacy = (
+        reason == 'no_models' and allocation.is_enabled
+        and getattr(settings, 'OPENAI_API_KEY', '')
+    )
+    if granted_model is not None or legacy:
+        # One opaque option with no model names. Which model runs the job is
+        # ours to choose (and to fail over between); the academy is told only
+        # that it's included and managed for them.
         entries.append({
             'provider': 'platform',
-            'provider_label': 'Included DailyTaiyari allowance',
-            'default_model': granted_model.model_name,
-            'models': [m.model_name for m in selectable],
-            'model_labels': {m.model_name: m.display_label for m in selectable},
+            'provider_label': 'Included AI · managed for you',
+            'default_model': '',
+            'models': [],
             'is_active': not any(e['is_active'] for e in entries),
             'allows_custom_model': False,
-            'last_test_ok': None,
-        })
-    elif reason == 'no_models' and allocation.is_enabled and getattr(settings, 'OPENAI_API_KEY', ''):
-        # Legacy grant: one env key, one cheap model.
-        entries.append({
-            'provider': 'platform',
-            'provider_label': 'Included DailyTaiyari allowance',
-            'default_model': resolver.PLATFORM_MODEL,
-            'models': [resolver.PLATFORM_MODEL],
-            'is_active': not any(e['is_active'] for e in entries),
-            'allows_custom_model': False,
+            'is_managed': True,
             'last_test_ok': None,
         })
     return entries
@@ -160,35 +158,31 @@ def resolve_for_admin(tenant, *, provider=None, model=None, max_tokens=DEFAULT_M
             'No model is set for this provider. Choose one under Admin → AI Features.'
         )
 
-    resolved.max_tokens = max_tokens
     # Structure work wants consistency far more than flair.
-    resolved.temperature = 0.4 if temperature is None else max(0.0, min(1.5, float(temperature)))
+    chosen_temperature = 0.4 if temperature is None else max(0.0, min(1.5, float(temperature)))
+    # Tune the whole chain, not just the head: a fallback that inherited a
+    # chat-sized budget would truncate its JSON and turn a survivable
+    # rate-limit into a failed generation.
+    for candidate in resolved.chain:
+        candidate.max_tokens = max_tokens
+        candidate.temperature = chosen_temperature
     return resolved
 
 
 def _platform_provider(tenant, model=None):
-    """Resolve a model from the tenant's platform grant.
+    """Resolve the included allowance into a callable provider.
 
-    ``model`` is only honoured when the super admin actually granted it — the
-    course builder lets an admin pick freely from *their own* providers, but the
-    included allowance is our bill, so the grant is the hard boundary.
+    Any ``model`` the caller asks for is ignored on this path: the included
+    allowance is our bill and our operational choice, so the grant decides. An
+    academy that wants a particular model connects its own key.
     """
     allocation = resolver.get_allocation(tenant)
     granted_model, reason = resolver.platform_available(tenant, allocation)
 
     if granted_model is not None:
-        wanted = (model or '').strip()
-        if wanted:
-            match = next(
-                (m for m in allocation.selectable_models() if m.model_name == wanted), None
-            )
-            if match is None:
-                raise GenerationError(
-                    f'"{wanted}" is not part of your included AI allowance. Pick one '
-                    'of the included models, or connect your own provider key.'
-                )
-            granted_model = match
-        return ResolvedProvider.from_platform_model(granted_model)
+        # Carries the rest of the grant as fallbacks, so a long generation job
+        # survives one model rate-limiting halfway through.
+        return resolver.platform_chain(allocation)
 
     if reason == 'exhausted':
         raise GenerationError(
@@ -378,7 +372,7 @@ def _call(resolved, system, user, meter, tenant):
     ]
     started = time.time()
     try:
-        content, usage, elapsed = complete(resolved, messages)
+        used, content, usage, elapsed = complete_with_failover(resolved.chain, messages)
     except AIProviderError as exc:
         resolver.record_usage(
             tenant=tenant, student=None, session=None, resolved=resolved,
@@ -396,7 +390,7 @@ def _call(resolved, system, user, meter, tenant):
 
     meter.add(usage, elapsed)
     resolver.record_usage(
-        tenant=tenant, student=None, session=None, resolved=resolved,
+        tenant=tenant, student=None, session=None, resolved=used,
         usage=usage, response_time_ms=elapsed, was_successful=True,
         feature=AIUsageRecord.FEATURE_COURSEGEN,
     )

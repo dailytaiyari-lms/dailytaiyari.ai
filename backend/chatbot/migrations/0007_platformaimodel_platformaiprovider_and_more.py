@@ -111,16 +111,6 @@ class Migration(migrations.Migration):
             name='tenant',
             field=models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='ai_allocation', to='core.tenant'),
         ),
-        migrations.AddField(
-            model_name='tenantaiallocation',
-            name='tenant_default_model',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='tenant_default_for', to='chatbot.platformaimodel'),
-        ),
-        migrations.AddField(
-            model_name='tenantaiallocation',
-            name='tenant_enabled_models',
-            field=models.ManyToManyField(blank=True, related_name='enabled_by_tenants', to='chatbot.platformaimodel'),
-        ),
         migrations.AddConstraint(
             model_name='platformaimodel',
             constraint=models.UniqueConstraint(fields=('provider', 'model_name'), name='uniq_platform_provider_model'),

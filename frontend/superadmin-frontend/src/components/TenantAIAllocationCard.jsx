@@ -142,9 +142,15 @@ export default function TenantAIAllocationCard({ tenantId }) {
             </div>
           ) : (
             <div className="mb-4 space-y-3">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                Models they may use
-              </p>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Models behind their AI
+                </p>
+                <p className="mt-0.5 text-xs text-slate-400">
+                  The tenant never sees these. Grant more than one and we fail over
+                  automatically when a model errors or rate-limits.
+                </p>
+              </div>
               {grouped.map(([providerName, models]) => (
                 <div key={providerName}>
                   <p className="mb-1 text-xs font-medium text-slate-600">{providerName}</p>
@@ -189,7 +195,7 @@ export default function TenantAIAllocationCard({ tenantId }) {
 
           {form.granted_models.length > 0 ? (
             <div className="mb-4">
-              <label className="text-sm font-medium text-slate-700">Default model</label>
+              <label className="text-sm font-medium text-slate-700">Preferred model</label>
               <select
                 value={form.default_model}
                 onChange={(e) => set('default_model', e.target.value)}
@@ -205,7 +211,7 @@ export default function TenantAIAllocationCard({ tenantId }) {
                   ))}
               </select>
               <p className="mt-1 text-xs text-slate-500">
-                The tenant admin can pick a different one from what you've granted.
+                Tried first; the others are used as fallbacks, in order.
               </p>
             </div>
           ) : null}

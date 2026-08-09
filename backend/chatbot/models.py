@@ -820,17 +820,14 @@ class PlatformAIModel(models.Model):
 class TenantAIAllocation(models.Model):
     """What one tenant may use from the platform's own LLMs, and how much.
 
-    Two audiences own different halves of this row, which is why they are named
-    apart:
+    Entirely super-admin owned. Which models sit behind a tenant's AI is our
+    operational concern, not theirs: an academy owner is told "AI is included"
+    and nothing more, so we stay free to add, retire or reprice models without
+    ever touching a tenant's settings. A tenant that wants a specific model
+    connects its own key, which always takes precedence.
 
-    * The **super admin** grants ``granted_models`` and sets the ceilings. This
-      is the platform's money, so nothing here is tenant-editable.
-    * The **tenant admin** narrows the grant with ``tenant_enabled_models`` and
-      picks ``tenant_default_model`` — useful when an academy wants its staff on
-      one cheap model. An empty ``tenant_enabled_models`` means "all granted".
-
-    A tenant with its own working key never touches this; the grant is the
-    safety net for the non-technical majority.
+    Several models can be granted at once; the extras act as a failover chain
+    rather than a menu.
     """
 
     tenant = models.OneToOneField(
@@ -840,7 +837,6 @@ class TenantAIAllocation(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    # ── Super-admin controlled ──────────────────────────────────────────────
     is_enabled = models.BooleanField(default=False)
     granted_models = models.ManyToManyField(
         PlatformAIModel, blank=True, related_name='granted_to_tenants'
@@ -852,15 +848,6 @@ class TenantAIAllocation(models.Model):
     # 0 means unlimited on that axis. Whichever is hit first stops the tenant.
     monthly_token_limit = models.PositiveIntegerField(default=0)
     monthly_cost_limit_usd = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-
-    # ── Tenant-admin controlled ─────────────────────────────────────────────
-    tenant_enabled_models = models.ManyToManyField(
-        PlatformAIModel, blank=True, related_name='enabled_by_tenants'
-    )
-    tenant_default_model = models.ForeignKey(
-        PlatformAIModel, on_delete=models.SET_NULL, null=True, blank=True,
-        related_name='tenant_default_for',
-    )
 
     # ── Exhaustion warnings ─────────────────────────────────────────────────
     # Warn once when usage crosses this percentage, then again at 100%.
@@ -877,31 +864,30 @@ class TenantAIAllocation(models.Model):
         return f'AI allocation — {self.tenant.name}'
 
     def usable_models(self):
-        """Granted models that are actually callable right now, super-admin view.
+        """Granted models that are actually callable right now.
 
         Filters out models whose provider the super admin has since disabled or
         whose credentials were removed, so a stale grant can never 500 a chat.
         """
         return [m for m in self.granted_models.select_related('provider') if m.is_usable]
 
-    def selectable_models(self):
-        """What this tenant's users may actually pick, after the tenant's own filter."""
-        usable = self.usable_models()
-        chosen = {m.id for m in self.tenant_enabled_models.all()}
-        if not chosen:
-            return usable
-        narrowed = [m for m in usable if m.id in chosen]
-        # A tenant that narrowed to models the super admin later revoked would
-        # otherwise lock itself out entirely.
-        return narrowed or usable
+    def candidate_models(self):
+        """The failover chain: preferred model first, then the rest in order.
+
+        Granting several models buys resilience, not choice — if the first one
+        errors or rate-limits mid-request we quietly try the next, and the
+        student never learns that anything went wrong.
+        """
+        models_ = self.usable_models()
+        if not models_:
+            return []
+        models_.sort(key=lambda m: (m.provider.sort_order, m.sort_order, m.model_name))
+        preferred = self.default_model_id
+        if preferred and any(m.id == preferred for m in models_):
+            models_.sort(key=lambda m: m.id != preferred)
+        return models_
 
     def effective_model(self):
-        """The model to use when nobody chose one explicitly."""
-        models_ = self.selectable_models()
-        if not models_:
-            return None
-        by_id = {m.id: m for m in models_}
-        for candidate in (self.tenant_default_model_id, self.default_model_id):
-            if candidate in by_id:
-                return by_id[candidate]
-        return models_[0]
+        """The model a request should start with."""
+        chain = self.candidate_models()
+        return chain[0] if chain else None

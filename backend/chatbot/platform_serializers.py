@@ -141,17 +141,3 @@ class TenantAIAllocationSerializer(serializers.ModelSerializer):
                 'notify_at_percent': 'Must be between 1 and 100.'
             })
         return attrs
-
-
-class TenantPlatformModelChoiceSerializer(serializers.ModelSerializer):
-    """A granted model as a tenant admin sees it — no pricing, no provider keys.
-
-    Tenants are told *what* they can use and how capable it is, never what it
-    costs us or whose account is behind it.
-    """
-
-    display_label = serializers.CharField(read_only=True)
-
-    class Meta:
-        model = PlatformAIModel
-        fields = ['id', 'model_name', 'display_label', 'description']

@@ -35,16 +35,11 @@ export const aiAdminService = {
         return response.data
     },
 
-    // Models the platform has granted this academy, and the academy's own
-    // choice of which to use. No API key involved — this is the path for a
-    // non-technical admin.
-    getIncludedModels: async () => {
-        const response = await api.get('/tenant-admin/ai/included-models/')
-        return response.data
-    },
-
-    saveIncludedModels: async (payload) => {
-        const response = await api.put('/tenant-admin/ai/included-models/', payload)
+    // Status of the AI the platform includes for this academy. Read-only by
+    // design: there is nothing here for a non-technical admin to configure or
+    // to break, and we never name the models behind it.
+    getIncluded: async () => {
+        const response = await api.get('/tenant-admin/ai/included/')
         return response.data
     },
 

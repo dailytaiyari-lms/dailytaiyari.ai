@@ -132,17 +132,28 @@ class ResolutionTests(_PlatformAICase):
         with self.assertRaises(resolver.AIUnavailable):
             resolver.resolve(self.tenant)
 
-    def test_tenant_default_wins_over_platform_default(self):
-        allocation = self.grant(self.cheap, self.smart, default_model=self.cheap)
-        allocation.tenant_default_model = self.smart
-        allocation.save()
-        self.assertEqual(resolver.resolve(self.tenant).provider.model, 'gpt-4o')
+    def test_the_platform_default_leads_the_chain(self):
+        self.grant(self.cheap, self.smart, default_model=self.smart)
+        resolution = resolver.resolve(self.tenant)
+        self.assertEqual(resolution.provider.model, 'gpt-4o')
+        self.assertEqual([p.model for p in resolution.chain], ['gpt-4o', 'gpt-4o-mini'])
 
-    def test_tenant_narrowing_cannot_lock_itself_out(self):
-        """A tenant that pinned a model we later revoked still gets AI."""
-        allocation = self.grant(self.cheap)
-        allocation.tenant_enabled_models.set([self.smart])  # never granted
-        self.assertEqual(resolver.resolve(self.tenant).provider.model, 'gpt-4o-mini')
+    def test_every_granted_model_is_queued_as_a_fallback(self):
+        """Extra grants are resilience, not a menu."""
+        self.grant(self.cheap, self.smart)
+        self.assertEqual(len(resolver.resolve(self.tenant).chain), 2)
+
+    def test_an_unusable_model_is_dropped_from_the_chain(self):
+        second = PlatformAIProvider.objects.create(
+            name='Backup', provider=AIProviderConfig.PROVIDER_OPENAI, is_enabled=False,
+        )
+        second.api_key = 'sk-backup'
+        second.save()
+        spare = PlatformAIModel.objects.create(
+            provider=second, model_name='gpt-4o', label='Spare',
+        )
+        self.grant(self.cheap, spare)
+        self.assertEqual([p.model for p in resolver.resolve(self.tenant).chain], ['gpt-4o-mini'])
 
 
 class LimitTests(_PlatformAICase):
@@ -335,88 +346,57 @@ class SuperAdminApiTests(_PlatformAICase):
         self.assertEqual(body['tenants'][0]['tenant_name'], 'Alpha Academy')
 
 
-class TenantIncludedModelsApiTests(_PlatformAICase):
-    """The non-technical admin's view: models, no keys, no prices."""
+class TenantIncludedApiTests(_PlatformAICase):
+    """What an academy is told about the AI we include: that it exists.
 
-    def test_pricing_is_never_exposed_to_a_tenant(self):
+    Naming the models would turn an operational choice into a promise — we
+    could not retire, reprice or fail over between them without an academy
+    noticing. So the panel is a status readout, not a settings screen.
+    """
+
+    def test_no_model_is_ever_named(self):
         self.grant(self.cheap, self.smart)
-        response = self.auth(self.admin, self.tenant).get(f'{TENANT_AI}/included-models/')
-        self.assertEqual(response.status_code, 200)
-        body = response.json()
-        self.assertEqual(len(body['models']), 2)
-        for entry in body['models']:
-            self.assertNotIn('input_cost_per_million', entry)
-            self.assertNotIn('provider', entry)
+        body = self.auth(self.admin, self.tenant).get(f'{TENANT_AI}/included/').json()
+        serialised = str(body)
+        self.assertNotIn('gpt-4o', serialised)
+        self.assertNotIn('openai', serialised.lower())
+        self.assertEqual(body['model_count'], 2)
 
-    def test_tenant_can_narrow_and_set_a_default(self):
-        self.grant(self.cheap, self.smart)
-        client = self.auth(self.admin, self.tenant)
-        response = client.put(
-            f'{TENANT_AI}/included-models/',
-            {
-                'enabled_model_ids': [str(self.smart.id)],
-                'default_model_id': str(self.smart.id),
-            },
-            format='json',
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()['default_model_id'], str(self.smart.id))
-        self.assertEqual(resolver.resolve(self.tenant).provider.model, 'gpt-4o')
+    def test_costs_are_never_shown(self):
+        self.grant(self.cheap)
+        body = self.auth(self.admin, self.tenant).get(f'{TENANT_AI}/included/').json()
+        self.assertFalse([k for k in body if 'cost' in k or 'usd' in k])
 
-    def test_tenant_cannot_enable_a_model_it_was_not_given(self):
+    def test_there_is_nothing_for_a_tenant_to_change(self):
         self.grant(self.cheap)
         response = self.auth(self.admin, self.tenant).put(
-            f'{TENANT_AI}/included-models/',
-            {'enabled_model_ids': [str(self.smart.id)]}, format='json',
+            f'{TENANT_AI}/included/', {'model_count': 99}, format='json',
         )
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 405)
 
-    def test_a_revoked_model_does_not_wedge_the_panel(self):
-        """The GET must never hand back ids the PUT would reject."""
-        self.grant(self.cheap, self.smart)
-        client = self.auth(self.admin, self.tenant)
-        client.put(
-            f'{TENANT_AI}/included-models/',
-            {'enabled_model_ids': [str(self.cheap.id), str(self.smart.id)]},
-            format='json',
+    def test_the_usage_table_never_names_an_included_model(self):
+        """The usage panel is the other place a model name could slip out."""
+        self.grant(self.cheap)
+        self.meter(500, cost='0.42')
+        body = self.auth(self.admin, self.tenant).get(f'{TENANT_AI}/usage/').json()
+
+        rows = body['by_model']
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['model'], 'Included AI')
+        self.assertIsNone(rows[0]['estimated_cost_usd'])
+        self.assertNotIn('gpt-4o-mini', str(rows))
+        # Nor may the headline figure quote what we paid.
+        self.assertEqual(body['estimated_cost_usd'], 0)
+
+    def test_a_tenants_own_spend_is_still_broken_out(self):
+        AIUsageRecord.objects.create(
+            tenant=self.tenant, source=AIUsageRecord.SOURCE_TENANT,
+            provider='openai', model='gpt-4o', prompt_tokens=10,
+            completion_tokens=0, total_tokens=10, estimated_cost_usd=Decimal('1.50'),
         )
-        allocation = resolver.get_allocation(self.tenant)
-        allocation.granted_models.remove(self.smart)
-
-        body = client.get(f'{TENANT_AI}/included-models/').json()
-        self.assertEqual(body['enabled_model_ids'], [str(self.cheap.id)])
-        echo = client.put(
-            f'{TENANT_AI}/included-models/',
-            {
-                'enabled_model_ids': body['enabled_model_ids'],
-                'default_model_id': body['default_model_id'],
-            },
-            format='json',
-        )
-        self.assertEqual(echo.status_code, 200)
-
-    def test_saving_does_not_pin_the_platform_default(self):
-        """A tenant that never chose a default must keep following ours."""
-        self.grant(self.cheap, self.smart, default_model=self.cheap)
-        client = self.auth(self.admin, self.tenant)
-        body = client.get(f'{TENANT_AI}/included-models/').json()
-        self.assertIsNone(body['default_model_id'])
-        self.assertEqual(body['effective_model_id'], str(self.cheap.id))
-
-        client.put(
-            f'{TENANT_AI}/included-models/',
-            {
-                'enabled_model_ids': [str(self.cheap.id), str(self.smart.id)],
-                'default_model_id': body['default_model_id'],
-            },
-            format='json',
-        )
-        allocation = resolver.get_allocation(self.tenant)
-        self.assertIsNone(allocation.tenant_default_model)
-
-        allocation.default_model = self.smart
-        allocation.save(update_fields=['default_model'])
-        self.assertEqual(resolver.resolve(self.tenant).provider.model, 'gpt-4o')
+        body = self.auth(self.admin, self.tenant).get(f'{TENANT_AI}/usage/').json()
+        self.assertEqual(body['by_model'][0]['model'], 'gpt-4o')
+        self.assertEqual(body['estimated_cost_usd'], 1.5)
 
     def test_platform_costs_are_hidden_from_the_usage_panel(self):
         self.grant(self.cheap)
@@ -429,33 +409,42 @@ class TenantIncludedModelsApiTests(_PlatformAICase):
         self.assertNotIn('cost_used_usd', summary['allocation'])
         self.assertIn('tokens_used', summary['allocation'])
 
-    def test_ungranted_tenant_sees_nothing_on_offer(self):
-        response = self.auth(self.admin, self.tenant).get(f'{TENANT_AI}/included-models/')
-        self.assertEqual(response.status_code, 200)
-        body = response.json()
+    def test_an_ungranted_tenant_is_told_nothing_is_included(self):
+        body = self.auth(self.admin, self.tenant).get(f'{TENANT_AI}/included/').json()
         self.assertFalse(body['is_available'])
-        self.assertEqual(body['models'], [])
+        self.assertEqual(body['model_count'], 0)
 
 
 class CourseBuilderGrantTests(_PlatformAICase):
     """The course builder spends the grant too, so it needs the same boundary."""
 
-    def test_included_models_are_offered(self):
+    def test_the_included_option_names_no_models(self):
         from coursegen import generation
 
         self.grant(self.cheap, self.smart)
         entry = next(
             e for e in generation.available_models(self.tenant) if e['provider'] == 'platform'
         )
-        self.assertEqual(sorted(entry['models']), ['gpt-4o', 'gpt-4o-mini'])
+        self.assertEqual(entry['models'], [])
+        self.assertTrue(entry['is_managed'])
+        self.assertFalse(entry['allows_custom_model'])
 
-    def test_an_ungranted_model_is_refused(self):
+    def test_a_requested_model_is_ignored_on_the_included_path(self):
         """Otherwise an admin could type any model and bill it to us."""
         from coursegen import generation
 
-        self.grant(self.cheap)
-        with self.assertRaises(generation.GenerationError):
-            generation.resolve_for_admin(self.tenant, provider='platform', model='gpt-4o')
+        self.grant(self.cheap, default_model=self.cheap)
+        resolved = generation.resolve_for_admin(
+            self.tenant, provider='platform', model='gpt-4-turbo',
+        )
+        self.assertEqual(resolved.model, 'gpt-4o-mini')
+
+    def test_generation_falls_back_across_granted_models(self):
+        from coursegen import generation
+
+        self.grant(self.cheap, self.smart, default_model=self.cheap)
+        resolved = generation.resolve_for_admin(self.tenant, provider='platform')
+        self.assertEqual([p.model for p in resolved.chain], ['gpt-4o-mini', 'gpt-4o'])
 
     def test_a_granted_model_is_accepted(self):
         from coursegen import generation
@@ -486,6 +475,116 @@ class LegacyGrantTests(_PlatformAICase):
         with self.settings(OPENAI_API_KEY='sk-legacy-env-key'):
             with self.assertRaises(resolver.AIUnavailable):
                 resolver.resolve(self.tenant)
+
+
+class FailoverTests(TestCase):
+    """Granting several models is a promise of uptime, not a menu.
+
+    A student asked a question; which of our models answers it is our problem.
+    """
+
+    def setUp(self):
+        self.first = providers.ResolvedProvider(
+            provider='openai', api_key='k', model='model-a',
+        )
+        self.second = providers.ResolvedProvider(
+            provider='openai', api_key='k', model='model-b',
+        )
+        self.first.fallbacks = [self.second]
+
+    def test_a_failing_model_is_replaced_silently(self):
+        def fake(rp, messages):
+            if rp.model == 'model-a':
+                raise providers.AIProviderError('rate limited')
+            return 'answer', Usage(1, 1, 2), 10
+
+        with patch.object(providers, 'complete', side_effect=fake):
+            used, content, _usage, _ms = providers.complete_with_failover(
+                self.first.chain, []
+            )
+
+        self.assertEqual(content, 'answer')
+        self.assertEqual(used.model, 'model-b')
+
+    def test_usage_is_billed_to_the_model_that_actually_answered(self):
+        def fake(rp, messages):
+            if rp.model == 'model-a':
+                raise providers.AIProviderError('down')
+            return 'answer', Usage(1, 1, 2), 10
+
+        with patch.object(providers, 'complete', side_effect=fake):
+            used, *_ = providers.complete_with_failover(self.first.chain, [])
+
+        self.assertEqual(used.model, 'model-b')
+
+    def test_the_last_error_surfaces_when_everything_is_down(self):
+        with patch.object(
+            providers, 'complete', side_effect=providers.AIProviderError('all down')
+        ):
+            with self.assertRaises(providers.AIProviderError):
+                providers.complete_with_failover(self.first.chain, [])
+
+    def test_a_stream_fails_over_before_the_first_token(self):
+        def fake(rp, messages):
+            if rp.model == 'model-a':
+                raise providers.AIProviderError('cold start')
+            yield 'hello', None
+            yield '', Usage(1, 1, 2)
+
+        with patch.object(providers, 'stream', side_effect=fake):
+            chunks = list(providers.stream_with_failover(self.first.chain, []))
+
+        self.assertEqual(''.join(c[1] for c in chunks), 'hello')
+        self.assertTrue(all(c[0].model == 'model-b' for c in chunks))
+
+    def test_a_stream_that_already_started_is_not_restarted(self):
+        """Re-running it would repeat text the user is already reading."""
+        def fake(rp, messages):
+            yield 'partial', None
+            raise providers.AIProviderError('died mid-stream')
+
+        with patch.object(providers, 'stream', side_effect=fake):
+            with self.assertRaises(providers.AIProviderError):
+                list(providers.stream_with_failover(self.first.chain, []))
+
+
+class StudentFacingOpacityTests(_PlatformAICase):
+    """A student's browser is the easiest place to enumerate the grant."""
+
+    def test_the_included_model_is_not_named_to_a_student(self):
+        from .services import public_model_label
+
+        self.grant(self.cheap)
+        resolved = resolver.resolve(self.tenant).provider
+        self.assertEqual(public_model_label(resolved), 'included')
+
+    def test_a_tenants_own_model_is_still_named(self):
+        from .services import public_model_label
+
+        config = AIProviderConfig.objects.create(
+            tenant=self.tenant, provider=AIProviderConfig.PROVIDER_OPENAI,
+            model='gpt-4o', is_active=True,
+        )
+        config.api_key = 'sk-tenant'
+        config.save()
+        resolved = resolver.resolve(self.tenant).provider
+        self.assertEqual(public_model_label(resolved), 'gpt-4o')
+
+
+class CourseGenerationTuningTests(_PlatformAICase):
+    """A fallback must be able to finish the job the primary started."""
+
+    def test_every_model_in_the_chain_gets_the_jobs_budget(self):
+        from coursegen import generation
+
+        self.grant(self.cheap, self.smart, default_model=self.cheap)
+        resolved = generation.resolve_for_admin(
+            self.tenant, provider='platform', max_tokens=8000,
+        )
+        self.assertTrue(len(resolved.chain) > 1)
+        for candidate in resolved.chain:
+            self.assertEqual(candidate.max_tokens, 8000)
+            self.assertEqual(candidate.temperature, 0.4)
 
 
 class ReasoningModelParameterTests(TestCase):

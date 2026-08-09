@@ -128,9 +128,12 @@ class _StudioTestCase(TestCase):
         """Patch the provider call so no network request is ever made."""
         from chatbot.providers import Usage
 
+        from chatbot.providers import ResolvedProvider
+
+        used = ResolvedProvider(provider='openai', api_key='k', model='gpt-4o-mini')
         return patch(
-            'coursegen.generation.complete',
-            return_value=(response_text, Usage(100, 200, 300), 1200),
+            'coursegen.generation.complete_with_failover',
+            return_value=(used, response_text, Usage(100, 200, 300), 1200),
         )
 
     @staticmethod

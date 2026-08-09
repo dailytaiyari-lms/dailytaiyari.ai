@@ -65,6 +65,14 @@ class ResolvedProvider:
     # The PlatformAIModel row behind this call, when the platform is paying.
     # Carried so metering can attribute cost at the exact price we're charged.
     platform_model: object = None
+    # Further providers to try if this one errors. Granting a tenant several
+    # platform models buys resilience, not choice.
+    fallbacks: list = field(default_factory=list)
+
+    @property
+    def chain(self):
+        """This provider followed by its fallbacks, in the order to try them."""
+        return [self, *self.fallbacks]
 
     @classmethod
     def from_platform_model(cls, platform_model, *, max_tokens=None, temperature=0.7):
@@ -469,6 +477,56 @@ def stream(rp: ResolvedProvider, messages):
     except Exception as exc:  # noqa: BLE001
         logger.warning('AI provider %s stream failed: %s', rp.provider, exc)
         raise AIProviderError(str(exc)[:300]) from exc
+
+
+def complete_with_failover(chain, messages):
+    """Try each provider in turn. Returns ``(rp_used, content, usage, elapsed_ms)``.
+
+    A student asked a question; which of our models answers it is our problem,
+    not theirs. Only the last failure is surfaced, so an outage on one model
+    reads as a normal answer rather than an error.
+    """
+    if not chain:
+        raise AIProviderError('No AI provider is configured.')
+    last = None
+    for index, rp in enumerate(chain):
+        try:
+            content, usage, elapsed = complete(rp, messages)
+            if index:
+                logger.info('AI failover: answered with %s after %d failure(s)', rp.model, index)
+            return rp, content, usage, elapsed
+        except AIProviderError as exc:
+            last = exc
+            logger.warning('AI provider %s (%s) failed, trying next: %s', rp.provider, rp.model, exc)
+    raise last
+
+
+def stream_with_failover(chain, messages):
+    """Stream from the first provider that works, yielding ``(rp, delta, usage)``.
+
+    Failover is only possible before the first token reaches the client — once
+    the user is reading an answer we cannot restart it under them, so a
+    mid-stream failure is raised for the caller to handle.
+    """
+    if not chain:
+        raise AIProviderError('No AI provider is configured.')
+    last = None
+    for index, rp in enumerate(chain):
+        started = False
+        try:
+            for delta, usage in stream(rp, messages):
+                if delta:
+                    started = True
+                yield rp, delta, usage
+            if index:
+                logger.info('AI failover: streamed from %s after %d failure(s)', rp.model, index)
+            return
+        except AIProviderError as exc:
+            last = exc
+            if started:
+                raise
+            logger.warning('AI provider %s (%s) failed, trying next: %s', rp.provider, rp.model, exc)
+    raise last
 
 
 def test_connection(rp: ResolvedProvider):

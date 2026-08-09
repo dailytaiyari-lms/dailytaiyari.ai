@@ -26,7 +26,7 @@ import {
 } from 'lucide-react'
 
 import { aiAdminService } from '../../services/aiAdminService'
-import IncludedModels from './IncludedModels'
+import IncludedAI from './IncludedAI'
 
 /* ---------------------------------------------------------------------------
  * Helpers
@@ -211,8 +211,8 @@ const ProviderSettings = ({ data }) => {
                 </div>
             </div>
 
-            {/* Models the platform has granted us — the no-API-key path. */}
-            <IncludedModels hasOwnKey={Boolean(data?.active_provider)} />
+            {/* The no-API-key path: AI we supply, nothing to configure. */}
+            <IncludedAI hasOwnKey={Boolean(data?.active_provider)} />
 
             {/* Provider selection */}
             <div className="card p-6 space-y-4">
@@ -704,7 +704,13 @@ const UsageReport = () => {
                                         <td className="py-2.5 font-mono text-xs">{row.model}</td>
                                         <td className="py-2.5 text-right">{formatNumber(row.messages)}</td>
                                         <td className="py-2.5 text-right">{formatNumber(row.tokens)}</td>
-                                        <td className="py-2.5 text-right">{formatCost(row.estimated_cost_usd)}</td>
+                                        <td className="py-2.5 text-right">
+                                            {/* Included usage costs the academy nothing, so a
+                                                figure here would only confuse. */}
+                                            {row.estimated_cost_usd == null
+                                                ? <span className="text-surface-400">Included</span>
+                                                : formatCost(row.estimated_cost_usd)}
+                                        </td>
                                     </tr>
                                 ))}
                             </tbody>

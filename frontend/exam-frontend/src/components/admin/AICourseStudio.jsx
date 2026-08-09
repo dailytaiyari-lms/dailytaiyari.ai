@@ -415,7 +415,10 @@ const AICourseStudio = ({ initialCourseId = null, onClose = null }) => {
                     )}
 
                     <Field label="Model">
-                        <div className="grid grid-cols-2 gap-2">
+                        {/* The included allowance is managed by us: we choose the
+                            model and fail over between several, so there is no
+                            model field to show for it. */}
+                        <div className={providerEntry?.is_managed ? '' : 'grid grid-cols-2 gap-2'}>
                             <select
                                 className={inputClass}
                                 value={provider}
@@ -431,7 +434,7 @@ const AICourseStudio = ({ initialCourseId = null, onClose = null }) => {
                                     </option>
                                 ))}
                             </select>
-                            {providerEntry?.allows_custom_model ? (
+                            {providerEntry?.is_managed ? null : providerEntry?.allows_custom_model ? (
                                 <input
                                     className={inputClass}
                                     value={model}
@@ -446,6 +449,12 @@ const AICourseStudio = ({ initialCourseId = null, onClose = null }) => {
                                 {(providerEntry?.models || []).map((name) => <option key={name} value={name} />)}
                             </datalist>
                         </div>
+                        {providerEntry?.is_managed ? (
+                            <p className="mt-1.5 text-xs text-surface-500">
+                                We pick the best available model for you and switch automatically
+                                if one is busy.
+                            </p>
+                        ) : null}
                     </Field>
 
                     <button
