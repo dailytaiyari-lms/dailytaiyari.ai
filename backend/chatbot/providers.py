@@ -57,6 +57,25 @@ class ResolvedProvider:
     # 'tenant' or 'platform' — only used for metering/reporting.
     source: str = 'tenant'
     extra_headers: dict = field(default_factory=dict)
+    # The PlatformAIModel row behind this call, when the platform is paying.
+    # Carried so metering can attribute cost at the exact price we're charged.
+    platform_model: object = None
+
+    @classmethod
+    def from_platform_model(cls, platform_model, *, max_tokens=None, temperature=0.7):
+        """Build a callable provider from a super-admin-registered model."""
+        account = platform_model.provider
+        return cls(
+            provider=account.provider,
+            api_key=account.api_key,
+            base_url=account.effective_base_url,
+            model=platform_model.model_name,
+            api_version=account.api_version or '2024-10-21',
+            temperature=temperature,
+            max_tokens=max_tokens or platform_model.max_output_tokens or 2000,
+            source='platform',
+            platform_model=platform_model,
+        )
 
     @classmethod
     def from_config(cls, config: AIProviderConfig, source: str = 'tenant') -> 'ResolvedProvider':
@@ -117,9 +136,24 @@ _PRICE_PER_MILLION = {
 }
 
 
-def estimate_cost_usd(model: str, usage: Usage) -> float:
-    """Best-effort USD estimate for one call; 0 when the model isn't priced."""
-    if not model or not usage.total_tokens:
+def estimate_cost_usd(model: str, usage: Usage, platform_model=None) -> float:
+    """Best-effort USD estimate for one call; 0 when the model isn't priced.
+
+    ``platform_model`` is a :class:`~chatbot.models.PlatformAIModel` whose prices
+    the super admin maintains. When present it wins over the built-in table,
+    because it is the number the platform is actually invoiced.
+    """
+    if not usage.total_tokens:
+        return 0.0
+    if platform_model is not None:
+        inp = float(platform_model.input_cost_per_million or 0)
+        out = float(platform_model.output_cost_per_million or 0)
+        if inp or out:
+            return round(
+                (usage.prompt_tokens * inp + usage.completion_tokens * out) / 1_000_000, 6
+            )
+        return 0.0
+    if not model:
         return 0.0
     key = model.lower()
     if key.endswith(':free'):

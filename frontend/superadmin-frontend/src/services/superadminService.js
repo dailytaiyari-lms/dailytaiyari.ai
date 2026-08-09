@@ -48,3 +48,40 @@ export const updateAnnouncement = (id, payload) =>
 
 export const deleteAnnouncement = (id) =>
   api.delete(`/superadmin/announcements/${id}/`).then((r) => r.data)
+
+// ── Platform-supplied LLMs ─────────────────────────────────────────────────
+// These are the platform's own AI accounts: credentials we pay for and lend to
+// tenants. API keys are write-only server-side, so responses only ever carry a
+// masked hint.
+export const fetchPlatformAI = () =>
+  api.get('/superadmin/ai/providers/').then((r) => r.data)
+
+export const createPlatformProvider = (payload) =>
+  api.post('/superadmin/ai/providers/', payload).then((r) => r.data)
+
+export const updatePlatformProvider = (id, payload) =>
+  api.patch(`/superadmin/ai/providers/${id}/`, payload).then((r) => r.data)
+
+export const deletePlatformProvider = (id) =>
+  api.delete(`/superadmin/ai/providers/${id}/`).then((r) => r.data)
+
+export const testPlatformProvider = (id, model) =>
+  api.post(`/superadmin/ai/providers/${id}/test/`, { model }).then((r) => r.data)
+
+export const createPlatformModel = (providerId, payload) =>
+  api.post(`/superadmin/ai/providers/${providerId}/models/`, payload).then((r) => r.data)
+
+export const updatePlatformModel = (id, payload) =>
+  api.patch(`/superadmin/ai/models/${id}/`, payload).then((r) => r.data)
+
+export const deletePlatformModel = (id) =>
+  api.delete(`/superadmin/ai/models/${id}/`).then((r) => r.data)
+
+export const fetchPlatformAIUsage = (days = 30) =>
+  api.get('/superadmin/ai/usage/', { params: { days } }).then((r) => r.data)
+
+export const fetchTenantAllocation = (tenantId) =>
+  api.get(`/superadmin/tenants/${tenantId}/ai-allocation/`).then((r) => r.data)
+
+export const saveTenantAllocation = (tenantId, payload) =>
+  api.put(`/superadmin/tenants/${tenantId}/ai-allocation/`, payload).then((r) => r.data)

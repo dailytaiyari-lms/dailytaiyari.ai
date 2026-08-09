@@ -10,6 +10,7 @@ import AuditLog from './pages/AuditLog'
 import UsersPage from './pages/Users'
 import Support from './pages/Support'
 import Announcements from './pages/Announcements'
+import AIPlatform from './pages/AIPlatform'
 
 export default function App() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
@@ -34,6 +35,7 @@ export default function App() {
         <Route path="/users" element={<UsersPage />} />
         <Route path="/support" element={<Support />} />
         <Route path="/announcements" element={<Announcements />} />
+        <Route path="/ai" element={<AIPlatform />} />
         <Route path="/audit" element={<AuditLog />} />
       </Route>
 

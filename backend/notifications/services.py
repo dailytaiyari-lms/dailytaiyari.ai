@@ -293,3 +293,63 @@ def dispatch_announcement(announcement):
         except Exception:  # noqa: BLE001
             logger.exception('Async announcement dispatch failed; delivering inline')
     deliver_announcement(announcement)
+
+
+# ---------------------------------------------------------------------------
+# Platform AI allowance
+# ---------------------------------------------------------------------------
+def on_ai_allowance_warning(tenant, status, *, exhausted=False):
+    """Warn a tenant's admins that their included AI allowance is running low.
+
+    Deliberately actionable rather than alarming: an academy that runs out can
+    either ask us for more or connect its own provider key, so the message says
+    both. Called from :func:`chatbot.resolver.maybe_warn_allowance`, which
+    guarantees at most one warning and one exhaustion notice per month.
+    """
+    try:
+        admins = list(_tenant_admins(tenant))
+        if not admins:
+            return
+
+        percent = int(status.get('percent_used') or 0)
+        settings_path = '/admin-dashboard?tab=ai'
+
+        if exhausted:
+            title = 'AI allowance used up'
+            body = (
+                'Your included AI allowance for this month has run out, so AI '
+                'features are paused until it resets. Connect your own AI provider '
+                'key to resume immediately.'
+            )
+        else:
+            title = f'AI allowance {percent}% used'
+            body = (
+                f'Your institute has used {percent}% of its included AI allowance '
+                'for this month. AI features will pause once it runs out.'
+            )
+
+        for admin in admins:
+            notify(
+                admin, tenant=tenant, type=Notification.TYPE_AI_ALLOWANCE,
+                title=title, body=body, link=settings_path,
+                data={
+                    'percent_used': percent,
+                    'exhausted': bool(exhausted),
+                    'tokens_used': status.get('tokens_used'),
+                    'token_limit': status.get('token_limit'),
+                },
+            )
+
+        _dispatch_email(
+            tenant,
+            _admin_email_recipients(tenant, admins),
+            subject=f'{title} — {getattr(tenant, "name", "your academy")}',
+            heading=title,
+            body_html=f'<p>{body}</p>',
+            cta_text='Open AI settings',
+            cta_url=emails.tenant_link(tenant, settings_path),
+            preheader=body[:120],
+        )
+    except Exception:  # noqa: BLE001 - a warning must never break the AI call
+        logger.exception('on_ai_allowance_warning failed for tenant %s',
+                         getattr(tenant, 'id', None))

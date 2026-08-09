@@ -116,21 +116,15 @@ class AIProviderView(_TenantScopedView):
         configs = self._configs().order_by('provider')
         data = AIProviderConfigSerializer(configs, many=True).data
         active = next((c['provider'] for c in data if c.get('is_active')), None)
-        granted, used, remaining = resolver.platform_allowance(tenant)
+        included = _included_payload(tenant)
         return {
             'providers': data,
             'active_provider': active,
             'catalog': _catalog(),
             'settings': AISettingsSerializer(resolver.get_ai_settings(tenant)).data,
-            'platform_fallback': {
-                # A grant is a deliberate gift of the platform's own key. Zero
-                # (the default) means this tenant costs the platform nothing.
-                'granted_tokens': granted,
-                'used_tokens': used,
-                'remaining_tokens': remaining,
-                'is_available': bool(granted and remaining > 0),
-            },
-            'is_ready': bool(active) or bool(granted and remaining > 0),
+            'platform_fallback': included['legacy_shape'],
+            'included': included['included'],
+            'is_ready': bool(active) or included['included']['is_available'],
         }
 
     def get(self, request, *args, **kwargs):
@@ -267,3 +261,117 @@ class AIUsageView(_TenantScopedView):
             tenant=tenant, created_at__gte=since, was_successful=False
         ).count()
         return Response(summary)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Included (platform-supplied) models
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _included_payload(tenant):
+    """What the tenant may use from the platform's own LLMs.
+
+    Returns both the new ``included`` block and the ``platform_fallback`` shape
+    the existing UI already reads, so nothing breaks while the frontend catches
+    up. Costs are never included — a tenant is shown its allowance in tokens and
+    percent, not what the platform pays per token.
+    """
+    from .platform_serializers import TenantPlatformModelChoiceSerializer
+
+    allocation = resolver.get_allocation(tenant)
+    status_ = resolver.allocation_status(tenant, allocation)
+    selectable = allocation.selectable_models()
+    effective = allocation.effective_model()
+
+    # A tenant with a granted-but-model-less allocation is on the legacy single
+    # platform key, which still works and should still read as available.
+    is_available = bool(
+        allocation.is_enabled and not status_['is_exhausted']
+        and (selectable or allocation.granted_models.count() == 0)
+    )
+
+    granted_all = allocation.usable_models()
+    # Only echo back choices the tenant may still submit. A model the super
+    # admin revoked after the tenant ticked it would otherwise come back on the
+    # GET and be rejected by the PUT, wedging the panel permanently.
+    granted_ids = {m.id for m in granted_all}
+    chosen_ids = [
+        i
+        for i in allocation.tenant_enabled_models.values_list('id', flat=True)
+        if i in granted_ids
+    ]
+    tenant_default = allocation.tenant_default_model
+    if tenant_default is not None and tenant_default.id not in granted_ids:
+        tenant_default = None
+
+    return {
+        'included': {
+            'is_enabled': allocation.is_enabled,
+            'is_available': is_available,
+            'is_exhausted': status_['is_exhausted'],
+            'percent_used': status_['percent_used'],
+            'tokens_used': status_['tokens_used'],
+            'token_limit': status_['token_limit'],
+            'tokens_remaining': status_['tokens_remaining'],
+            'models': TenantPlatformModelChoiceSerializer(granted_all, many=True).data,
+            'enabled_model_ids': [str(i) for i in chosen_ids],
+            # The tenant's own pick, which may be unset. Kept distinct from the
+            # resolved model so saving the form doesn't silently pin the
+            # platform's default onto the tenant forever.
+            'default_model_id': str(tenant_default.id) if tenant_default else None,
+            'effective_model_id': str(effective.id) if effective else None,
+            'selectable_model_ids': [str(m.id) for m in selectable],
+        },
+        'legacy_shape': {
+            'granted_tokens': status_['token_limit'],
+            'used_tokens': status_['tokens_used'],
+            'remaining_tokens': status_['tokens_remaining'],
+            'is_available': is_available,
+        },
+    }
+
+
+class IncludedModelsView(_TenantScopedView):
+    """Let a tenant admin choose which granted models their academy uses.
+
+    This is the non-technical path: no API keys, no endpoints — just a list of
+    models the platform has already paid for, with one marked default.
+    """
+
+    def get(self, request, *args, **kwargs):
+        return Response(_included_payload(self.tenant())['included'])
+
+    def put(self, request, *args, **kwargs):
+        tenant = self.tenant()
+        allocation = resolver.get_allocation(tenant)
+        granted = {str(m.id): m for m in allocation.usable_models()}
+
+        raw_ids = request.data.get('enabled_model_ids')
+        if raw_ids is not None:
+            if not isinstance(raw_ids, list):
+                return Response(
+                    {'enabled_model_ids': ['Expected a list of model ids.']}, status=400
+                )
+            unknown = [i for i in raw_ids if str(i) not in granted]
+            if unknown:
+                # Silently ignoring these would let a tenant believe it had
+                # enabled a model the platform never gave it.
+                return Response(
+                    {'enabled_model_ids': ['Your academy has not been given one of those models.']},
+                    status=400,
+                )
+            allocation.tenant_enabled_models.set([granted[str(i)] for i in raw_ids])
+
+        if 'default_model_id' in request.data:
+            default_id = request.data.get('default_model_id')
+            if not default_id:
+                allocation.tenant_default_model = None
+            elif str(default_id) in granted:
+                allocation.tenant_default_model = granted[str(default_id)]
+            else:
+                return Response(
+                    {'default_model_id': ['Your academy has not been given that model.']},
+                    status=400,
+                )
+            allocation.save(update_fields=['tenant_default_model', 'updated_at'])
+
+        return Response(_included_payload(tenant)['included'])
