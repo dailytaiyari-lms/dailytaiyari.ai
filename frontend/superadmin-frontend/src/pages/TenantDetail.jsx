@@ -23,6 +23,7 @@ import {
   updateTenant,
   fetchAuditLogs,
 } from '../services/superadminService'
+import TenantAIAllocationCard from '../components/TenantAIAllocationCard'
 
 function Toggle({ checked, onChange, label, disabled }) {
   return (
@@ -552,6 +553,9 @@ export default function TenantDetail() {
           className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-brand-500 outline-none text-sm font-mono"
         />
       </div>
+
+      {/* Included AI models */}
+      <TenantAIAllocationCard tenantId={id} />
 
       {/* Suspension */}
       <div

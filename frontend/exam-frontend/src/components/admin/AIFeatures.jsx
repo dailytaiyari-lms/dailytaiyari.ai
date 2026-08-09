@@ -26,6 +26,7 @@ import {
 } from 'lucide-react'
 
 import { aiAdminService } from '../../services/aiAdminService'
+import IncludedModels from './IncludedModels'
 
 /* ---------------------------------------------------------------------------
  * Helpers
@@ -179,7 +180,6 @@ const ProviderSettings = ({ data }) => {
 
     if (!meta) return null
 
-    const fallback = data?.platform_fallback || {}
     const busy = saveMutation.isPending || testMutation.isPending
 
     return (
@@ -211,34 +211,8 @@ const ProviderSettings = ({ data }) => {
                 </div>
             </div>
 
-            {/* Included allowance granted by the platform, when any. */}
-            {fallback.granted_tokens > 0 && (
-                <div className="card p-5">
-                    <div className="flex items-center gap-2 mb-2">
-                        <Gift className="w-5 h-5 text-primary-500" />
-                        <h3 className="font-bold text-surface-900 dark:text-white">Included AI allowance</h3>
-                    </div>
-                    <p className="text-sm text-surface-500">
-                        Your plan includes {formatNumber(fallback.granted_tokens)} tokens of AI usage this month —
-                        roughly {formatNumber(fallback.granted_tokens / 700)} student messages. Connect your own key
-                        below for unlimited use.
-                    </p>
-                    <div className="mt-3">
-                        <div className="h-2 rounded-full bg-surface-100 dark:bg-surface-800 overflow-hidden">
-                            <div
-                                className="h-full bg-gradient-to-r from-primary-500 to-primary-600"
-                                style={{
-                                    width: `${Math.min(100, (fallback.used_tokens / Math.max(1, fallback.granted_tokens)) * 100)}%`,
-                                }}
-                            />
-                        </div>
-                        <p className="text-xs text-surface-500 mt-1.5">
-                            {formatNumber(fallback.used_tokens)} used · {formatNumber(fallback.remaining_tokens)} left
-                            this month
-                        </p>
-                    </div>
-                </div>
-            )}
+            {/* Models the platform has granted us — the no-API-key path. */}
+            <IncludedModels hasOwnKey={Boolean(data?.active_provider)} />
 
             {/* Provider selection */}
             <div className="card p-6 space-y-4">

@@ -638,6 +638,27 @@ class AIUsageRecord(TimeStampedModel):
     provider = models.CharField(max_length=32, blank=True, default='')
     model = models.CharField(max_length=200, blank=True, default='')
 
+    # Which platform model was billed, when the call was ours to pay for. Kept
+    # as a nullable FK *alongside* the plain ``model`` string so the historical
+    # record survives the model row being deleted.
+    platform_model = models.ForeignKey(
+        'PlatformAIModel', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='usage_records',
+    )
+    # Which part of the product spent the money. Without this a platform owner
+    # cannot tell an expensive course generation from a cheap student question.
+    FEATURE_CHAT = 'chat'
+    FEATURE_QUIZ = 'quiz'
+    FEATURE_COURSEGEN = 'coursegen'
+    FEATURE_OTHER = 'other'
+    FEATURE_CHOICES = [
+        (FEATURE_CHAT, 'Doubt solver'),
+        (FEATURE_QUIZ, 'AI quiz'),
+        (FEATURE_COURSEGEN, 'Course builder'),
+        (FEATURE_OTHER, 'Other'),
+    ]
+    feature = models.CharField(max_length=20, choices=FEATURE_CHOICES, default=FEATURE_CHAT)
+
     prompt_tokens = models.PositiveIntegerField(default=0)
     completion_tokens = models.PositiveIntegerField(default=0)
     total_tokens = models.PositiveIntegerField(default=0)
@@ -656,7 +677,231 @@ class AIUsageRecord(TimeStampedModel):
         indexes = [
             models.Index(fields=['tenant', 'created_at']),
             models.Index(fields=['tenant', 'source', 'created_at']),
+            # Powers the platform-wide "who is costing us money" report.
+            models.Index(fields=['source', 'created_at']),
         ]
 
     def __str__(self):
         return f'{self.provider}/{self.model} — {self.total_tokens} tokens'
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Platform-supplied LLMs (super admin → "AI Platform")
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Bring-your-own-key (above) assumes a technical tenant admin who can obtain an
+# OpenAI key. Most academy owners cannot. So the platform also sells/gifts its
+# own models: the super admin registers credentials once here, grants a set of
+# models to a tenant, and that tenant's AI works immediately with no key of its
+# own. Tenant keys always win when present — the platform only pays when the
+# tenant has nothing of their own.
+
+
+class PlatformAIProvider(models.Model):
+    """LLM credentials owned by the platform, not by any tenant.
+
+    Deliberately separate from :class:`AIProviderConfig`: these keys are the
+    platform owner's, are never exposed to a tenant admin, and are billed to the
+    platform. Several may exist at once (e.g. OpenAI for quality, Groq for cheap
+    bulk work) and each exposes its own set of :class:`PlatformAIModel` rows.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # Operator-facing label, e.g. "OpenAI (production)". Distinguishes two
+    # accounts with the same underlying provider.
+    name = models.CharField(max_length=120)
+    provider = models.CharField(max_length=32, choices=AIProviderConfig.PROVIDER_CHOICES)
+
+    api_key_encrypted = models.TextField(blank=True, default='')
+    base_url = models.CharField(max_length=500, blank=True, default='')
+    api_version = models.CharField(max_length=50, blank=True, default='2024-10-21')
+
+    # Master switch. Turning this off instantly stops every tenant relying on
+    # this account, without deleting the grants.
+    is_enabled = models.BooleanField(default=True)
+    notes = models.TextField(blank=True, default='')
+    sort_order = models.PositiveIntegerField(default=0)
+
+    last_tested_at = models.DateTimeField(null=True, blank=True)
+    last_test_ok = models.BooleanField(null=True, blank=True)
+    last_test_error = models.CharField(max_length=500, blank=True, default='')
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Platform AI Provider'
+        verbose_name_plural = 'Platform AI Providers'
+        ordering = ['sort_order', 'name']
+
+    def __str__(self):
+        return self.name or self.get_provider_display()
+
+    @property
+    def api_key(self):
+        from core.encryption import decrypt
+        return decrypt(self.api_key_encrypted)
+
+    @api_key.setter
+    def api_key(self, raw):
+        from core.encryption import encrypt
+        self.api_key_encrypted = encrypt(raw or '')
+
+    @property
+    def effective_base_url(self):
+        return self.base_url or AIProviderConfig.DEFAULT_BASE_URLS.get(self.provider, '')
+
+    @property
+    def is_configured(self):
+        if self.provider in AIProviderConfig.KEYLESS_PROVIDERS:
+            return bool(self.effective_base_url)
+        if self.provider == AIProviderConfig.PROVIDER_AZURE:
+            return bool(self.api_key_encrypted and self.base_url)
+        return bool(self.api_key_encrypted)
+
+
+class PlatformAIModel(models.Model):
+    """One model a platform provider serves, with the price we pay for it.
+
+    Prices live here rather than in a code table so the super admin can correct
+    them the day a vendor changes pricing, without a deploy. They drive both the
+    per-tenant cost report and the cost ceiling enforced in the resolver.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    provider = models.ForeignKey(
+        PlatformAIProvider, on_delete=models.CASCADE, related_name='models'
+    )
+    # What the vendor calls it — sent verbatim on the wire.
+    model_name = models.CharField(max_length=200)
+    # What a tenant admin sees, e.g. "Fast — good for most questions".
+    label = models.CharField(max_length=120, blank=True, default='')
+    description = models.CharField(max_length=300, blank=True, default='')
+
+    # USD per 1,000,000 tokens. 0 is meaningful: self-hosted and ':free' models
+    # genuinely cost nothing.
+    input_cost_per_million = models.DecimalField(max_digits=10, decimal_places=4, default=0)
+    output_cost_per_million = models.DecimalField(max_digits=10, decimal_places=4, default=0)
+
+    max_output_tokens = models.PositiveIntegerField(default=4000)
+    is_enabled = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Platform AI Model'
+        verbose_name_plural = 'Platform AI Models'
+        ordering = ['sort_order', 'model_name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['provider', 'model_name'], name='uniq_platform_provider_model'
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.provider.name} — {self.model_name}'
+
+    @property
+    def display_label(self):
+        return self.label or self.model_name
+
+    @property
+    def is_usable(self):
+        """Both the model and the account behind it must be live and complete."""
+        return bool(
+            self.is_enabled
+            and self.provider.is_enabled
+            and self.provider.is_configured
+        )
+
+
+class TenantAIAllocation(models.Model):
+    """What one tenant may use from the platform's own LLMs, and how much.
+
+    Two audiences own different halves of this row, which is why they are named
+    apart:
+
+    * The **super admin** grants ``granted_models`` and sets the ceilings. This
+      is the platform's money, so nothing here is tenant-editable.
+    * The **tenant admin** narrows the grant with ``tenant_enabled_models`` and
+      picks ``tenant_default_model`` — useful when an academy wants its staff on
+      one cheap model. An empty ``tenant_enabled_models`` means "all granted".
+
+    A tenant with its own working key never touches this; the grant is the
+    safety net for the non-technical majority.
+    """
+
+    tenant = models.OneToOneField(
+        'core.Tenant', on_delete=models.CASCADE, related_name='ai_allocation'
+    )
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    # ── Super-admin controlled ──────────────────────────────────────────────
+    is_enabled = models.BooleanField(default=False)
+    granted_models = models.ManyToManyField(
+        PlatformAIModel, blank=True, related_name='granted_to_tenants'
+    )
+    default_model = models.ForeignKey(
+        PlatformAIModel, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='default_for_tenants',
+    )
+    # 0 means unlimited on that axis. Whichever is hit first stops the tenant.
+    monthly_token_limit = models.PositiveIntegerField(default=0)
+    monthly_cost_limit_usd = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+
+    # ── Tenant-admin controlled ─────────────────────────────────────────────
+    tenant_enabled_models = models.ManyToManyField(
+        PlatformAIModel, blank=True, related_name='enabled_by_tenants'
+    )
+    tenant_default_model = models.ForeignKey(
+        PlatformAIModel, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='tenant_default_for',
+    )
+
+    # ── Exhaustion warnings ─────────────────────────────────────────────────
+    # Warn once when usage crosses this percentage, then again at 100%.
+    notify_at_percent = models.PositiveIntegerField(default=80)
+    # 'YYYY-MM' of the last warning, so each month warns afresh but never spams.
+    last_notified_period = models.CharField(max_length=7, blank=True, default='')
+    last_notified_percent = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        verbose_name = 'Tenant AI Allocation'
+        verbose_name_plural = 'Tenant AI Allocations'
+
+    def __str__(self):
+        return f'AI allocation — {self.tenant.name}'
+
+    def usable_models(self):
+        """Granted models that are actually callable right now, super-admin view.
+
+        Filters out models whose provider the super admin has since disabled or
+        whose credentials were removed, so a stale grant can never 500 a chat.
+        """
+        return [m for m in self.granted_models.select_related('provider') if m.is_usable]
+
+    def selectable_models(self):
+        """What this tenant's users may actually pick, after the tenant's own filter."""
+        usable = self.usable_models()
+        chosen = {m.id for m in self.tenant_enabled_models.all()}
+        if not chosen:
+            return usable
+        narrowed = [m for m in usable if m.id in chosen]
+        # A tenant that narrowed to models the super admin later revoked would
+        # otherwise lock itself out entirely.
+        return narrowed or usable
+
+    def effective_model(self):
+        """The model to use when nobody chose one explicitly."""
+        models_ = self.selectable_models()
+        if not models_:
+            return None
+        by_id = {m.id: m for m in models_}
+        for candidate in (self.tenant_default_model_id, self.default_model_id):
+            if candidate in by_id:
+                return by_id[candidate]
+        return models_[0]

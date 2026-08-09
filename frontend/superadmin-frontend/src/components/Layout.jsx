@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Building2, LogOut, ShieldCheck, History, Users, Inbox, Megaphone } from 'lucide-react'
+import { LayoutDashboard, Building2, LogOut, ShieldCheck, History, Users, Inbox, Megaphone, Bot } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 
 const navItems = [
@@ -8,6 +8,7 @@ const navItems = [
   { to: '/users', label: 'Users', icon: Users, end: false },
   { to: '/support', label: 'Support Inbox', icon: Inbox, end: false },
   { to: '/announcements', label: 'Announcements', icon: Megaphone, end: false },
+  { to: '/ai', label: 'AI Platform', icon: Bot, end: false },
   { to: '/audit', label: 'Audit Log', icon: History, end: false },
 ]
 

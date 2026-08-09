@@ -74,8 +74,24 @@ def available_models(tenant):
             'last_test_ok': config.last_test_ok,
         })
 
-    granted, _used, remaining = resolver.platform_allowance(tenant)
-    if granted and remaining > 0 and getattr(settings, 'OPENAI_API_KEY', ''):
+    allocation = resolver.get_allocation(tenant)
+    granted_model, reason = resolver.platform_available(tenant, allocation)
+    if granted_model is not None:
+        # Only the models the super admin granted, so an admin cannot spend the
+        # platform's money on a model it never agreed to pay for.
+        selectable = allocation.selectable_models()
+        entries.append({
+            'provider': 'platform',
+            'provider_label': 'Included DailyTaiyari allowance',
+            'default_model': granted_model.model_name,
+            'models': [m.model_name for m in selectable],
+            'model_labels': {m.model_name: m.display_label for m in selectable},
+            'is_active': not any(e['is_active'] for e in entries),
+            'allows_custom_model': False,
+            'last_test_ok': None,
+        })
+    elif reason == 'no_models' and allocation.is_enabled and getattr(settings, 'OPENAI_API_KEY', ''):
+        # Legacy grant: one env key, one cheap model.
         entries.append({
             'provider': 'platform',
             'provider_label': 'Included DailyTaiyari allowance',
@@ -126,20 +142,18 @@ def resolve_for_admin(tenant, *, provider=None, model=None, max_tokens=DEFAULT_M
             )
         resolved = ResolvedProvider.from_config(config, source=AIUsageRecord.SOURCE_TENANT)
     elif wanted == 'platform':
-        resolved = _platform_provider(tenant)
+        resolved = _platform_provider(tenant, model)
     else:
         config = resolver.active_config(tenant)
         if config is not None:
             resolved = ResolvedProvider.from_config(config, source=AIUsageRecord.SOURCE_TENANT)
         else:
-            resolved = _platform_provider(tenant)
+            resolved = _platform_provider(tenant, model)
 
     chosen_model = (model or '').strip()
-    if chosen_model:
-        if resolved.source == AIUsageRecord.SOURCE_PLATFORM:
-            # The included allowance is metered against the platform's own bill,
-            # so it stays pinned to the cheap default model.
-            chosen_model = resolver.PLATFORM_MODEL
+    # The platform picker has already validated the model against the grant and
+    # set it; overriding here would let an admin spend our money on any model.
+    if chosen_model and resolved.source != AIUsageRecord.SOURCE_PLATFORM:
         resolved.model = chosen_model
     if not resolved.model:
         raise GenerationError(
@@ -152,19 +166,54 @@ def resolve_for_admin(tenant, *, provider=None, model=None, max_tokens=DEFAULT_M
     return resolved
 
 
-def _platform_provider(tenant):
-    granted, _used, remaining = resolver.platform_allowance(tenant)
-    platform_key = getattr(settings, 'OPENAI_API_KEY', '')
-    if not (granted and remaining > 0 and platform_key):
+def _platform_provider(tenant, model=None):
+    """Resolve a model from the tenant's platform grant.
+
+    ``model`` is only honoured when the super admin actually granted it — the
+    course builder lets an admin pick freely from *their own* providers, but the
+    included allowance is our bill, so the grant is the hard boundary.
+    """
+    allocation = resolver.get_allocation(tenant)
+    granted_model, reason = resolver.platform_available(tenant, allocation)
+
+    if granted_model is not None:
+        wanted = (model or '').strip()
+        if wanted:
+            match = next(
+                (m for m in allocation.selectable_models() if m.model_name == wanted), None
+            )
+            if match is None:
+                raise GenerationError(
+                    f'"{wanted}" is not part of your included AI allowance. Pick one '
+                    'of the included models, or connect your own provider key.'
+                )
+            granted_model = match
+        return ResolvedProvider.from_platform_model(granted_model)
+
+    if reason == 'exhausted':
         raise GenerationError(
-            'No AI provider is connected yet. Add your OpenAI, Gemini, Claude or '
-            'self-hosted endpoint under Admin → AI Features to use the course builder.'
+            'Your included AI allowance for this month has run out. Connect your own '
+            'AI provider key under Admin → AI Features to continue right away.'
         )
-    return ResolvedProvider(
-        provider=AIProviderConfig.PROVIDER_OPENAI,
-        api_key=platform_key,
-        model=resolver.PLATFORM_MODEL,
-        source=AIUsageRecord.SOURCE_PLATFORM,
+
+    if reason == 'models_unusable':
+        raise GenerationError(
+            'The included AI models are temporarily unavailable. Try again shortly, '
+            'or connect your own AI provider key under Admin → AI Features.'
+        )
+
+    platform_key = getattr(settings, 'OPENAI_API_KEY', '')
+    if reason == 'no_models' and allocation.is_enabled and platform_key:
+        return ResolvedProvider(
+            provider=AIProviderConfig.PROVIDER_OPENAI,
+            api_key=platform_key,
+            model=resolver.PLATFORM_MODEL,
+            source=AIUsageRecord.SOURCE_PLATFORM,
+        )
+
+    raise GenerationError(
+        'No AI provider is connected yet. Add your OpenAI, Gemini, Claude or '
+        'self-hosted endpoint under Admin → AI Features to use the course builder.'
     )
 
 
@@ -335,6 +384,7 @@ def _call(resolved, system, user, meter, tenant):
             tenant=tenant, student=None, session=None, resolved=resolved,
             usage=Usage(), response_time_ms=int((time.time() - started) * 1000),
             was_successful=False, error_message=str(exc),
+            feature=AIUsageRecord.FEATURE_COURSEGEN,
         )
         raise GenerationError(str(exc)) from exc
 
@@ -348,6 +398,7 @@ def _call(resolved, system, user, meter, tenant):
     resolver.record_usage(
         tenant=tenant, student=None, session=None, resolved=resolved,
         usage=usage, response_time_ms=elapsed, was_successful=True,
+        feature=AIUsageRecord.FEATURE_COURSEGEN,
     )
     return content
 
