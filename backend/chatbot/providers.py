@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -33,6 +34,10 @@ logger = logging.getLogger(__name__)
 # hung provider must never pin a worker forever.
 CONNECT_TIMEOUT = 10
 READ_TIMEOUT = 120
+
+# Reasoning models bill their hidden thinking against the output budget, so a
+# small ceiling yields an empty answer rather than a short one.
+MIN_REASONING_BUDGET = 4000
 
 
 class AIProviderError(RuntimeError):
@@ -201,32 +206,113 @@ def _openai_client(rp: ResolvedProvider):
     return OpenAI(**kwargs)
 
 
-def _openai_complete(rp: ResolvedProvider, messages):
-    client = _openai_client(rp)
-    response = client.chat.completions.create(
-        model=rp.model,
-        messages=messages,
-        max_tokens=rp.max_tokens,
-        temperature=rp.temperature,
+# Reasoning-era models (gpt-5.x, o1/o3/o4, and whatever follows) renamed
+# ``max_tokens`` to ``max_completion_tokens`` and accept only the default
+# temperature. Deployment names are free-form on Azure, so the regex is only a
+# first guess — :func:`_openai_create` learns the truth from the 400 and
+# remembers it, which is what makes an unknown future model work first try.
+_REASONING_MODEL_RE = re.compile(r'(?:^|[-/_.])(?:o[1-9]|gpt-[5-9]|gpt-1\d)(?:$|[^\d])', re.IGNORECASE)
+
+# ``(provider, model) -> {'max_completion_tokens': bool, 'drop_temperature': bool}``
+# Process-local; a cold worker pays at most one extra round-trip per model.
+_PARAM_QUIRKS: dict = {}
+
+
+def _quirks(rp: ResolvedProvider) -> dict:
+    key = (rp.provider, rp.model)
+    if key not in _PARAM_QUIRKS:
+        guess = bool(_REASONING_MODEL_RE.search(rp.model or ''))
+        _PARAM_QUIRKS[key] = {
+            'max_completion_tokens': guess,
+            'drop_temperature': guess,
+        }
+    return _PARAM_QUIRKS[key]
+
+
+def _openai_kwargs(rp: ResolvedProvider, messages, quirks: dict) -> dict:
+    kwargs = {'model': rp.model, 'messages': messages}
+    budget = rp.max_tokens or 2000
+    if quirks['max_completion_tokens']:
+        # Reasoning tokens are billed against this budget before any visible
+        # text, so a budget sized for a plain chat model returns an empty
+        # answer. Give reasoning models room.
+        kwargs['max_completion_tokens'] = max(budget, MIN_REASONING_BUDGET)
+    else:
+        kwargs['max_tokens'] = budget
+    if not quirks['drop_temperature']:
+        kwargs['temperature'] = rp.temperature
+    return kwargs
+
+
+def _learn_from_param_error(quirks: dict, message: str) -> bool:
+    """Record what the provider just rejected. ``True`` if worth retrying.
+
+    Keyed on the parameter we *sent* that the message names, not on whatever
+    replacement it suggests, so this also copes with a gateway that proxies an
+    older API and rejects the newer name.
+    """
+    lowered = message.lower()
+    if 'max_tokens' in lowered and not quirks['max_completion_tokens']:
+        quirks['max_completion_tokens'] = True
+        return True
+    if 'max_completion_tokens' in lowered and quirks['max_completion_tokens']:
+        quirks['max_completion_tokens'] = False
+        return True
+    if 'temperature' in lowered and not quirks['drop_temperature']:
+        quirks['drop_temperature'] = True
+        return True
+    return False
+
+
+def _is_param_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return '400' in text and (
+        'unsupported_parameter' in text
+        or 'unsupported_value' in text
+        or 'unsupported parameter' in text
+        or 'unsupported value' in text
+        or 'unrecognized request argument' in text
     )
-    return response.choices[0].message.content or '', Usage.from_openai(response.usage)
+
+
+def _openai_create(rp: ResolvedProvider, messages, **extra):
+    """Call chat-completions, adapting to whichever parameter names it accepts."""
+    client = _openai_client(rp)
+    quirks = _quirks(rp)
+    last = None
+    for _attempt in range(3):
+        try:
+            return client.chat.completions.create(**_openai_kwargs(rp, messages, quirks), **extra)
+        except Exception as exc:  # noqa: BLE001 - inspected below, then re-raised
+            last = exc
+            if not (_is_param_error(exc) and _learn_from_param_error(quirks, str(exc))):
+                raise
+    raise last
+
+
+def _openai_complete(rp: ResolvedProvider, messages):
+    response = _openai_create(rp, messages)
+    choice = response.choices[0]
+    content = choice.message.content or ''
+    if not content and getattr(choice, 'finish_reason', '') == 'length':
+        # A reasoning model that spent its whole budget thinking. Silently
+        # returning "" would look like the provider is broken.
+        raise AIProviderError(
+            f'{rp.model} used its entire token budget on reasoning and returned no '
+            'text. Raise the max output tokens for this model.'
+        )
+    return content, Usage.from_openai(response.usage)
 
 
 def _openai_stream(rp: ResolvedProvider, messages):
-    client = _openai_client(rp)
-    kwargs = {
-        'model': rp.model,
-        'messages': messages,
-        'max_tokens': rp.max_tokens,
-        'temperature': rp.temperature,
-        'stream': True,
-    }
     # Ask for usage in the final chunk where the provider supports it; servers
     # that reject the option (some self-hosted ones) are retried without it.
     try:
-        stream = client.chat.completions.create(stream_options={'include_usage': True}, **kwargs)
+        stream = _openai_create(rp, messages, stream=True, stream_options={'include_usage': True})
+    except AIProviderError:
+        raise
     except Exception:  # noqa: BLE001 - fall back to a plain stream
-        stream = client.chat.completions.create(**kwargs)
+        stream = _openai_create(rp, messages, stream=True)
 
     usage = Usage()
     for chunk in stream:
@@ -394,8 +480,11 @@ def test_connection(rp: ResolvedProvider):
         model=rp.model,
         api_version=rp.api_version,
         temperature=0,
+        # _openai_kwargs raises this to MIN_REASONING_BUDGET for models that
+        # think before answering, so the probe doesn't come back blank.
         max_tokens=16,
         source=rp.source,
+        extra_headers=rp.extra_headers,
     )
     messages = [
         {'role': 'system', 'content': 'Reply with the single word: ok'},
@@ -406,5 +495,8 @@ def test_connection(rp: ResolvedProvider):
     except AIProviderError as exc:
         return False, str(exc)
     if not content.strip():
-        return False, 'The provider responded but returned no text.'
+        return False, (
+            'The provider accepted the credentials but returned no text. '
+            'Check that the model or deployment name is correct.'
+        )
     return True, f'Connected in {elapsed} ms — model replied "{content.strip()[:40]}".'

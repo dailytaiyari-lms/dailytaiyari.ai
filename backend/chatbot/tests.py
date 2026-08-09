@@ -26,6 +26,7 @@ from .models import (
     PlatformAIProvider,
     TenantAIAllocation,
 )
+from . import providers
 from .providers import Usage, estimate_cost_usd
 from . import resolver
 
@@ -485,3 +486,135 @@ class LegacyGrantTests(_PlatformAICase):
         with self.settings(OPENAI_API_KEY='sk-legacy-env-key'):
             with self.assertRaises(resolver.AIUnavailable):
                 resolver.resolve(self.tenant)
+
+
+class ReasoningModelParameterTests(TestCase):
+    """gpt-5.x / o-series renamed ``max_tokens`` and fixed the temperature.
+
+    Azure deployment names are free-form, so we can't rely on recognising the
+    model: the client has to learn from the 400 and remember.
+    """
+
+    def setUp(self):
+        providers._PARAM_QUIRKS.clear()
+        self.rp = providers.ResolvedProvider(
+            provider=AIProviderConfig.PROVIDER_OPENAI,
+            api_key='sk-test', model='gpt-5.1', max_tokens=2000, temperature=0.7,
+        )
+
+    def _client(self, create):
+        client = type('C', (), {})()
+        client.chat = type('Chat', (), {})()
+        client.chat.completions = type('Completions', (), {})()
+        client.chat.completions.create = create
+        return client
+
+    def test_a_reasoning_model_is_called_with_the_new_parameter(self):
+        seen = {}
+
+        def create(**kwargs):
+            seen.update(kwargs)
+            return _fake_response('ok')
+
+        with patch.object(providers, '_openai_client', return_value=self._client(create)):
+            content, _usage = providers._openai_complete(self.rp, [])
+
+        self.assertEqual(content, 'ok')
+        self.assertNotIn('max_tokens', seen)
+        self.assertNotIn('temperature', seen)
+        self.assertGreaterEqual(seen['max_completion_tokens'], providers.MIN_REASONING_BUDGET)
+
+    def test_an_unrecognised_deployment_learns_from_the_rejection(self):
+        """The Azure case from the bug report: the name tells us nothing."""
+        self.rp.model = 'prod-deployment'
+        calls = []
+
+        def create(**kwargs):
+            calls.append(dict(kwargs))
+            if 'max_tokens' in kwargs:
+                raise RuntimeError(
+                    "Error code: 400 - {'error': {'message': \"Unsupported parameter: "
+                    "'max_tokens' is not supported with this model. Use "
+                    "'max_completion_tokens' instead.\", 'code': 'unsupported_parameter'}}"
+                )
+            if 'temperature' in kwargs:
+                raise RuntimeError(
+                    "Error code: 400 - {'error': {'message': \"Unsupported value: "
+                    "'temperature' does not support 0.7.\", 'code': 'unsupported_value'}}"
+                )
+            return _fake_response('ok')
+
+        with patch.object(providers, '_openai_client', return_value=self._client(create)):
+            content, _usage = providers._openai_complete(self.rp, [])
+
+        self.assertEqual(content, 'ok')
+        self.assertEqual(len(calls), 3)
+        self.assertIn('max_completion_tokens', calls[-1])
+        self.assertNotIn('temperature', calls[-1])
+
+    def test_what_was_learned_is_reused_on_the_next_call(self):
+        self.rp.model = 'prod-deployment'
+        calls = []
+
+        def create(**kwargs):
+            calls.append(dict(kwargs))
+            if 'max_tokens' in kwargs:
+                raise RuntimeError(
+                    "Error code: 400 - {'error': {'message': \"Unsupported parameter: "
+                    "'max_tokens' is not supported with this model.\", "
+                    "'code': 'unsupported_parameter'}}"
+                )
+            return _fake_response('ok')
+
+        with patch.object(providers, '_openai_client', return_value=self._client(create)):
+            providers._openai_complete(self.rp, [])
+            before = len(calls)
+            providers._openai_complete(self.rp, [])
+
+        self.assertEqual(len(calls) - before, 1)
+
+    def test_an_ordinary_model_keeps_the_old_parameters(self):
+        seen = {}
+
+        def create(**kwargs):
+            seen.update(kwargs)
+            return _fake_response('ok')
+
+        self.rp.model = 'gpt-4o-mini'
+        with patch.object(providers, '_openai_client', return_value=self._client(create)):
+            providers._openai_complete(self.rp, [])
+
+        self.assertEqual(seen['max_tokens'], 2000)
+        self.assertEqual(seen['temperature'], 0.7)
+
+    def test_a_real_error_is_not_retried(self):
+        calls = []
+
+        def create(**kwargs):
+            calls.append(1)
+            raise RuntimeError('Error code: 401 - invalid api key')
+
+        with patch.object(providers, '_openai_client', return_value=self._client(create)):
+            with self.assertRaises(RuntimeError):
+                providers._openai_complete(self.rp, [])
+
+        self.assertEqual(len(calls), 1)
+
+    def test_budget_spent_entirely_on_reasoning_is_reported(self):
+        def create(**kwargs):
+            return _fake_response('', finish_reason='length')
+
+        with patch.object(providers, '_openai_client', return_value=self._client(create)):
+            with self.assertRaises(providers.AIProviderError) as ctx:
+                providers._openai_complete(self.rp, [])
+
+        self.assertIn('max output tokens', str(ctx.exception))
+
+
+def _fake_response(content, finish_reason='stop'):
+    message = type('M', (), {'content': content})()
+    choice = type('C', (), {'message': message, 'finish_reason': finish_reason})()
+    usage = type('U', (), {
+        'prompt_tokens': 10, 'completion_tokens': 5, 'total_tokens': 15,
+    })()
+    return type('R', (), {'choices': [choice], 'usage': usage})()
