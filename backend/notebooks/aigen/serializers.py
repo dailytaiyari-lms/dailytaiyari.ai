@@ -48,11 +48,12 @@ class NotebookGenerationJobListSerializer(serializers.ModelSerializer):
     course_name = serializers.CharField(source='course.name', read_only=True, default='')
     topic_name = serializers.CharField(source='topic.name', read_only=True, default='')
     summary = serializers.SerializerMethodField()
+    is_running = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = NotebookGenerationJob
         fields = [
-            'id', 'kind', 'status', 'prompt', 'provider', 'model',
+            'id', 'kind', 'status', 'is_running', 'prompt', 'provider', 'model',
             'course', 'course_name', 'topic', 'topic_name', 'notebook',
             'summary', 'error', 'total_tokens', 'estimated_cost_usd',
             'applied_at', 'created_at',

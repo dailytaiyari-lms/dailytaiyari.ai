@@ -814,3 +814,76 @@ class AsyncGenerationTests(_StudioTestCase):
         self.assertEqual(job.status, 'preview')
         self.assertEqual(job.draft, keep)
         self.assertTrue(job.error)
+
+
+class TopicJobVisibilityTests(_StudioTestCase):
+    """In-flight work must be findable from the topic it was started on.
+
+    The course builder shows generation in the tab the material will land in, so
+    an admin who closes the studio never loses sight of a running job or an
+    unreviewed draft.
+    """
+
+    def _content_job(self, status='generating', topic=None, materials=('quiz',)):
+        topic = topic or self.topic
+        return CourseGenerationJob.objects.create(
+            tenant=self.tenant, created_by=self.admin, course=self.course,
+            kind='content', prompt='x', status=status,
+            options={
+                'materials': list(materials),
+                'topics_snapshot': [{'id': str(topic.id), 'name': topic.name}],
+            },
+        )
+
+    def test_jobs_can_be_filtered_to_one_topic(self):
+        wanted = self._content_job()
+        other_topic = Topic.objects.create(
+            subject=self.subject, name='Other', code='other', order=2,
+        )
+        self._content_job(topic=other_topic)
+
+        response = self.get(
+            self.admin, f'/jobs/?course={self.course.id}&topic={self.topic.id}'
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        ids = [row['id'] for row in response.data['results']]
+        self.assertEqual(ids, [str(wanted.id)])
+
+    def test_open_status_returns_only_unfinished_work(self):
+        running = self._content_job(status='generating')
+        awaiting = self._content_job(status='preview')
+        self._content_job(status='applied')
+        self._content_job(status='discarded')
+
+        response = self.get(
+            self.admin,
+            f'/jobs/?course={self.course.id}&topic={self.topic.id}&status=open',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        ids = {row['id'] for row in response.data['results']}
+        self.assertEqual(ids, {str(running.id), str(awaiting.id)})
+
+    def test_rows_say_which_tab_they_belong_to_and_whether_they_run(self):
+        self._content_job(status='generating', materials=('notes', 'coding'))
+
+        response = self.get(
+            self.admin,
+            f'/jobs/?course={self.course.id}&topic={self.topic.id}&status=open',
+        )
+
+        row = response.data['results'][0]
+        self.assertEqual(row['options']['materials'], ['notes', 'coding'])
+        self.assertTrue(row['is_running'])
+
+    def test_an_instructor_cannot_see_another_course_s_jobs(self):
+        self._content_job()
+
+        response = self.get(
+            self.instructor,
+            f'/jobs/?course={self.course.id}&topic={self.topic.id}&status=open',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['results'], [])

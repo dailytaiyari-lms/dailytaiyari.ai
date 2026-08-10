@@ -53,6 +53,30 @@ from .serializers import (
 
 logger = logging.getLogger(__name__)
 
+# Statuses that still want the admin's attention: queued, being written, or
+# waiting to be reviewed. Everything else is done with.
+OPEN_STATUSES = (
+    CourseGenerationJob.STATUS_PENDING,
+    CourseGenerationJob.STATUS_GENERATING,
+    CourseGenerationJob.STATUS_PREVIEW,
+)
+
+
+def _filter_by_status(queryset, raw):
+    """Narrow by status. Accepts ``open``, or a comma-separated list."""
+    if not raw:
+        return queryset
+    if raw == 'open':
+        return queryset.filter(status__in=OPEN_STATUSES)
+    wanted = [value.strip() for value in raw.split(',') if value.strip()]
+    return queryset.filter(status__in=wanted) if wanted else queryset
+
+
+def _job_covers_topic(job, topic_id):
+    """True when a content job was generated for this topic."""
+    snapshot = (job.options or {}).get('topics_snapshot') or []
+    return any(str(entry.get('id')) == str(topic_id) for entry in snapshot)
+
 
 def _enqueue(job, *, mode='generate', instruction='', topics=None):
     """Run a generation in the background, falling back to inline if Celery is down.
@@ -291,9 +315,21 @@ class JobListCreateView(_StudioView):
         kind = request.query_params.get('kind')
         if kind:
             queryset = queryset.filter(kind=kind)
-        job_status = request.query_params.get('status')
-        if job_status:
-            queryset = queryset.filter(status=job_status)
+        queryset = _filter_by_status(queryset, request.query_params.get('status'))
+
+        # A topic filter lets the course builder show in-flight work inline, on
+        # the very topic it was started from. Content jobs record their resolved
+        # topics in options, which no database we support can index portably, so
+        # this narrows in SQL first and matches the (short) open list in Python.
+        topic_id = request.query_params.get('topic')
+        if topic_id:
+            queryset = queryset.filter(kind=CourseGenerationJob.KIND_CONTENT)
+            jobs = [job for job in queryset.order_by('-created_at') if _job_covers_topic(job, topic_id)]
+            paginator = JobPagination()
+            page = paginator.paginate_queryset(jobs, request, view=self)
+            return paginator.get_paginated_response(
+                CourseGenerationJobListSerializer(page, many=True).data
+            )
 
         paginator = JobPagination()
         page = paginator.paginate_queryset(queryset.order_by('-created_at'), request, view=self)

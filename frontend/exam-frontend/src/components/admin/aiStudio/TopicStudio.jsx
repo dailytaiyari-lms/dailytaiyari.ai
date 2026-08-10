@@ -155,10 +155,12 @@ const ExistingMaterial = ({ material }) => {
     )
 }
 
-const TopicStudio = ({ courseId, topic, subjectName, onClose, onApplied }) => {
+const TopicStudio = ({ courseId, topic, subjectName, resumeJob = null, onClose, onApplied, onStarted }) => {
     const queryClient = useQueryClient()
 
-    const [materials, setMaterials] = useState(['notes'])
+    const [materials, setMaterials] = useState(
+        resumeJob ? (resumeJob.isNotebook ? [NOTEBOOK] : resumeJob.job?.options?.materials || ['notes']) : ['notes'],
+    )
     const [mode, setMode] = useState('replace')
     const [brief, setBrief] = useState('')
     const [inputMode, setInputMode] = useState('text')
@@ -186,6 +188,18 @@ const TopicStudio = ({ courseId, topic, subjectName, onClose, onApplied }) => {
     const active = isNotebook ? notebook : course
 
     const { job, error, busy } = active
+
+    // Reattach to a job that was started earlier: generation lives on the
+    // server, so coming back to it is just a matter of reading it again — the
+    // hook resumes polling if it is still being written.
+    const resumeId = resumeJob?.job?.id
+    useEffect(() => {
+        if (!resumeId) return
+        const fetchJob = resumeJob.isNotebook ? notebookGenService.getJob : courseAiService.getJob
+        active.run(() => fetchJob(resumeId))
+        // Only ever re-run for a different job.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [resumeId])
 
     const { data: options } = useQuery({
         queryKey: ['coursegen-options'],
@@ -249,6 +263,9 @@ const TopicStudio = ({ courseId, topic, subjectName, onClose, onApplied }) => {
 
     const generate = () => {
         const [provider, modelName] = model ? model.split(':') : ['', '']
+        // Let the course builder show this run in its tabs straight away, so
+        // closing the panel never hides work that is already under way.
+        const announce = (result) => { onStarted?.(); return result }
 
         if (isNotebook) {
             return notebook.run(() => notebookGenService.generate({
@@ -262,7 +279,7 @@ const TopicStudio = ({ courseId, topic, subjectName, onClose, onApplied }) => {
                     graded: notebookForm.graded,
                     answer_cells: Number(notebookForm.answer_cells) || 0,
                 },
-            }))
+            })).then(announce)
         }
 
         return course.run(() => courseAiService.generate({
@@ -279,7 +296,7 @@ const TopicStudio = ({ courseId, topic, subjectName, onClose, onApplied }) => {
                 depth,
                 questions_per_quiz: questionsPerQuiz,
             },
-        }))
+        })).then(announce)
     }
 
     const regenerate = () => (

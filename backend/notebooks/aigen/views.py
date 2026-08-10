@@ -115,10 +115,21 @@ class JobListCreateView(_StudioView):
 
     def get(self, request):
         queryset = self.jobs()
-        for field in ('course', 'topic', 'status'):
+        for field in ('course', 'topic'):
             value = request.query_params.get(field)
             if value:
-                queryset = queryset.filter(**{field if field == 'status' else f'{field}_id': value})
+                queryset = queryset.filter(**{f'{field}_id': value})
+        raw_status = request.query_params.get('status')
+        if raw_status == 'open':
+            queryset = queryset.filter(status__in=(
+                NotebookGenerationJob.STATUS_PENDING,
+                NotebookGenerationJob.STATUS_GENERATING,
+                NotebookGenerationJob.STATUS_PREVIEW,
+            ))
+        elif raw_status:
+            queryset = queryset.filter(
+                status__in=[v.strip() for v in raw_status.split(',') if v.strip()]
+            )
         paginator = JobPagination()
         page = paginator.paginate_queryset(queryset.order_by('-created_at'), request, view=self)
         return paginator.get_paginated_response(

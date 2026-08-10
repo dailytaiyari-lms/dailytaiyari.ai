@@ -52,12 +52,13 @@ class CourseGenerationJobListSerializer(serializers.ModelSerializer):
 
     course_name = serializers.CharField(source='course.name', read_only=True, default='')
     summary = serializers.SerializerMethodField()
+    is_running = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = CourseGenerationJob
         fields = [
-            'id', 'kind', 'status', 'prompt', 'provider', 'model',
-            'course', 'course_name', 'summary', 'error',
+            'id', 'kind', 'status', 'is_running', 'prompt', 'provider', 'model',
+            'options', 'course', 'course_name', 'summary', 'error',
             'total_tokens', 'estimated_cost_usd',
             'applied_at', 'created_at',
         ]

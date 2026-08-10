@@ -18,6 +18,8 @@ import {
     EntityModal, ConfirmDialog, RowActions, QuestionModal, formatApiError, QTYPE_LABEL,
 } from '../components/admin/builderShared'
 import TopicStudio from '../components/admin/aiStudio/TopicStudio'
+import PendingAiRows from '../components/admin/aiStudio/PendingAiRows'
+import useTopicAiJobs from '../hooks/useTopicAiJobs'
 import Loading from '../components/common/Loading'
 
 /* Content-type icon + tint */
@@ -1161,6 +1163,9 @@ const TopicPanel = ({ topic, subjectId, subjectName, openModal, askDelete }) => 
     const queryClient = useQueryClient()
     const [tab, setTab] = useState('content')
     const [aiOpen, setAiOpen] = useState(false)
+    // The job to reopen the studio on, when an admin comes back to a draft that
+    // was generated after they closed the panel.
+    const [resume, setResume] = useState(null)
 
     // The studio entry point only appears once we know an AI provider is
     // actually configured — a button that always fails is worse than no button.
@@ -1171,13 +1176,32 @@ const TopicPanel = ({ topic, subjectId, subjectName, openModal, askDelete }) => 
         retry: false,
     })
 
+    // Anything the AI is still writing (or has written and is waiting on) for
+    // this topic, so it shows up in the tab it will land in.
+    const aiJobs = useTopicAiJobs(courseId, topic.id, !!aiHealth?.is_ready)
+
     // Everything the panel shows for this topic is refetched after a write, so
     // generated material appears in the tabs without a manual reload.
     const refreshTopic = () => {
         for (const key of ['cb-contents', 'cb-quizzes', 'cb-assignments', 'cb-coding', 'cb-notebooks']) {
             queryClient.invalidateQueries({ queryKey: [key, topic.id] })
         }
+        aiJobs.refresh()
     }
+
+    const reviewJob = (entry) => {
+        setResume(entry)
+        setAiOpen(true)
+    }
+
+    const closeStudio = () => {
+        setAiOpen(false)
+        setResume(null)
+        // A draft may have been started or discarded while the panel was open.
+        aiJobs.refresh()
+    }
+
+    const pendingFor = (tabId) => aiJobs.byTab[tabId] || []
 
     return (
         <div className="card p-4 sm:p-6">
@@ -1191,7 +1215,7 @@ const TopicPanel = ({ topic, subjectId, subjectName, openModal, askDelete }) => 
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                     {aiHealth?.is_ready && (
-                        <button onClick={() => setAiOpen(true)} className="btn-primary text-xs px-3 py-1.5">
+                        <button onClick={() => { setResume(null); setAiOpen(true) }} className="btn-primary text-xs px-3 py-1.5">
                             <Sparkles className="w-3.5 h-3.5" /> Generate with AI
                         </button>
                     )}
@@ -1202,16 +1226,34 @@ const TopicPanel = ({ topic, subjectId, subjectName, openModal, askDelete }) => 
             </div>
 
             <div className="flex gap-1 p-1 bg-surface-100 dark:bg-surface-800 rounded-xl w-fit my-4">
-                {[{ id: 'content', label: 'Content', icon: FileText }, { id: 'quizzes', label: 'Quizzes', icon: ListChecks }, { id: 'assignments', label: 'Assignments', icon: ClipboardList }, { id: 'coding', label: 'Coding', icon: Code2 }, { id: 'notebooks', label: 'Notebooks', icon: NotebookIcon }, { id: 'live', label: 'Live', icon: Radio }].map((t) => (
-                    <button
-                        key={t.id}
-                        onClick={() => setTab(t.id)}
-                        className={`px-4 py-1.5 rounded-lg text-sm font-semibold inline-flex items-center gap-1.5 transition-all ${tab === t.id ? 'bg-white dark:bg-surface-700 text-primary-600 dark:text-primary-400 shadow-sm' : 'text-surface-500 hover:text-surface-700 dark:hover:text-surface-300'}`}
-                    >
-                        <t.icon className="w-3.5 h-3.5" /> {t.label}
-                    </button>
-                ))}
+                {[{ id: 'content', label: 'Content', icon: FileText }, { id: 'quizzes', label: 'Quizzes', icon: ListChecks }, { id: 'assignments', label: 'Assignments', icon: ClipboardList }, { id: 'coding', label: 'Coding', icon: Code2 }, { id: 'notebooks', label: 'Notebooks', icon: NotebookIcon }, { id: 'live', label: 'Live', icon: Radio }].map((t) => {
+                    const pending = pendingFor(t.id)
+                    return (
+                        <button
+                            key={t.id}
+                            onClick={() => setTab(t.id)}
+                            className={`px-4 py-1.5 rounded-lg text-sm font-semibold inline-flex items-center gap-1.5 transition-all ${tab === t.id ? 'bg-white dark:bg-surface-700 text-primary-600 dark:text-primary-400 shadow-sm' : 'text-surface-500 hover:text-surface-700 dark:hover:text-surface-300'}`}
+                        >
+                            <t.icon className="w-3.5 h-3.5" /> {t.label}
+                            {!!pending.length && (
+                                <span
+                                    title={pending.some((p) => p.job.is_running)
+                                        ? 'The AI is writing this'
+                                        : 'A draft is waiting for your review'}
+                                    className="ml-0.5 inline-flex items-center gap-1 rounded-full bg-primary-100 px-1.5 py-0.5 text-[10px] font-bold text-primary-600 dark:bg-primary-900/40 dark:text-primary-300"
+                                >
+                                    {pending.some((p) => p.job.is_running)
+                                        ? <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                        : <Sparkles className="w-2.5 h-2.5" />}
+                                    {pending.length}
+                                </span>
+                            )}
+                        </button>
+                    )
+                })}
             </div>
+
+            <PendingAiRows entries={pendingFor(tab)} onReview={reviewJob} />
 
             {tab === 'content' && <ContentSection topic={topic} subjectId={subjectId} openModal={openModal} askDelete={askDelete} />}
             {tab === 'quizzes' && <QuizSection topic={topic} subjectId={subjectId} openModal={openModal} askDelete={askDelete} />}
@@ -1226,7 +1268,9 @@ const TopicPanel = ({ topic, subjectId, subjectName, openModal, askDelete }) => 
                         courseId={courseId}
                         topic={topic}
                         subjectName={subjectName}
-                        onClose={() => setAiOpen(false)}
+                        resumeJob={resume}
+                        onClose={closeStudio}
+                        onStarted={aiJobs.refresh}
                         onApplied={refreshTopic}
                     />
                 )}
