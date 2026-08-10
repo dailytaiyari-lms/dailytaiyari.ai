@@ -75,6 +75,7 @@ INSTALLED_APPS = [
     'payments.apps.PaymentsConfig',
     'marketing.apps.MarketingConfig',
     'notifications.apps.NotificationsConfig',
+    'notebooks.apps.NotebooksConfig',
 ]
 
 SILENCED_SYSTEM_CHECKS = ["auth.E003"]
@@ -284,6 +285,7 @@ REST_FRAMEWORK = {
         'quiz_submit': '60/hour',  # Rate limit quiz submissions
         'code_run': '120/hour',  # Rate limit "run sample" code executions
         'code_submit': '120/hour',  # Rate limit graded code submissions
+        'notebook_submit': '60/hour',  # Rate limit graded notebook submissions
         'platform_lead': '20/hour',  # Public demo/contact form submissions
     }
 }
@@ -405,6 +407,20 @@ CODE_JUDGE_PARALLELISM = config('CODE_JUDGE_PARALLELISM', default=1, cast=int)
 # result. When False (default), grading runs synchronously in-request exactly as
 # before. Flip to True only once the redis + celery-worker services are running.
 CODE_JUDGE_ASYNC = config('CODE_JUDGE_ASYNC', default=False, cast=bool)
+
+# --- Python notebooks ---------------------------------------------------------
+# Notebooks execute client-side in Pyodide (CPython -> WebAssembly), so the
+# interactive path costs no server compute. NOTEBOOKS_SERVER_GRADING controls
+# the authoritative re-grade: when True a submitted notebook is re-executed in
+# the sandboxed `nbrunner` container and that score is the real grade. When
+# False the browser's provisional score is recorded instead (useful for local
+# dev, or a deployment that hasn't started the runner yet).
+NOTEBOOKS_ENABLED = config('NOTEBOOKS_ENABLED', default=True, cast=bool)
+NOTEBOOKS_SERVER_GRADING = config('NOTEBOOKS_SERVER_GRADING', default=False, cast=bool)
+NBRUNNER_URL = config('NBRUNNER_URL', default='http://nbrunner:2100')
+# Grade notebooks off the web request thread (recommended: a submission can
+# train a model). Falls back to inline grading if the broker is unreachable.
+NOTEBOOKS_JUDGE_ASYNC = config('NOTEBOOKS_JUDGE_ASYNC', default=True, cast=bool)
 
 # Celery (broker + result backend on Redis). Result backend stores the task
 # state so the poll endpoint can distinguish queued/running/done.

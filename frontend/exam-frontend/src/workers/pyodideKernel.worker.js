@@ -1,0 +1,279 @@
+/**
+ * Pyodide kernel — runs in a Web Worker.
+ *
+ * Executes student notebook code with real CPython (compiled to WebAssembly),
+ * including the classical-ML stack (numpy, pandas, scipy, scikit-learn,
+ * matplotlib). Running in a worker means a long `.fit()` never freezes the UI
+ * and the main thread can hard-terminate a runaway cell.
+ *
+ * Protocol (main thread -> worker):
+ *   {type:'init',      packages:[], files:[{filename,bytes}]}
+ *   {type:'run',       id, code}                 // execute one cell
+ *   {type:'runTests',  id, tests:[{id,name,source,points}]}
+ *   {type:'reset'}                               // fresh namespace
+ * Worker -> main thread:
+ *   {type:'status', phase, detail}
+ *   {type:'ready'}
+ *   {type:'stream', name:'stdout'|'stderr', text}
+ *   {type:'result', id, outputs:[...], error}
+ *   {type:'tests',  id, results:[{id,passed,error}]}
+ *   {type:'fatal',  id, error}
+ */
+
+/* eslint-env worker */
+/* global loadPyodide */
+
+const PYODIDE_VERSION = 'v0.28.3'
+const PYODIDE_CDN = `https://cdn.jsdelivr.net/pyodide/${PYODIDE_VERSION}/full/`
+
+let pyodide = null
+let readyPromise = null
+const loadedPackages = new Set()
+
+const post = (msg) => self.postMessage(msg)
+
+/**
+ * Python-side execution harness.
+ *
+ * Runs a cell the way a notebook does — the final bare expression's value is
+ * displayed — and captures stdout/stderr plus any matplotlib figures as
+ * structured outputs. Kept in Python (rather than orchestrated from JS) so the
+ * user's globals persist across cells exactly like a real kernel.
+ */
+const HARNESS = `
+import ast, base64, io, sys, traceback, json
+
+class _DTKernel:
+    def __init__(self):
+        self.ns = {'__name__': '__main__'}
+        self.count = 0
+
+    def reset(self):
+        self.ns = {'__name__': '__main__'}
+        self.count = 0
+
+    def _figures(self):
+        out = []
+        try:
+            import matplotlib.pyplot as plt
+        except Exception:
+            return out
+        try:
+            for num in plt.get_fignums():
+                fig = plt.figure(num)
+                buf = io.BytesIO()
+                fig.savefig(buf, format='png', bbox_inches='tight', dpi=100)
+                out.append({
+                    'output_type': 'display_data',
+                    'data': {'image/png': base64.b64encode(buf.getvalue()).decode('ascii')},
+                })
+            plt.close('all')
+        except Exception:
+            pass
+        return out
+
+    def _repr(self, value):
+        if value is None:
+            return None
+        data = {}
+        fn = getattr(value, '_repr_html_', None)
+        if callable(fn):
+            try:
+                html = fn()
+                if html:
+                    data['text/html'] = html
+            except Exception:
+                pass
+        try:
+            data['text/plain'] = repr(value)
+        except Exception:
+            data['text/plain'] = '<unrepresentable object>'
+        return {'output_type': 'execute_result', 'data': data}
+
+    def run(self, code):
+        self.count += 1
+        outputs = []
+        error = None
+        stdout, stderr = io.StringIO(), io.StringIO()
+        old_out, old_err = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = stdout, stderr
+        try:
+            block = ast.parse(code, mode='exec')
+            tail = None
+            # Notebook semantics: echo the value of a trailing bare expression.
+            if block.body and isinstance(block.body[-1], ast.Expr):
+                tail = ast.Expression(block.body.pop().value)
+            if block.body:
+                exec(compile(block, '<cell>', 'exec'), self.ns)
+            if tail is not None:
+                value = eval(compile(tail, '<cell>', 'eval'), self.ns)
+                rendered = self._repr(value)
+                if rendered:
+                    outputs.append(rendered)
+        except SystemExit:
+            pass
+        except BaseException:
+            etype, exc, tb = sys.exc_info()
+            frames = traceback.extract_tb(tb)
+            frames = [f for f in frames if f.filename == '<cell>'] or frames[1:]
+            error = ''.join(
+                traceback.format_list(frames) + traceback.format_exception_only(etype, exc)
+            )
+        finally:
+            sys.stdout, sys.stderr = old_out, old_err
+
+        text_out = stdout.getvalue()
+        text_err = stderr.getvalue()
+        if text_out:
+            outputs.insert(0, {'output_type': 'stream', 'name': 'stdout', 'text': text_out})
+        if text_err:
+            outputs.append({'output_type': 'stream', 'name': 'stderr', 'text': text_err})
+        outputs.extend(self._figures())
+        if error:
+            outputs.append({'output_type': 'error', 'traceback': error})
+        return json.dumps({
+            'outputs': outputs, 'error': error, 'execution_count': self.count,
+        })
+
+    def run_tests(self, tests_json):
+        results = []
+        for test in json.loads(tests_json):
+            entry = {'id': test.get('id'), 'passed': False, 'error': ''}
+            source = test.get('source') or ''
+            if not source.strip():
+                entry['passed'] = True
+                results.append(entry)
+                continue
+            buf = io.StringIO()
+            old_out, old_err = sys.stdout, sys.stderr
+            sys.stdout, sys.stderr = buf, buf
+            try:
+                exec(compile(source, '<test>', 'exec'), self.ns)
+                entry['passed'] = True
+            except AssertionError as exc:
+                entry['error'] = str(exc) or 'Assertion failed.'
+            except BaseException as exc:
+                entry['error'] = '%s: %s' % (type(exc).__name__, exc)
+            finally:
+                sys.stdout, sys.stderr = old_out, old_err
+            results.append(entry)
+        return json.dumps(results)
+
+_dt_kernel = _DTKernel()
+`
+
+async function loadRequestedPackages(wanted) {
+  if (!wanted.length) return
+  post({ type: 'status', phase: 'packages', detail: `Loading ${wanted.join(', ')}…` })
+  const pending = wanted.filter((p) => !loadedPackages.has(p))
+  try {
+    await pyodide.loadPackage(pending)
+    pending.forEach((p) => loadedPackages.add(p))
+    return
+  } catch {
+    // Not all names are bundled wheels — fall back to micropip per package so
+    // one unavailable extra doesn't stop the rest from loading.
+  }
+  try {
+    await pyodide.loadPackage('micropip')
+    const micropip = pyodide.pyimport('micropip')
+    for (const pkg of pending) {
+      if (loadedPackages.has(pkg)) continue
+      try {
+        await pyodide.loadPackage(pkg)
+        loadedPackages.add(pkg)
+      } catch {
+        try {
+          await micropip.install(pkg)
+          loadedPackages.add(pkg)
+        } catch {
+          post({
+            type: 'status',
+            phase: 'warning',
+            detail: `Could not load "${pkg}" — it may not be available in the browser kernel.`,
+          })
+        }
+      }
+    }
+  } catch (err) {
+    post({ type: 'status', phase: 'warning', detail: String(err?.message || err) })
+  }
+}
+
+async function ensurePyodide(packages) {
+  if (readyPromise) {
+    await readyPromise
+    const extra = (packages || []).filter((p) => p && !loadedPackages.has(p))
+    if (extra.length) await loadRequestedPackages(extra)
+    return pyodide
+  }
+  readyPromise = (async () => {
+    post({ type: 'status', phase: 'loading', detail: 'Starting Python…' })
+    self.importScripts(`${PYODIDE_CDN}pyodide.js`)
+    pyodide = await loadPyodide({ indexURL: PYODIDE_CDN })
+
+    // Route Python's own stdout/stderr to the UI as a live stream.
+    pyodide.setStdout({ batched: (text) => post({ type: 'stream', name: 'stdout', text }) })
+    pyodide.setStderr({ batched: (text) => post({ type: 'stream', name: 'stderr', text }) })
+
+    await loadRequestedPackages((packages || []).filter(Boolean))
+    await pyodide.runPythonAsync(HARNESS)
+    post({ type: 'status', phase: 'ready', detail: '' })
+    return pyodide
+  })()
+  return readyPromise
+}
+
+function writeFiles(files) {
+  if (!pyodide || !files?.length) return
+  for (const file of files) {
+    try {
+      const name = String(file.filename || '').split('/').pop()
+      if (!name) continue
+      pyodide.FS.writeFile(name, new Uint8Array(file.bytes))
+    } catch (err) {
+      post({
+        type: 'status',
+        phase: 'warning',
+        detail: `Could not load "${file.filename}": ${err?.message || err}`,
+      })
+    }
+  }
+}
+
+self.onmessage = async (event) => {
+  const msg = event.data || {}
+  try {
+    switch (msg.type) {
+      case 'init': {
+        await ensurePyodide(msg.packages)
+        writeFiles(msg.files)
+        post({ type: 'ready' })
+        break
+      }
+      case 'run': {
+        await ensurePyodide(msg.packages)
+        const raw = pyodide.runPython(`_dt_kernel.run(${JSON.stringify(msg.code || '')})`)
+        post({ type: 'result', id: msg.id, ...JSON.parse(raw) })
+        break
+      }
+      case 'runTests': {
+        await ensurePyodide(msg.packages)
+        const raw = pyodide.runPython(
+          `_dt_kernel.run_tests(${JSON.stringify(JSON.stringify(msg.tests || []))})`,
+        )
+        post({ type: 'tests', id: msg.id, results: JSON.parse(raw) })
+        break
+      }
+      case 'reset': {
+        if (pyodide) pyodide.runPython('_dt_kernel.reset()')
+        post({ type: 'ready', id: msg.id })
+        break
+      }
+      default:
+        break
+    }
+  } catch (err) {
+    post({ type: 'fatal', id: msg.id, error: String(err?.message || err) })
+  }
+}

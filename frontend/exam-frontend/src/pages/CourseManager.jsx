@@ -8,8 +8,10 @@ import {
     FileText, ListChecks, GraduationCap, Pencil, Eye, Video, FileType,
     Sparkles, HelpCircle, ClipboardList, Clock, Users, X, CheckCircle2, Save,
     Code2, Trash2, Image as ImageIcon, Upload, Radio, Calendar, Link2,
+    Notebook as NotebookIcon,
 } from 'lucide-react'
 import { contentBuilderService as svc } from '../services/contentBuilderService'
+import { notebookAdminService } from '../services/notebookService'
 import courseAiService from '../services/courseAiService'
 import { useAuthStore } from '../context/authStore'
 import {
@@ -810,6 +812,107 @@ const CodingSection = ({ topic, subjectId }) => {
 }
 
 /* ===========================================================================
+ * Python notebooks for the selected topic
+ *
+ * Authoring is rich enough (cell roles, tests, datasets) that it lives on its
+ * own page rather than in a modal — this section is just the list plus the
+ * links into the builder and the submissions dashboard.
+ * ========================================================================= */
+const NotebookSection = ({ topic, subjectId }) => {
+    const navigate = useNavigate()
+    const { courseId } = useParams()
+    const queryClient = useQueryClient()
+    const [del, setDel] = useState(null)
+
+    const { data: notebooks = [], isLoading } = useQuery({
+        queryKey: ['cb-notebooks', topic.id],
+        queryFn: () => notebookAdminService.list({ topic: topic.id }),
+    })
+
+    const invalidate = () => queryClient.invalidateQueries({ queryKey: ['cb-notebooks', topic.id] })
+
+    const deleteMutation = useMutation({
+        mutationFn: (n) => notebookAdminService.remove(n.id),
+        onSuccess: () => { toast.success('Deleted'); invalidate(); setDel(null) },
+        onError: (err) => toast.error(formatApiError(err)),
+    })
+
+    const duplicateMutation = useMutation({
+        mutationFn: (n) => notebookAdminService.duplicate(n.id),
+        onSuccess: () => { toast.success('Duplicated'); invalidate() },
+        onError: (err) => toast.error(formatApiError(err)),
+    })
+
+    const builderUrl = (id) =>
+        `/courses/${courseId}/manage/notebooks/${id}/edit?topic=${topic.id}&subject=${subjectId || ''}`
+
+    if (isLoading) {
+        return <div className="py-8 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-surface-400" /></div>
+    }
+
+    return (
+        <div className="space-y-2">
+            <div className="flex items-center justify-between">
+                <h4 className="text-sm font-bold text-surface-700 dark:text-surface-200">Python notebooks</h4>
+                <button onClick={() => navigate(builderUrl('new'))} className="btn-primary text-xs px-3 py-1.5">
+                    <Plus className="w-3.5 h-3.5" /> Add notebook
+                </button>
+            </div>
+            {notebooks.length === 0 ? (
+                <EmptyHint icon={NotebookIcon} text="No notebooks yet." sub="Import an .ipynb or start from scratch; students run Python in the browser and it grades automatically." />
+            ) : (
+                <div className="space-y-2">
+                    {notebooks.map((n) => (
+                        <div key={n.id} className="group card p-3.5 flex items-center justify-between gap-3 hover:border-primary-200 dark:hover:border-primary-800 transition-colors">
+                            <div className="flex items-center gap-3 min-w-0">
+                                <div className="w-9 h-9 rounded-xl bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 flex items-center justify-center shrink-0">
+                                    <NotebookIcon className="w-4 h-4" />
+                                </div>
+                                <div className="min-w-0">
+                                    <p className="text-sm font-semibold text-surface-800 dark:text-surface-100 truncate">{n.title}</p>
+                                    <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                                        <span className={`text-[10px] px-1.5 py-0.5 rounded capitalize ${DIFF_BADGE[n.difficulty] || ''}`}>{n.difficulty}</span>
+                                        <span className={`text-[10px] px-1.5 py-0.5 rounded capitalize ${statusPill(n.status)}`}>{n.status}</span>
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-100 dark:bg-surface-800 text-surface-500">{n.test_count || 0} tests</span>
+                                        {n.max_marks != null && <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-100 dark:bg-surface-800 text-surface-500">{n.max_marks} marks</span>}
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary-50 dark:bg-primary-900/20 text-primary-600">{n.submission_count || 0} submitted</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                                <button onClick={() => navigate(`/courses/${courseId}/manage/notebooks/${n.id}`)} className="btn-secondary text-xs px-2.5 py-1.5">
+                                    <Users className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Submissions</span>
+                                </button>
+                                <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+                                    <button
+                                        onClick={() => duplicateMutation.mutate(n)}
+                                        disabled={duplicateMutation.isPending}
+                                        title="Duplicate"
+                                        className="p-1.5 rounded-lg text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 hover:text-primary-600"
+                                    >
+                                        <Layers className="w-4 h-4" />
+                                    </button>
+                                    <RowActions
+                                        onEdit={() => navigate(builderUrl(n.id))}
+                                        onDelete={() => setDel(n)}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            <AnimatePresence>
+                {del && (
+                    <ConfirmDialog label={del.title} deleting={deleteMutation.isPending} onCancel={() => setDel(null)} onConfirm={() => deleteMutation.mutate(del)} />
+                )}
+            </AnimatePresence>
+        </div>
+    )
+}
+
+/* ===========================================================================
  * Live classes for the selected topic
  * ========================================================================= */
 const LIVE_PROVIDERS = [
@@ -1071,7 +1174,7 @@ const TopicPanel = ({ topic, subjectId, subjectName, openModal, askDelete }) => 
     // Everything the panel shows for this topic is refetched after a write, so
     // generated material appears in the tabs without a manual reload.
     const refreshTopic = () => {
-        for (const key of ['cb-contents', 'cb-quizzes', 'cb-assignments', 'cb-coding']) {
+        for (const key of ['cb-contents', 'cb-quizzes', 'cb-assignments', 'cb-coding', 'cb-notebooks']) {
             queryClient.invalidateQueries({ queryKey: [key, topic.id] })
         }
     }
@@ -1099,7 +1202,7 @@ const TopicPanel = ({ topic, subjectId, subjectName, openModal, askDelete }) => 
             </div>
 
             <div className="flex gap-1 p-1 bg-surface-100 dark:bg-surface-800 rounded-xl w-fit my-4">
-                {[{ id: 'content', label: 'Content', icon: FileText }, { id: 'quizzes', label: 'Quizzes', icon: ListChecks }, { id: 'assignments', label: 'Assignments', icon: ClipboardList }, { id: 'coding', label: 'Coding', icon: Code2 }, { id: 'live', label: 'Live', icon: Radio }].map((t) => (
+                {[{ id: 'content', label: 'Content', icon: FileText }, { id: 'quizzes', label: 'Quizzes', icon: ListChecks }, { id: 'assignments', label: 'Assignments', icon: ClipboardList }, { id: 'coding', label: 'Coding', icon: Code2 }, { id: 'notebooks', label: 'Notebooks', icon: NotebookIcon }, { id: 'live', label: 'Live', icon: Radio }].map((t) => (
                     <button
                         key={t.id}
                         onClick={() => setTab(t.id)}
@@ -1114,6 +1217,7 @@ const TopicPanel = ({ topic, subjectId, subjectName, openModal, askDelete }) => 
             {tab === 'quizzes' && <QuizSection topic={topic} subjectId={subjectId} openModal={openModal} askDelete={askDelete} />}
             {tab === 'assignments' && <AssignmentSection topic={topic} subjectId={subjectId} openModal={openModal} askDelete={askDelete} />}
             {tab === 'coding' && <CodingSection topic={topic} subjectId={subjectId} />}
+            {tab === 'notebooks' && <NotebookSection topic={topic} subjectId={subjectId} />}
             {tab === 'live' && <LiveClassSection topic={topic} subjectId={subjectId} />}
 
             <AnimatePresence>

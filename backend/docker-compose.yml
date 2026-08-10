@@ -58,6 +58,13 @@ services:
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
       - CODE_JUDGE_ASYNC=${CODE_JUDGE_ASYNC:-False}
       - CODE_JUDGE_PARALLELISM=${CODE_JUDGE_PARALLELISM:-1}
+      # Python notebooks. Interactive execution happens in the browser
+      # (Pyodide); NOTEBOOKS_SERVER_GRADING turns on the authoritative
+      # server-side re-grade in the sandboxed nbrunner container below.
+      - NOTEBOOKS_ENABLED=${NOTEBOOKS_ENABLED:-True}
+      - NOTEBOOKS_SERVER_GRADING=${NOTEBOOKS_SERVER_GRADING:-True}
+      - NOTEBOOKS_JUDGE_ASYNC=${NOTEBOOKS_JUDGE_ASYNC:-True}
+      - NBRUNNER_URL=${NBRUNNER_URL:-http://nbrunner:2100}
 
     depends_on:
       db:
@@ -99,6 +106,58 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  # Dedicated worker for the `notebooks` queue. Notebook grading re-executes a
+  # whole notebook (which may train a model), so it is far longer-running than a
+  # coding submission — giving it its own worker keeps a slow notebook from
+  # head-of-line blocking quick coding submissions on the default queue.
+  celery-nbworker:
+    build: .
+    restart: unless-stopped
+    entrypoint: []
+    command: >
+      celery -A dailytaiyari worker --loglevel=info
+      --queues=notebooks
+      --concurrency=${CELERY_NB_CONCURRENCY:-1}
+    volumes:
+      - .:/app
+      - media_volume:/app/media
+    environment: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Sandboxed notebook grading runner. Runs untrusted student notebook code.
+  # SECURITY: never publish ports (internal docker network only); reachable only
+  # from `web`/`celery-nbworker` at http://nbrunner:2100. Unlike Piston it needs
+  # no privileged mode — it runs as a non-root user and each request is executed
+  # in a fresh forked subprocess with RLIMIT_AS/CPU/FSIZE caps and a hard
+  # wall-clock kill. Contains no app code, no credentials and no DB access.
+  nbrunner:
+    build: ./deploy/nbrunner
+    restart: unless-stopped
+    environment:
+      - NBRUNNER_PORT=2100
+    read_only: true
+    tmpfs:
+      - /tmp:size=1g,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:2100/health',timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    # No `ports:` on purpose — do NOT expose to host/internet.
+    cpus: "1.0"
+    mem_limit: 2g
+    mem_reservation: 256m
+    pids_limit: 512
 
   # Code-execution sandbox for coding questions. Runs untrusted student code.
   # SECURITY: never publish ports (internal docker network only); reachable only
