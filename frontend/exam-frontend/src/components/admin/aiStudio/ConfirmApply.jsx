@@ -20,7 +20,7 @@ const describe = (job, selection, isNotebook) => {
         const cells = (draft.cells || []).length
         const tests = (draft.tests || []).length
         items.push(
-            `the notebook “${draft.title || 'Untitled notebook'}”`,
+            `the lab “${draft.title || 'Untitled lab'}”`,
             line(cells, 'cell', 'cells'),
             tests ? `${line(tests, 'autograder test', 'autograder tests')} (graded)` : null,
         )

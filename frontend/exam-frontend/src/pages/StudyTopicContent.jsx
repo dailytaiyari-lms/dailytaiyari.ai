@@ -22,7 +22,7 @@ const TABS = [
   { key: 'quizzes', label: 'Quizzes', icon: PenTool },
   { key: 'assignments', label: 'Assignments', icon: ClipboardList },
   { key: 'coding', label: 'Coding', icon: Code2 },
-  { key: 'notebooks', label: 'Notebooks', icon: NotebookIcon },
+  { key: 'notebooks', label: 'Labs', icon: NotebookIcon },
   { key: 'live', label: 'Live', icon: Radio },
 ]
 
@@ -128,7 +128,7 @@ const StudyTopicContent = () => {
     { icon: PlayCircle, color: 'text-red-500', done: videosDone, total: videos.length, label: 'watched' },
     { icon: PenTool, color: 'text-green-500', done: quizzesAttempted, total: quizzes.length, label: 'quizzes' },
     { icon: Code2, color: 'text-primary-500', done: codingDone, total: codingProblems.length, label: 'coding' },
-    { icon: NotebookIcon, color: 'text-indigo-500', done: notebooksDone, total: notebooks.length, label: 'notebooks' },
+    { icon: NotebookIcon, color: 'text-indigo-500', done: notebooksDone, total: notebooks.length, label: 'labs' },
     { icon: ClipboardList, color: 'text-purple-500', done: assignmentsDone, total: assignments.length, label: 'assignments' },
     { icon: Radio, color: 'text-red-500', done: liveNow, total: liveClasses.length, label: 'live' },
   ].filter(s => s.total > 0)
@@ -218,7 +218,7 @@ const StudyTopicContent = () => {
           exit={{ opacity: 0, y: -10 }}
           transition={{ duration: 0.2 }}
         >
-          {activeTab === 'all' && <AllTab reading={reading} videos={videos} quizzes={quizzes} assignments={assignments} coding={codingProblems} live={liveClasses} navigate={navigate} quizNavState={quizNavState} />}
+          {activeTab === 'all' && <AllTab reading={reading} videos={videos} quizzes={quizzes} assignments={assignments} coding={codingProblems} labs={notebooks} live={liveClasses} navigate={navigate} quizNavState={quizNavState} />}
           {activeTab === 'reading' && <ReadingTab items={reading} navigate={navigate} />}
           {activeTab === 'videos' && <VideosTab items={videos} navigate={navigate} />}
           {activeTab === 'quizzes' && <QuizzesTab items={quizzes} navigate={navigate} quizNavState={quizNavState} />}
@@ -301,7 +301,20 @@ const openLive = (l) => {
   if (l.meeting_url) window.open(l.meeting_url, '_blank', 'noopener,noreferrer')
 }
 
-const AllTab = ({ reading, videos, quizzes, assignments = [], coding = [], live = [], navigate, quizNavState }) => {
+const labStatus = (n) => {
+  const best = n.my_best
+  if (n.is_complete) return { tone: 'score', icon: Trophy, label: 'Completed' }
+  if (best) {
+    return {
+      tone: 'progress',
+      icon: CheckCircle2,
+      label: `${best.passed_points}/${best.total_points}`,
+    }
+  }
+  return { tone: 'idle', icon: Circle, label: 'Not started' }
+}
+
+const AllTab = ({ reading, videos, quizzes, assignments = [], coding = [], labs = [], live = [], navigate, quizNavState }) => {
   // An "editorial" note shares its exact title with a coding problem in this
   // topic (our authoring convention). We lift those notes out of the reading
   // block and place each one immediately before its problem, so the flow reads
@@ -336,6 +349,7 @@ const AllTab = ({ reading, videos, quizzes, assignments = [], coding = [], live 
     ...quizzes.map(q => ({ ...q, _kind: 'quiz' })),
     ...assignments.map(a => ({ ...a, _kind: 'assignment' })),
     ...codingRows,
+    ...labs.map(n => ({ ...n, _kind: 'lab' })),
     ...live.map(l => ({ ...l, _kind: 'live' })),
   ]
 
@@ -350,6 +364,7 @@ const AllTab = ({ reading, videos, quizzes, assignments = [], coding = [], live 
         const isVideo = item._kind === 'video'
         const isAssignment = item._kind === 'assignment'
         const isCoding = item._kind === 'coding'
+        const isLab = item._kind === 'lab'
         const isLive = item._kind === 'live'
 
         let cfg
@@ -357,6 +372,7 @@ const AllTab = ({ reading, videos, quizzes, assignments = [], coding = [], live 
         else if (isVideo) cfg = { icon: PlayCircle, color: 'bg-red-50 text-red-600 dark:bg-red-900/30', label: 'Video' }
         else if (isAssignment) cfg = { icon: ClipboardList, color: 'bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30', label: 'Assignment' }
         else if (isCoding) cfg = { icon: Code2, color: 'bg-primary-50 text-primary-600 dark:bg-primary-900/30', label: 'Coding' }
+        else if (isLab) cfg = { icon: NotebookIcon, color: 'bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30', label: 'Lab' }
         else if (isLive) cfg = { icon: Radio, color: 'bg-red-50 text-red-600 dark:bg-red-900/30', label: 'Live class' }
         else cfg = readingCfg(item)
         const Icon = cfg.icon
@@ -372,6 +388,9 @@ const AllTab = ({ reading, videos, quizzes, assignments = [], coding = [], live 
           status = <StatusPill tone={s.tone} icon={s.icon} label={s.label} />
         } else if (isCoding) {
           const s = codingStatus(item)
+          status = <StatusPill tone={s.tone} icon={s.icon} label={s.label} />
+        } else if (isLab) {
+          const s = labStatus(item)
           status = <StatusPill tone={s.tone} icon={s.icon} label={s.label} />
         } else if (isLive) {
           const s = liveStatus(item)
@@ -399,6 +418,10 @@ const AllTab = ({ reading, videos, quizzes, assignments = [], coding = [], live 
         } else if (isCoding) {
           if (item.difficulty) meta.push(item.difficulty)
           if (item.max_marks) meta.push(`${item.max_marks} marks`)
+        } else if (isLab) {
+          if (item.difficulty) meta.push(item.difficulty)
+          if (item.max_marks) meta.push(`${item.max_marks} marks`)
+          if (item.estimated_time_minutes) meta.push(`${item.estimated_time_minutes} min`)
         } else if (isLive) {
           meta.push(item.provider_display || 'Google Meet')
           if (item.duration_minutes) meta.push(`${item.duration_minutes} min`)
@@ -410,6 +433,7 @@ const AllTab = ({ reading, videos, quizzes, assignments = [], coding = [], live 
           if (isQuiz) navigate(`/quiz/${item.id}`, { state: quizNavState })
           else if (isAssignment) navigate(`/assignment/${item.id}`)
           else if (isCoding) navigate(`/coding/${item.id}`)
+          else if (isLab) navigate(`/notebooks/${item.id}`)
           else if (isLive) openLive(item)
           else navigate(`/content/${item.id}`)
         }
@@ -684,7 +708,7 @@ const AssignmentsTab = ({ items, navigate }) => {
 
 const NotebooksTab = ({ items, navigate }) => {
   if (items.length === 0) {
-    return <EmptyState icon={NotebookIcon} message="No notebooks have been added yet" />
+    return <EmptyState icon={NotebookIcon} message="No labs have been added yet" />
   }
   return (
     <div className={TILE_GRID}>
@@ -698,9 +722,9 @@ const NotebooksTab = ({ items, navigate }) => {
             iconColor={attempted
               ? 'bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30'
               : 'bg-blue-50 text-blue-600 dark:bg-blue-900/30'}
-            label="Notebook"
+            label="Lab"
             title={n.title}
-            meta={<>{n.difficulty || 'notebook'}{n.max_marks ? ` \u00b7 ${n.max_marks} marks` : ''}{n.estimated_time_minutes ? ` \u00b7 ${n.estimated_time_minutes} min` : ''}</>}
+            meta={<>{n.difficulty || 'lab'}{n.max_marks ? ` \u00b7 ${n.max_marks} marks` : ''}{n.estimated_time_minutes ? ` \u00b7 ${n.estimated_time_minutes} min` : ''}</>}
             completed={done}
             badge={attempted && (
               <span className={`flex items-center gap-0.5 text-[11px] font-bold ${done ? 'text-success-600' : 'text-warning-600'}`}>

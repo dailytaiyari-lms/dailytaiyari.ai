@@ -51,7 +51,7 @@ const MATERIALS = [
     { id: 'coding', label: 'Coding problem', icon: Code2, blurb: 'With test cases' },
     {
         id: NOTEBOOK,
-        label: 'Python notebook',
+        label: 'Lab (Python notebook)',
         icon: Notebook,
         blurb: 'Runs in the browser, autograded',
     },
@@ -127,7 +127,7 @@ const ExistingMaterial = ({ material }) => {
         { key: 'quizzes', label: 'Quiz', items: material.quizzes },
         { key: 'assignments', label: 'Assignment', items: material.assignments },
         { key: 'coding_problems', label: 'Coding', items: material.coding_problems },
-        { key: 'notebooks', label: 'Notebook', items: material.notebooks },
+        { key: 'notebooks', label: 'Lab', items: material.notebooks },
     ].filter((row) => (row.items || []).length)
 
     if (!rows.length) {
@@ -519,8 +519,8 @@ const TopicStudio = ({ courseId, topic, subjectName, resumeJob = null, onClose, 
                                         <NotebookShapeFields form={notebookForm} setForm={setNotebookForm} />
                                     </div>
                                     <p className="mt-2 text-xs text-surface-500">
-                                        Students run it in the browser; a graded notebook is marked automatically
-                                        against hidden tests. It is added alongside any notebook already here.
+                                        Students run it in the browser; a graded lab is marked automatically
+                                        against hidden tests. It is added alongside any lab already here.
                                     </p>
                                 </div>
                             )}

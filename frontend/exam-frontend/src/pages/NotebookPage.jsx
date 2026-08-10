@@ -156,22 +156,22 @@ const NotebookPage = () => {
   }, [flushSave])
 
   const handleReset = async () => {
-    if (!window.confirm('Reset the notebook back to the original template? Your current work will be lost.')) return
+    if (!window.confirm('Reset the lab back to the original template? Your current work will be lost.')) return
     try {
       const data = await notebookService.resetDraft(notebookId)
       pendingDoc.current = null
       queryClient.setQueryData(['notebook', notebookId], (prev) =>
         prev ? { ...prev, notebook_json: data.notebook_json } : prev)
       setSelfCheck(null)
-      toast.success('Notebook reset to the template.')
+      toast.success('Lab reset to the template.')
     } catch {
-      toast.error('Could not reset the notebook.')
+      toast.error('Could not reset the lab.')
     }
   }
 
   const handleSelfCheck = async () => {
     if (!visibleTests.length) {
-      toast('This notebook has no practice checks — use Submit when you are ready.')
+      toast('This lab has no practice checks — use Submit when you are ready.')
       return
     }
     try {
@@ -194,7 +194,7 @@ const NotebookPage = () => {
     if (!notebook?.can_submit) return
     const remaining = notebook.attempts_remaining
     const warn = remaining === null
-      ? 'Submit this notebook for grading?'
+      ? 'Submit this lab for grading?'
       : `Submit for grading? You have ${remaining} attempt${remaining === 1 ? '' : 's'} left.`
     if (!window.confirm(warn)) return
 
@@ -206,7 +206,7 @@ const NotebookPage = () => {
       // written, not stale outputs from an earlier state.
       let provisional = []
       if (notebook.provisional_grading !== 'none' && runnableTests.length) {
-        setSubmitPhase('Running your notebook…')
+        setSubmitPhase('Running your lab…')
         try {
           provisional = await editorRef.current.executeForGrading(runnableTests, {
             onProgress: setSubmitPhase,
@@ -254,7 +254,7 @@ const NotebookPage = () => {
       <div className="max-w-3xl mx-auto px-4 py-16 text-center">
         <AlertTriangle className="w-10 h-10 mx-auto text-amber-500 mb-3" />
         <p className="text-surface-600 dark:text-surface-300">
-          This notebook is not available.
+          This lab is not available.
         </p>
         <button
           onClick={() => navigate(-1)}
@@ -333,7 +333,7 @@ const NotebookPage = () => {
       {notebook.is_past_due && (
         <div className="flex items-center gap-2 rounded-xl border border-red-200 dark:border-red-900/40 bg-red-50 dark:bg-red-900/10 px-4 py-2.5 text-sm text-red-700 dark:text-red-300">
           <AlertTriangle className="w-4 h-4 shrink-0" />
-          The due date has passed — this notebook no longer accepts submissions.
+          The due date has passed — this lab no longer accepts submissions.
         </div>
       )}
 

@@ -47,13 +47,14 @@ def _chapter_completion_counts(student, topic_ids):
     Total vs. completed learnable items for a chapter's set of topics.
 
     Mirrors the per-chapter progress computation used in ``StudyChaptersView``
-    (published content + quizzes + assignments + coding). Returns a
+    (published content + quizzes + assignments + coding + labs). Returns a
     ``(total, completed)`` tuple. Used to decide sequential-unlock locking.
     """
     from content.models import Content, ContentProgress
     from quiz.models import Quiz, QuizAttempt
     from assignments.models import Assignment, AssignmentSubmission
     from coding.models import CodingProblem, CodingSubmission
+    from notebooks.models import Notebook, NotebookCompletion
 
     if not topic_ids:
         return 0, 0
@@ -86,9 +87,16 @@ def _chapter_completion_counts(student, topic_ids):
         problem__status='published', total_count__gt=0,
         passed_count=F('total_count'),
     ).values('problem').distinct().count()
+    lab_total = Notebook.objects.filter(
+        topic_id__in=topic_ids, status='published',
+    ).count()
+    lab_done = NotebookCompletion.objects.filter(
+        student=student, notebook__topic_id__in=topic_ids,
+        notebook__status='published', is_complete=True,
+    ).count()
 
-    total = content_count + quiz_count + assignment_total + coding_total
-    done = content_done + quiz_done + assignment_done + coding_done
+    total = content_count + quiz_count + assignment_total + coding_total + lab_total
+    done = content_done + quiz_done + assignment_done + coding_done + lab_done
     return total, done
 
 
@@ -359,6 +367,7 @@ class StudySubjectsView(APIView):
         from quiz.models import Quiz, QuizAttempt
         from assignments.models import Assignment, AssignmentSubmission
         from coding.models import CodingProblem, CodingSubmission
+        from notebooks.models import Notebook, NotebookCompletion
 
         student = request.user.profile
         course_id = request.query_params.get('course_id')
@@ -445,11 +454,25 @@ class StudySubjectsView(APIView):
                 passed_count=F('total_count'),
             ).values('problem').distinct().count()
 
+            lab_total = Notebook.objects.filter(
+                topic_id__in=subj_topic_ids, status='published',
+            ).count()
+            lab_done = NotebookCompletion.objects.filter(
+                student=student,
+                notebook__topic_id__in=subj_topic_ids,
+                notebook__status='published',
+                is_complete=True,
+            ).count()
+
             content_count = reading_total + video_total
             content_done = reading_done + video_done
 
-            total_content = content_count + quiz_count + assignment_total + coding_total
-            completed_content = content_done + quiz_done + assignment_done + coding_done
+            total_content = (
+                content_count + quiz_count + assignment_total + coding_total + lab_total
+            )
+            completed_content = (
+                content_done + quiz_done + assignment_done + coding_done + lab_done
+            )
             progress = (
                 round((completed_content / total_content) * 100)
                 if total_content > 0 else 0
@@ -476,6 +499,7 @@ class StudySubjectsView(APIView):
                 'quizzes': {'total': quiz_count, 'attempted': quiz_done},
                 'assignments': {'total': assignment_total, 'completed': assignment_done},
                 'coding': {'total': coding_total, 'completed': coding_done},
+                'labs': {'total': lab_total, 'completed': lab_done},
             })
 
         return Response(result)
@@ -493,6 +517,7 @@ class StudyChaptersView(APIView):
         from quiz.models import Quiz, QuizAttempt
         from assignments.models import Assignment, AssignmentSubmission
         from coding.models import CodingProblem, CodingSubmission
+        from notebooks.models import Notebook, NotebookCompletion
 
         student = request.user.profile
         try:
@@ -590,8 +615,22 @@ class StudyChaptersView(APIView):
                 passed_count=F('total_count'),
             ).values('problem').distinct().count()
 
-            total_content = content_count + quiz_count + assignment_total + coding_total
-            completed_content = content_done + quiz_done + assignment_done + coding_done
+            lab_total = Notebook.objects.filter(
+                topic_id__in=topic_ids, status='published',
+            ).count()
+            lab_done = NotebookCompletion.objects.filter(
+                student=student,
+                notebook__topic_id__in=topic_ids,
+                notebook__status='published',
+                is_complete=True,
+            ).count()
+
+            total_content = (
+                content_count + quiz_count + assignment_total + coding_total + lab_total
+            )
+            completed_content = (
+                content_done + quiz_done + assignment_done + coding_done + lab_done
+            )
 
             progress = (
                 round((completed_content / total_content) * 100)
@@ -615,6 +654,7 @@ class StudyChaptersView(APIView):
                 'quizzes': {'total': quiz_total, 'attempted': quiz_attempted},
                 'assignments': {'total': assignment_total, 'completed': assignment_done},
                 'coding': {'total': coding_total, 'completed': coding_done},
+                'labs': {'total': lab_total, 'completed': lab_done},
                 '_blocks_next': _chapter_blocks_next(total_content, completed_content),
             })
 
@@ -654,6 +694,7 @@ class StudyChapterDetailView(APIView):
         from quiz.models import Quiz, QuizAttempt
         from assignments.models import Assignment, AssignmentSubmission
         from coding.models import CodingProblem, CodingSubmission
+        from notebooks.models import Notebook, NotebookCompletion
 
         student = request.user.profile
         try:
@@ -841,6 +882,29 @@ class StudyChapterDetailView(APIView):
                 'is_completed': info['solved'],
             })
 
+        labs = Notebook.objects.filter(
+            topic_id__in=topic_ids, status='published'
+        ).order_by('topic_id', 'order')
+        lab_completion_map = {
+            nc.notebook_id: nc
+            for nc in NotebookCompletion.objects.filter(
+                student=student, notebook__in=labs,
+            )
+        }
+        lab_by_topic = {}
+        for nb in labs:
+            tid = str(nb.topic_id)
+            done = lab_completion_map.get(nb.id)
+            lab_by_topic.setdefault(tid, []).append({
+                'id': str(nb.id),
+                'title': nb.title,
+                'difficulty': nb.difficulty,
+                'max_marks': nb.max_marks,
+                'estimated_time_minutes': nb.estimated_time_minutes,
+                'attempts_count': done.attempts_used if done else 0,
+                'is_completed': bool(done and done.is_complete),
+            })
+
         topics_payload = []
         for ct in chapter_topics:
             t = ct.topic
@@ -860,6 +924,7 @@ class StudyChapterDetailView(APIView):
                 'quizzes': quiz_by_topic.get(tid, []),
                 'assignments': assignment_by_topic.get(tid, []),
                 'coding': coding_by_topic.get(tid, []),
+                'labs': lab_by_topic.get(tid, []),
             })
 
         return Response({
@@ -1047,6 +1112,7 @@ class StudyLeaderboardView(APIView):
         from quiz.models import Quiz, QuizAttempt
         from assignments.models import Assignment, AssignmentSubmission
         from coding.models import CodingProblem, CodingSubmission
+        from notebooks.models import Notebook, NotebookCompletion
         from users.models import CourseEnrollment, StudentProfile
 
         try:
@@ -1068,7 +1134,12 @@ class StudyLeaderboardView(APIView):
         coding_total = CodingProblem.objects.filter(
             topic_id__in=topic_ids, status='published',
         ).count()
-        grand_total = content_total + quiz_total + assignment_total + coding_total
+        lab_total = Notebook.objects.filter(
+            topic_id__in=topic_ids, status='published',
+        ).count()
+        grand_total = (
+            content_total + quiz_total + assignment_total + coding_total + lab_total
+        )
         if grand_total == 0:
             return Response([])
 
@@ -1107,6 +1178,12 @@ class StudyLeaderboardView(APIView):
                 total_count__gt=0, passed_count=F('total_count'),
                 student__user__tenant=tenant,
             ).values('student').annotate(c=Count('problem', distinct=True))
+        )
+        _accumulate(
+            NotebookCompletion.objects.filter(
+                notebook__topic_id__in=topic_ids, notebook__status='published',
+                is_complete=True, student__user__tenant=tenant,
+            ).values('student').annotate(c=Count('notebook', distinct=True))
         )
 
         # Only rank students actively enrolled in this course.

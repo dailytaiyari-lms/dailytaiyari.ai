@@ -12,6 +12,7 @@ import {
   BookOpen, Atom, FlaskConical, Calculator, Leaf, Bug,
   ChevronRight, ChevronDown, GraduationCap, ArrowLeft, Settings2,
   PlayCircle, PenTool, ClipboardList, Code2, Trophy, CheckCircle2, Award, Lock,
+  Notebook as NotebookIcon,
 } from 'lucide-react'
 
 const iconMap = {
@@ -63,14 +64,16 @@ const Bar = ({ value, color }) => (
 
 /** Leaf row: a single topic with an Enter button. */
 const TopicRow = ({ item, index, onEnter, locked = false }) => {
-  const { topic, reading = [], videos = [], quizzes = [], assignments = [], coding = [] } = item
+  const { topic, reading = [], videos = [], quizzes = [], assignments = [], coding = [], labs = [] } = item
   const readingDone = reading.filter((r) => r.is_completed).length
   const videosDone = videos.filter((v) => v.is_completed).length
   const quizzesDone = quizzes.filter((q) => q.attempts_count > 0).length
   const assignmentsDone = assignments.filter((a) => a.is_completed).length
   const codingDone = coding.filter((c) => c.is_completed).length
-  const total = reading.length + videos.length + quizzes.length + assignments.length + coding.length
-  const done = readingDone + videosDone + quizzesDone + assignmentsDone + codingDone
+  const labsDone = labs.filter((n) => n.is_completed).length
+  const total = reading.length + videos.length + quizzes.length + assignments.length
+    + coding.length + labs.length
+  const done = readingDone + videosDone + quizzesDone + assignmentsDone + codingDone + labsDone
   const progress = total > 0 ? Math.round((done / total) * 100) : 0
   const hasContent = total > 0
   const complete = hasContent && progress === 100
@@ -80,6 +83,7 @@ const TopicRow = ({ item, index, onEnter, locked = false }) => {
     { icon: PlayCircle, done: videosDone, total: videos.length, label: 'watched' },
     { icon: PenTool, done: quizzesDone, total: quizzes.length, label: 'quizzes' },
     { icon: Code2, done: codingDone, total: coding.length, label: 'coding' },
+    { icon: NotebookIcon, done: labsDone, total: labs.length, label: 'labs' },
     { icon: ClipboardList, done: assignmentsDone, total: assignments.length, label: 'tasks' },
   ].filter((s) => s.total > 0)
 
@@ -150,7 +154,7 @@ const ChapterRow = ({ chapter, index, courseColor, navigate }) => {
   const chapterItems =
     (chapter.reading?.total ?? 0) + (chapter.videos?.total ?? 0) +
     (chapter.quizzes?.total ?? 0) + (chapter.assignments?.total ?? 0) +
-    (chapter.coding?.total ?? 0)
+    (chapter.coding?.total ?? 0) + (chapter.labs?.total ?? 0)
   const hasContent = chapterItems > 0
   const complete = hasContent && chapter.progress === 100
 
@@ -360,6 +364,8 @@ const StudyCourse = () => {
         acc.quizzes.done += s.quizzes?.attempted || 0
         acc.coding.total += s.coding?.total || 0
         acc.coding.done += s.coding?.completed || 0
+        acc.labs.total += s.labs?.total || 0
+        acc.labs.done += s.labs?.completed || 0
         acc.assignments.total += s.assignments?.total || 0
         acc.assignments.done += s.assignments?.completed || 0
         return acc
@@ -368,7 +374,7 @@ const StudyCourse = () => {
         total: 0, done: 0,
         reading: { total: 0, done: 0 }, videos: { total: 0, done: 0 },
         quizzes: { total: 0, done: 0 }, coding: { total: 0, done: 0 },
-        assignments: { total: 0, done: 0 },
+        labs: { total: 0, done: 0 }, assignments: { total: 0, done: 0 },
       },
     )
     const progress = totals.total > 0 ? Math.round((totals.done / totals.total) * 100) : 0
@@ -384,6 +390,7 @@ const StudyCourse = () => {
     { icon: PlayCircle, color: 'text-red-500', label: 'Videos', ...summary.videos },
     { icon: PenTool, color: 'text-green-500', label: 'Quizzes', ...summary.quizzes },
     { icon: Code2, color: 'text-primary-500', label: 'Coding', ...summary.coding },
+    { icon: NotebookIcon, color: 'text-indigo-500', label: 'Labs', ...summary.labs },
     { icon: ClipboardList, color: 'text-purple-500', label: 'Assignments', ...summary.assignments },
   ].filter((b) => b.total > 0)
 

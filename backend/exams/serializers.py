@@ -158,14 +158,15 @@ def chapter_content_type_counts(topic_ids):
     """Published content grouped by student-facing type for a set of topics.
 
     Mirrors the taxonomy used by the study flow (reading / videos / quizzes /
-    assignments / coding) so the pre-enrollment curriculum preview matches what
-    an enrolled student actually sees. Returns an ordered list of
+    assignments / coding / labs) so the pre-enrollment curriculum preview
+    matches what an enrolled student actually sees. Returns an ordered list of
     {key, label, count}, only including non-zero buckets.
     """
     from content.models import Content
     from quiz.models import Quiz
     from assignments.models import Assignment
     from coding.models import CodingProblem
+    from notebooks.models import Notebook
 
     if not topic_ids:
         return []
@@ -178,6 +179,7 @@ def chapter_content_type_counts(topic_ids):
     quizzes = Quiz.objects.filter(topic_id__in=topic_ids, status='published').count()
     assignments = Assignment.objects.filter(topic_id__in=topic_ids, status='published').count()
     coding = CodingProblem.objects.filter(topic_id__in=topic_ids, status='published').count()
+    labs = Notebook.objects.filter(topic_id__in=topic_ids, status='published').count()
 
     buckets = [
         ('reading', 'Reading material', reading),
@@ -185,6 +187,7 @@ def chapter_content_type_counts(topic_ids):
         ('quizzes', 'Quizzes', quizzes),
         ('assignments', 'Assignments', assignments),
         ('coding', 'Coding problems', coding),
+        ('labs', 'Labs', labs),
     ]
     return [
         {'key': key, 'label': label, 'count': count}

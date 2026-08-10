@@ -855,13 +855,13 @@ const NotebookSection = ({ topic, subjectId }) => {
     return (
         <div className="space-y-2">
             <div className="flex items-center justify-between">
-                <h4 className="text-sm font-bold text-surface-700 dark:text-surface-200">Python notebooks</h4>
+                <h4 className="text-sm font-bold text-surface-700 dark:text-surface-200">Labs (Python notebooks)</h4>
                 <button onClick={() => navigate(builderUrl('new'))} className="btn-primary text-xs px-3 py-1.5">
-                    <Plus className="w-3.5 h-3.5" /> Add notebook
+                    <Plus className="w-3.5 h-3.5" /> Add lab
                 </button>
             </div>
             {notebooks.length === 0 ? (
-                <EmptyHint icon={NotebookIcon} text="No notebooks yet." sub="Import an .ipynb or start from scratch; students run Python in the browser and it grades automatically." />
+                <EmptyHint icon={NotebookIcon} text="No labs yet." sub="Import an .ipynb or start from scratch; students run Python in the browser and it grades automatically." />
             ) : (
                 <div className="space-y-2">
                     {notebooks.map((n) => (
@@ -1226,7 +1226,7 @@ const TopicPanel = ({ topic, subjectId, subjectName, openModal, askDelete }) => 
             </div>
 
             <div className="flex gap-1 p-1 bg-surface-100 dark:bg-surface-800 rounded-xl w-fit my-4">
-                {[{ id: 'content', label: 'Content', icon: FileText }, { id: 'quizzes', label: 'Quizzes', icon: ListChecks }, { id: 'assignments', label: 'Assignments', icon: ClipboardList }, { id: 'coding', label: 'Coding', icon: Code2 }, { id: 'notebooks', label: 'Notebooks', icon: NotebookIcon }, { id: 'live', label: 'Live', icon: Radio }].map((t) => {
+                {[{ id: 'content', label: 'Content', icon: FileText }, { id: 'quizzes', label: 'Quizzes', icon: ListChecks }, { id: 'assignments', label: 'Assignments', icon: ClipboardList }, { id: 'coding', label: 'Coding', icon: Code2 }, { id: 'notebooks', label: 'Labs', icon: NotebookIcon }, { id: 'live', label: 'Live', icon: Radio }].map((t) => {
                     const pending = pendingFor(t.id)
                     return (
                         <button
