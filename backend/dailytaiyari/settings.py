@@ -421,6 +421,10 @@ NBRUNNER_URL = config('NBRUNNER_URL', default='http://nbrunner:2100')
 # Grade notebooks off the web request thread (recommended: a submission can
 # train a model). Falls back to inline grading if the broker is unreachable.
 NOTEBOOKS_JUDGE_ASYNC = config('NOTEBOOKS_JUDGE_ASYNC', default=True, cast=bool)
+# Generate AI notebooks off the web request thread (a graded notebook is a long
+# LLM call). The client polls the job's status. Falls back to inline generation
+# if the broker is unreachable.
+NOTEBOOKS_GEN_ASYNC = config('NOTEBOOKS_GEN_ASYNC', default=True, cast=bool)
 
 # Celery (broker + result backend on Redis). Result backend stores the task
 # state so the poll endpoint can distinguish queued/running/done.

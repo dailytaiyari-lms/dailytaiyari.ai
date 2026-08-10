@@ -5,10 +5,11 @@ import toast from 'react-hot-toast'
 import {
   ArrowLeft, Save, Upload, Loader2, Plus, Trash2, Lock, Unlock, Target,
   Database, FlaskConical, Settings2, Users, CheckCircle2, XCircle,
-  Notebook as NotebookIcon, Play, AlertTriangle,
+  Notebook as NotebookIcon, Play, AlertTriangle, Sparkles,
 } from 'lucide-react'
 import { notebookAdminService as svc } from '../services/notebookService'
 import NotebookEditor from '../components/notebook/NotebookEditor'
+import NotebookAIGenerator from '../components/notebook/NotebookAIGenerator'
 import Loading from '../components/common/Loading'
 import {
   CELL_ROLES, ROLE_ANSWER, ROLE_LABELS, META_KEY,
@@ -77,6 +78,7 @@ const NotebookBuilder = () => {
   const [importing, setImporting] = useState(false)
   const [testRun, setTestRun] = useState(null)
   const [running, setRunning] = useState(false)
+  const [aiOpen, setAiOpen] = useState(false)
 
   const { data: notebook, isLoading, refetch } = useQuery({
     queryKey: ['nb-admin-notebook', notebookId],
@@ -273,6 +275,14 @@ const NotebookBuilder = () => {
         </span>
 
         <div className="ml-auto flex items-center gap-2">
+          {isNew && (
+            <button
+              onClick={() => setAiOpen(true)}
+              className="btn-secondary text-xs px-3 py-1.5"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-primary-600" /> Generate with AI
+            </button>
+          )}
           {!isNew && (
             <button
               onClick={() => navigate(`/courses/${courseId}/manage/notebooks/${notebookId}`)}
@@ -726,6 +736,22 @@ const NotebookBuilder = () => {
           )}
         </div>
       )}
+
+      <NotebookAIGenerator
+        open={aiOpen}
+        onClose={() => setAiOpen(false)}
+        courseId={courseId}
+        topicId={topicId}
+        subjectId={subjectId}
+        onApplied={(notebookId) => {
+          setAiOpen(false)
+          if (notebookId) {
+            navigate(
+              `/courses/${courseId}/manage/notebooks/${notebookId}/edit?topic=${topicId}&subject=${subjectId}`,
+            )
+          }
+        }}
+      />
     </div>
   )
 }

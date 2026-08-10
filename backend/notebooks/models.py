@@ -351,3 +351,129 @@ class NotebookCompletion(TimeStampedModel):
 
     def __str__(self):
         return f'{self.student_id} → {self.notebook_id} ({self.best_passed_points}/{self.best_total_points})'
+
+
+class NotebookGenerationJob(TimeStampedModel):
+    """One AI notebook-generation request plus the draft it produced.
+
+    Mirrors :class:`coursegen.models.CourseGenerationJob`, but the AI never
+    writes to the notebook tables: a run only ever produces a JSON ``draft``
+    (a full nbformat template plus autograder tests). An admin reviews it, may
+    refine it with a follow-up instruction, and only an explicit "apply" turns
+    it into a real :class:`Notebook` with its cells and :class:`NotebookTest`
+    rows.
+
+    Because generating a graded notebook can take a while, the run happens off
+    the request thread on the ``notebooks`` Celery queue and the client polls
+    the job's ``status``::
+
+        pending → generating → preview → applied
+                            ↘ failed        ↘ discarded
+
+    ``preview`` is the only status an apply is accepted from, so a draft can
+    never be written twice.
+    """
+
+    KIND_NOTEBOOK = 'notebook'
+    KIND_CHOICES = [
+        (KIND_NOTEBOOK, 'Interactive notebook (cells + autograder tests)'),
+    ]
+
+    STATUS_PENDING = 'pending'
+    STATUS_GENERATING = 'generating'
+    STATUS_PREVIEW = 'preview'
+    STATUS_APPLIED = 'applied'
+    STATUS_FAILED = 'failed'
+    STATUS_DISCARDED = 'discarded'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_GENERATING, 'Generating'),
+        (STATUS_PREVIEW, 'Awaiting review'),
+        (STATUS_APPLIED, 'Applied'),
+        (STATUS_FAILED, 'Failed'),
+        (STATUS_DISCARDED, 'Discarded'),
+    ]
+
+    # Statuses a background run may legitimately start from (used to atomically
+    # claim the job in the Celery task and guard against duplicate runs).
+    RUNNABLE_STATUSES = (STATUS_PENDING, STATUS_PREVIEW, STATUS_FAILED)
+
+    created_by = models.ForeignKey(
+        'users.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='notebook_generation_jobs',
+    )
+    # Where the generated notebook will live once applied.
+    course = models.ForeignKey(
+        Course, on_delete=models.CASCADE, related_name='notebook_generation_jobs',
+    )
+    subject = models.ForeignKey(
+        Subject, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='notebook_generation_jobs',
+    )
+    topic = models.ForeignKey(
+        Topic, on_delete=models.CASCADE, related_name='notebook_generation_jobs',
+    )
+    # Set once the draft has been applied (or when regenerating an existing
+    # notebook), so re-applying updates in place instead of duplicating.
+    notebook = models.ForeignKey(
+        Notebook, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='generation_jobs',
+    )
+
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES, default=KIND_NOTEBOOK)
+    prompt = models.TextField(blank=True, default='')
+    # Authoring knobs: difficulty, graded (bool), answer_cells, packages,
+    # dataset hints, language/tone, etc.
+    options = models.JSONField(default=dict, blank=True)
+
+    provider = models.CharField(max_length=32, blank=True, default='')
+    model = models.CharField(max_length=200, blank=True, default='')
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    # The reviewable payload — see notebooks.aigen.schema.normalize_draft.
+    draft = models.JSONField(default=dict, blank=True)
+    revisions = models.JSONField(default=list, blank=True)
+    error = models.TextField(blank=True, default='')
+
+    prompt_tokens = models.PositiveIntegerField(default=0)
+    completion_tokens = models.PositiveIntegerField(default=0)
+    total_tokens = models.PositiveIntegerField(default=0)
+    estimated_cost_usd = models.DecimalField(max_digits=10, decimal_places=6, default=0)
+    generation_ms = models.PositiveIntegerField(default=0)
+
+    applied_at = models.DateTimeField(null=True, blank=True)
+    applied_by = models.ForeignKey(
+        'users.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='applied_notebook_generation_jobs',
+    )
+    applied_summary = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        verbose_name = 'Notebook Generation Job'
+        verbose_name_plural = 'Notebook Generation Jobs'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['tenant', 'status'], name='nbgen_tenant_status_idx'),
+            models.Index(fields=['topic', 'status'], name='nbgen_topic_status_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.get_kind_display()} — {self.status}'
+
+    @property
+    def is_reviewable(self):
+        return self.status == self.STATUS_PREVIEW
+
+    @property
+    def is_running(self):
+        return self.status in (self.STATUS_PENDING, self.STATUS_GENERATING)
+
+    def record_revision(self, action, detail=''):
+        from django.utils import timezone
+        entries = list(self.revisions or [])
+        entries.append({
+            'action': action,
+            'detail': (detail or '')[:1000],
+            'at': timezone.now().isoformat(),
+        })
+        self.revisions = entries[-25:]

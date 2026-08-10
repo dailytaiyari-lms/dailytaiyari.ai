@@ -650,11 +650,13 @@ class AIUsageRecord(TimeStampedModel):
     FEATURE_CHAT = 'chat'
     FEATURE_QUIZ = 'quiz'
     FEATURE_COURSEGEN = 'coursegen'
+    FEATURE_NOTEBOOKGEN = 'notebookgen'
     FEATURE_OTHER = 'other'
     FEATURE_CHOICES = [
         (FEATURE_CHAT, 'Doubt solver'),
         (FEATURE_QUIZ, 'AI quiz'),
         (FEATURE_COURSEGEN, 'Course builder'),
+        (FEATURE_NOTEBOOKGEN, 'Notebook builder'),
         (FEATURE_OTHER, 'Other'),
     ]
     feature = models.CharField(max_length=20, choices=FEATURE_CHOICES, default=FEATURE_CHAT)

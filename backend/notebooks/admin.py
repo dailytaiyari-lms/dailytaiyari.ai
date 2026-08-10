@@ -2,7 +2,7 @@ from django.contrib import admin
 
 from .models import (
     Notebook, NotebookCompletion, NotebookDataset, NotebookDraft,
-    NotebookSubmission, NotebookTest,
+    NotebookGenerationJob, NotebookSubmission, NotebookTest,
 )
 
 
@@ -50,3 +50,14 @@ class NotebookDraftAdmin(admin.ModelAdmin):
     list_display = ['notebook', 'student', 'time_spent_seconds', 'updated_at']
     search_fields = ['notebook__title']
     readonly_fields = ['notebook_json']
+
+
+@admin.register(NotebookGenerationJob)
+class NotebookGenerationJobAdmin(admin.ModelAdmin):
+    list_display = [
+        'id', 'topic', 'status', 'provider', 'model', 'total_tokens',
+        'created_by', 'created_at',
+    ]
+    list_filter = ['status', 'kind']
+    search_fields = ['prompt', 'topic__name', 'course__name']
+    readonly_fields = ['draft', 'revisions', 'applied_summary', 'created_at', 'updated_at']

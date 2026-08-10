@@ -97,4 +97,31 @@ export const notebookAdminService = {
   deleteDataset: async (id) => api.delete(`/notebooks/admin/datasets/${id}/`),
 }
 
+/**
+ * AI Notebook Builder ("Notebook Studio").
+ *
+ * Generation runs in the background on the server: `generate` / `refine` /
+ * `regenerate` return a job the client polls with `getJob` until its status
+ * leaves `pending`/`generating`. `apply` is the only call that writes a real
+ * notebook.
+ */
+export const notebookGenService = {
+  options: async () => (await api.get('/notebooks/admin/generate/options/')).data,
+  listJobs: async (params) =>
+    list(await api.get('/notebooks/admin/generate/jobs/', { params })),
+  getJob: async (jobId) =>
+    (await api.get(`/notebooks/admin/generate/jobs/${jobId}/`)).data,
+  generate: async (payload) =>
+    (await api.post('/notebooks/admin/generate/jobs/', payload)).data,
+  refine: async (jobId, instruction) =>
+    (await api.post(`/notebooks/admin/generate/jobs/${jobId}/refine/`, { instruction })).data,
+  regenerate: async (jobId) =>
+    (await api.post(`/notebooks/admin/generate/jobs/${jobId}/regenerate/`)).data,
+  apply: async (jobId) =>
+    (await api.post(`/notebooks/admin/generate/jobs/${jobId}/apply/`, { confirm: true })).data,
+  discard: async (jobId) =>
+    (await api.post(`/notebooks/admin/generate/jobs/${jobId}/discard/`)).data,
+  remove: async (jobId) => api.delete(`/notebooks/admin/generate/jobs/${jobId}/`),
+}
+
 export default notebookService
