@@ -12,9 +12,20 @@ import { AlertTriangle, Check, Loader2, ShieldCheck } from 'lucide-react'
 const line = (count, singular, plural) =>
     count ? `${count} ${count === 1 ? singular : plural}` : null
 
-const describe = (job, selection) => {
+const describe = (job, selection, isNotebook) => {
     const draft = job?.draft || {}
     const items = []
+
+    if (isNotebook) {
+        const cells = (draft.cells || []).length
+        const tests = (draft.tests || []).length
+        items.push(
+            `the notebook “${draft.title || 'Untitled notebook'}”`,
+            line(cells, 'cell', 'cells'),
+            tests ? `${line(tests, 'autograder test', 'autograder tests')} (graded)` : null,
+        )
+        return items.filter(Boolean)
+    }
 
     if (job?.kind === 'outline') {
         if (!job.course) items.push(`a new course “${draft.course?.name}” (hidden until you publish it)`)
@@ -49,10 +60,10 @@ const describe = (job, selection) => {
     return items.filter(Boolean)
 }
 
-const ConfirmApply = ({ job, selection, saving, onCancel, onConfirm }) => {
-    const items = describe(job, selection)
-    const publishing = !!job?.options?.publish_immediately
-    const overwriting = job?.kind === 'content'
+const ConfirmApply = ({ job, selection, saving, onCancel, onConfirm, isNotebook = false }) => {
+    const items = describe(job, selection, isNotebook)
+    const publishing = !isNotebook && !!job?.options?.publish_immediately
+    const overwriting = !isNotebook && job?.kind === 'content'
     const adding = (job?.options?.mode || 'replace') === 'add'
 
     return (

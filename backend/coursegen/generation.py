@@ -638,10 +638,28 @@ def run_job(job, *, topics=None):
 def apply_refinement(job, instruction):
     """Refine an existing draft in place.
 
-    A :class:`GenerationError` propagates untouched and the job keeps its
-    previous draft — a failed refine must never cost the admin their draft.
+    A :class:`GenerationError` propagates untouched and the job is restored to
+    ``preview`` with its previous draft — a failed refine must never cost the
+    admin their draft, nor leave the job stuck in ``generating`` when it is run
+    on the worker.
     """
-    draft, meter, resolved = refine(job, instruction)
+    job.status = CourseGenerationJob.STATUS_GENERATING
+    job.error = ''
+    job.save(update_fields=['status', 'error', 'updated_at'])
+    try:
+        draft, meter, resolved = refine(job, instruction)
+    except GenerationError as exc:
+        job.status = CourseGenerationJob.STATUS_PREVIEW
+        job.error = str(exc)[:2000]
+        job.save(update_fields=['status', 'error', 'updated_at'])
+        raise
+    except Exception as exc:  # noqa: BLE001 - never leak a stack trace to an admin
+        logger.exception('coursegen: unexpected refine failure')
+        job.status = CourseGenerationJob.STATUS_PREVIEW
+        job.error = f'Unexpected error while refining: {str(exc)[:300]}'
+        job.save(update_fields=['status', 'error', 'updated_at'])
+        raise GenerationError(job.error)
+
     _store_result(job, draft, meter, resolved, accumulate=True)
     job.record_revision('refined', instruction)
     job.save()

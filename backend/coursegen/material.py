@@ -12,6 +12,7 @@ from __future__ import annotations
 from assignments.models import Assignment
 from coding.models import CodingProblem
 from content.models import Content
+from notebooks.models import Notebook
 from quiz.models import Quiz
 
 from .notehtml import html_to_plain_text
@@ -64,6 +65,17 @@ def topic_material(topic):
         }
         for item in CodingProblem.objects.filter(topic=topic).order_by('order', 'created_at')
     ]
+    notebooks = [
+        {
+            'id': str(item.id),
+            'title': item.title,
+            'status': item.status,
+            'difficulty': item.difficulty,
+            'total_points': item.total_points(),
+            'locked': item.submissions.exists(),
+        }
+        for item in Notebook.objects.filter(topic=topic).order_by('order', '-created_at')
+    ]
 
     return {
         'topic_id': str(topic.id),
@@ -72,12 +84,14 @@ def topic_material(topic):
         'quizzes': quizzes,
         'assignments': assignments,
         'coding_problems': coding,
+        'notebooks': notebooks,
         'counts': {
             'notes': len(notes),
             'quizzes': len(quizzes),
             'questions': sum(q['question_count'] for q in quizzes),
             'assignments': len(assignments),
             'coding_problems': len(coding),
+            'notebooks': len(notebooks),
         },
     }
 
@@ -120,6 +134,10 @@ def existing_material_text(topics, *, limit_per_topic=6):
             topic_id=topic_id
         ).order_by('order')[:limit_per_topic]:
             entries.append(f'  - Coding problem: "{problem.title}" ({problem.difficulty})')
+        for notebook in Notebook.objects.filter(
+            topic_id=topic_id
+        ).order_by('order')[:limit_per_topic]:
+            entries.append(f'  - Python notebook: "{notebook.title}" ({notebook.difficulty})')
 
         if entries:
             lines.append(f'Topic "{topic.get("name")}":')

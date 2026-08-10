@@ -65,10 +65,11 @@ def grade_notebook_submission(self, submission_id):
 
 @shared_task(
     name='notebooks.generate', bind=True, max_retries=0,
-    queue='notebooks',
-    # Generating a full graded notebook is a long-form LLM call; give it the
-    # same generous limits as grading so it never trips the default worker's.
-    soft_time_limit=280, time_limit=300,
+    # Shares the dedicated AI-authoring queue with the course builder: these are
+    # long, I/O-bound LLM calls and must not block notebook *grading*, which is
+    # CPU-bound and has its own queue/worker.
+    queue='aigen',
+    soft_time_limit=1500, time_limit=1560,
 )
 def run_generation_job(self, job_id, mode='generate', instruction=''):
     """Run an AI notebook generation/refinement off the request thread.

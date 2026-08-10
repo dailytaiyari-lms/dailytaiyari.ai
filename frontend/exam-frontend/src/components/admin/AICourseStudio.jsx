@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import courseAiService from '../../services/courseAiService'
 import useVoiceDictation from '../../hooks/useVoiceDictation'
+import useGenerationJob from '../../hooks/useGenerationJob'
 import { formatApiError } from './builderShared'
 import DraftPreview, { collectSelectable } from './aiStudio/DraftPreview'
 import TopicPicker from './aiStudio/TopicPicker'
@@ -84,7 +85,6 @@ const AICourseStudio = ({ initialCourseId = null, onClose = null }) => {
         publish_immediately: false,
     })
 
-    const [job, setJob] = useState(null)
     const [selection, setSelection] = useState(emptySelection)
     const [draftDirty, setDraftDirty] = useState(false)
     const [instruction, setInstruction] = useState('')
@@ -128,44 +128,49 @@ const AICourseStudio = ({ initialCourseId = null, onClose = null }) => {
 
     /* ---------------------------------------------------------- generation */
 
+    // Every run is a background job: the POST returns immediately and the
+    // studio polls until the draft is ready, so a long authoring run can never
+    // die with an HTTP timeout.
+    const {
+        job, setJob, error: jobError, setError: setJobError, busy: generating, run, reset,
+    } = useGenerationJob(courseAiService.getJob, {
+        onSettled: (settled) => {
+            if (settled.status === 'failed') {
+                toast.error(settled.error || 'Generation failed', { duration: 6000 })
+                return
+            }
+            setSelection(toSelection(collectSelectable(settled.kind, settled.draft)))
+            setDraftDirty(false)
+            setInstruction('')
+            queryClient.invalidateQueries({ queryKey: ['coursegen-jobs'] })
+        },
+    })
+
     const loadJob = useCallback((next) => {
         setJob(next)
         setSelection(toSelection(collectSelectable(next.kind, next.draft)))
         setDraftDirty(false)
         setInstruction('')
-    }, [])
+    }, [setJob])
 
-    const generateMutation = useMutation({
-        mutationFn: () => courseAiService.generate({
-            kind,
-            prompt: prompt.trim(),
-            input_mode: usedVoice ? 'voice' : 'text',
-            course: kind === 'outline' && !courseId ? null : courseId || null,
-            provider,
-            model,
-            options,
-            ...(kind === 'content' ? { topic_ids: topicIds } : {}),
-        }),
-        onSuccess: (data) => {
-            loadJob(data)
-            queryClient.invalidateQueries({ queryKey: ['coursegen-jobs'] })
-        },
-        onError: (err) => {
-            const data = err?.response?.data
-            // A 502 still carries the failed job, so show its error verbatim.
-            if (data?.error) toast.error(data.error, { duration: 6000 })
-            else toast.error(formatApiError(err, 'Generation failed'))
-        },
-    })
+    useEffect(() => {
+        if (jobError) toast.error(jobError)
+    }, [jobError])
 
-    const refineMutation = useMutation({
-        mutationFn: () => courseAiService.refine(job.id, instruction.trim()),
-        onSuccess: (data) => {
-            loadJob(data)
-            toast.success('Draft updated')
-        },
-        onError: (err) => toast.error(formatApiError(err, 'Could not refine the draft')),
-    })
+    const startGeneration = () => run(() => courseAiService.generate({
+        kind,
+        prompt: prompt.trim(),
+        input_mode: usedVoice ? 'voice' : 'text',
+        course: kind === 'outline' && !courseId ? null : courseId || null,
+        provider,
+        model,
+        options,
+        ...(kind === 'content' ? { topic_ids: topicIds } : {}),
+    }))
+
+    const regenerate = () => run(() => courseAiService.regenerate(job.id))
+
+    const refineDraft = () => run(() => courseAiService.refine(job.id, instruction.trim()))
 
     const saveDraftMutation = useMutation({
         mutationFn: () => courseAiService.saveDraft(job.id, job.draft),
@@ -202,7 +207,7 @@ const AICourseStudio = ({ initialCourseId = null, onClose = null }) => {
     const discardMutation = useMutation({
         mutationFn: () => courseAiService.discard(job.id),
         onSuccess: () => {
-            setJob(null)
+            reset()
             queryClient.invalidateQueries({ queryKey: ['coursegen-jobs'] })
         },
         onError: (err) => toast.error(formatApiError(err)),
@@ -272,7 +277,7 @@ const AICourseStudio = ({ initialCourseId = null, onClose = null }) => {
     }
 
     const canGenerate = useMemo(() => {
-        if (!config?.is_ready || generateMutation.isPending) return false
+        if (!config?.is_ready || generating) return false
         if (kind === 'outline') {
             // Only admins may create a course from nothing.
             if (!courseId && !config.can_create_courses) return false
@@ -281,7 +286,7 @@ const AICourseStudio = ({ initialCourseId = null, onClose = null }) => {
         if (kind === 'content') return !!courseId && topicIds.length > 0
         if (kind === 'meta') return !!courseId
         return false
-    }, [config, generateMutation.isPending, kind, prompt, courseId, topicIds])
+    }, [config, generating, kind, prompt, courseId, topicIds])
 
     const selectedCount = job
         ? selectionPayload(job.kind, selection)[job.kind === 'meta' ? 'fields' : 'topics']?.length || 0
@@ -558,24 +563,40 @@ const AICourseStudio = ({ initialCourseId = null, onClose = null }) => {
 
                     <button
                         type="button"
-                        onClick={() => generateMutation.mutate()}
+                        onClick={startGeneration}
                         disabled={!canGenerate}
                         className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-primary-600 to-purple-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-primary-500/25 transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                        {generateMutation.isPending
+                        {generating
                             ? <><Loader2 className="h-4 w-4 animate-spin" /> Writing your draft…</>
                             : <><Sparkles className="h-4 w-4" /> Generate draft</>}
                     </button>
-                    {generateMutation.isPending && (
+                    {generating && (
                         <p className="text-center text-xs text-surface-400">
-                            Good material takes a moment — this can run for a minute or two. Keep this tab open.
+                            This runs on the server, so it keeps going even if it looks quiet. Good
+                            material can take a couple of minutes.
                         </p>
                     )}
                 </div>
 
                 {/* ----------------------------------------------------- preview */}
                 <div className="card min-h-[24rem] p-5">
-                    {!job && (
+                    {generating && (
+                        <div className="flex h-full flex-col items-center justify-center py-16 text-center">
+                            <Loader2 className="mb-4 h-8 w-8 animate-spin text-primary-500" />
+                            <h3 className="font-semibold text-surface-800 dark:text-surface-200">
+                                {job?.status === 'generating'
+                                    ? 'The AI is writing your draft…'
+                                    : 'Queued — starting shortly…'}
+                            </h3>
+                            <p className="mt-1 max-w-sm text-sm text-surface-500">
+                                This runs on the server, so it keeps going even if it looks quiet.
+                                You can leave this page and pick the draft up from History.
+                            </p>
+                        </div>
+                    )}
+
+                    {!job && !generating && (
                         <div className="flex h-full flex-col items-center justify-center py-16 text-center">
                             <span className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-100 text-surface-400 dark:bg-surface-800">
                                 <Sparkles className="h-6 w-6" />
@@ -590,7 +611,7 @@ const AICourseStudio = ({ initialCourseId = null, onClose = null }) => {
                         </div>
                     )}
 
-                    {job && (
+                    {job && !generating && (
                         <div className="space-y-4">
                             <div className="flex flex-wrap items-center gap-2 border-b border-surface-100 pb-3 dark:border-surface-700">
                                 <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${STATUS_PILL[job.status]}`}>
@@ -608,8 +629,21 @@ const AICourseStudio = ({ initialCourseId = null, onClose = null }) => {
                             </div>
 
                             {job.status === 'failed' && (
-                                <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-800/40 dark:bg-rose-900/20 dark:text-rose-300">
-                                    {job.error || 'Generation failed.'}
+                                <div className="space-y-3">
+                                    <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-800/40 dark:bg-rose-900/20 dark:text-rose-300">
+                                        {job.error || 'Generation failed.'}
+                                    </div>
+                                    <p className="text-xs text-surface-500">
+                                        Nothing was saved. Run it again with the same brief, or edit the
+                                        brief on the left and generate a fresh draft.
+                                    </p>
+                                    <button
+                                        type="button"
+                                        onClick={regenerate}
+                                        className="flex items-center gap-1.5 rounded-lg border border-surface-200 px-3 py-2 text-sm font-medium text-surface-600 hover:bg-surface-50 dark:border-surface-700 dark:text-surface-300"
+                                    >
+                                        <RotateCcw className="h-4 w-4" /> Try again
+                                    </button>
                                 </div>
                             )}
 
@@ -637,19 +671,19 @@ const AICourseStudio = ({ initialCourseId = null, onClose = null }) => {
                                             value={instruction}
                                             onChange={(e) => setInstruction(e.target.value)}
                                             onKeyDown={(e) => {
-                                                if (e.key === 'Enter' && instruction.trim() && !refineMutation.isPending) {
-                                                    refineMutation.mutate()
+                                                if (e.key === 'Enter' && instruction.trim() && !generating) {
+                                                    refineDraft()
                                                 }
                                             }}
                                             placeholder="What should change? e.g. “add a module on testing, make topics shorter”"
                                         />
                                         <button
                                             type="button"
-                                            onClick={() => refineMutation.mutate()}
-                                            disabled={!instruction.trim() || refineMutation.isPending}
+                                            onClick={refineDraft}
+                                            disabled={!instruction.trim() || generating}
                                             className="flex shrink-0 items-center gap-1.5 rounded-lg border border-surface-200 px-3 py-2 text-sm font-medium text-surface-600 hover:bg-surface-50 disabled:opacity-50 dark:border-surface-700 dark:text-surface-300"
                                         >
-                                            {refineMutation.isPending
+                                            {generating
                                                 ? <Loader2 className="h-4 w-4 animate-spin" />
                                                 : <RotateCcw className="h-4 w-4" />}
                                             Refine
@@ -664,6 +698,13 @@ const AICourseStudio = ({ initialCourseId = null, onClose = null }) => {
                                             className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-surface-500 hover:bg-surface-100 dark:hover:bg-surface-700"
                                         >
                                             <Trash2 className="h-4 w-4" /> Discard
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={regenerate}
+                                            className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-surface-500 hover:bg-surface-100 dark:hover:bg-surface-700"
+                                        >
+                                            <RotateCcw className="h-4 w-4" /> Regenerate
                                         </button>
                                         {draftDirty && (
                                             <button

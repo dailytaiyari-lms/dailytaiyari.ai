@@ -8,6 +8,7 @@ from .views import (
     JobDiscardView,
     JobListCreateView,
     JobRefineView,
+    JobRegenerateView,
     StudioOptionsView,
     TopicMaterialView,
     TranscribeView,
@@ -26,6 +27,10 @@ urlpatterns = [
     path('jobs/', JobListCreateView.as_view(), name='coursegen-jobs'),
     path('jobs/<uuid:job_id>/', JobDetailView.as_view(), name='coursegen-job-detail'),
     path('jobs/<uuid:job_id>/refine/', JobRefineView.as_view(), name='coursegen-job-refine'),
+    path(
+        'jobs/<uuid:job_id>/regenerate/',
+        JobRegenerateView.as_view(), name='coursegen-job-regenerate',
+    ),
     path('jobs/<uuid:job_id>/apply/', JobApplyView.as_view(), name='coursegen-job-apply'),
     path('jobs/<uuid:job_id>/discard/', JobDiscardView.as_view(), name='coursegen-job-discard'),
 ]

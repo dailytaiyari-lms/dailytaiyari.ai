@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 
+from django.conf import settings
 from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -27,6 +28,7 @@ from coding.models import CodingProblem
 from content.models import Content
 from core.permissions import IsCourseEditor
 from exams.models import Course, Topic
+from notebooks.models import Notebook
 from quiz.models import Quiz
 
 from . import generation
@@ -50,6 +52,30 @@ from .serializers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _enqueue(job, *, mode='generate', instruction='', topics=None):
+    """Run a generation in the background, falling back to inline if Celery is down.
+
+    Returns True when the work was queued (the client should poll the job),
+    False when it had to run inline (the job is already terminal).
+    """
+    if getattr(settings, 'COURSEGEN_ASYNC', True):
+        try:
+            from .tasks import run_generation_job
+            run_generation_job.delay(str(job.id), mode, instruction, topics or [])
+            return True
+        except Exception as exc:  # broker down -> never block the admin
+            logger.warning('coursegen: async enqueue failed (%s); running inline.', exc)
+
+    if mode == 'refine':
+        try:
+            generation.apply_refinement(job, instruction)
+        except generation.GenerationError:
+            pass  # the job is back in preview with a user-facing error
+    else:
+        generation.run_job(job, topics=topics or [])
+    return False
 
 
 class _StudioView(APIView):
@@ -105,6 +131,7 @@ class StudioOptionsView(_StudioView):
         return Response({
             'is_ready': bool(models) and settings_obj.is_enabled,
             'ai_enabled': settings_obj.is_enabled,
+            'async_generation': bool(getattr(settings, 'COURSEGEN_ASYNC', True)),
             'providers': models,
             'courses': courses,
             'can_create_courses': self.can_create_courses(),
@@ -171,6 +198,9 @@ class CourseTreeView(_StudioView):
         topics_with_coding = set(
             CodingProblem.objects.filter(course=course).values_list('topic_id', flat=True)
         )
+        topics_with_notebook = set(
+            Notebook.objects.filter(course=course).values_list('topic_id', flat=True)
+        )
 
         subjects = []
         for subject in course.subjects.all().order_by('order', 'name'):
@@ -194,6 +224,7 @@ class CourseTreeView(_StudioView):
                             'has_quiz': link.topic.id in topics_with_quiz,
                             'has_assignment': link.topic.id in topics_with_assignment,
                             'has_coding': link.topic.id in topics_with_coding,
+                            'has_notebook': link.topic.id in topics_with_notebook,
                         }
                         for link in links
                     ],
@@ -305,10 +336,16 @@ class JobListCreateView(_StudioView):
                     {'topic_ids': ['None of those topics belong to this course.']},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+            # Remember the resolved topics so a regenerate can re-run the job
+            # without re-authorising the caller's course scope.
+            job.options = {**(job.options or {}), 'topics_snapshot': topics}
+            job.save(update_fields=['options', 'updated_at'])
 
-        generation.run_job(job, topics=topics)
+        queued = _enqueue(job, mode='generate', topics=topics)
 
         payload = CourseGenerationJobSerializer(job).data
+        if queued:
+            return Response(payload, status=status.HTTP_202_ACCEPTED)
         if job.status == CourseGenerationJob.STATUS_FAILED:
             return Response(payload, status=status.HTTP_502_BAD_GATEWAY)
         return Response(payload, status=status.HTTP_201_CREATED)
@@ -378,16 +415,48 @@ class JobRefineView(_StudioView):
             )
         serializer = RefineSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        instruction = serializer.validated_data['instruction']
 
-        try:
-            generation.apply_refinement(job, serializer.validated_data['instruction'])
-        except generation.GenerationError as exc:
-            # The previous draft survives — report the failure without losing it.
+        queued = _enqueue(job, mode='refine', instruction=instruction)
+        job.refresh_from_db()
+        payload = CourseGenerationJobSerializer(job).data
+        if queued:
+            return Response(payload, status=status.HTTP_202_ACCEPTED)
+        if job.error and job.status == CourseGenerationJob.STATUS_PREVIEW:
+            # The refine failed inline but the previous draft survived.
             return Response(
-                {'detail': str(exc), 'draft_preserved': True},
+                {**payload, 'draft_preserved': True},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
-        return Response(CourseGenerationJobSerializer(job).data)
+        return Response(payload)
+
+
+class JobRegenerateView(_StudioView):
+    """Retry a failed job. Reuses the original prompt, options and topics."""
+
+    def post(self, request, job_id):
+        job = get_object_or_404(self.jobs(), id=job_id)
+        if job.status not in (
+            CourseGenerationJob.STATUS_FAILED, CourseGenerationJob.STATUS_PENDING,
+        ):
+            return Response(
+                {'detail': 'Only a failed job can be regenerated.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+        # Reset first so the background claim is unambiguous.
+        job.status = CourseGenerationJob.STATUS_PENDING
+        job.error = ''
+        job.save(update_fields=['status', 'error', 'updated_at'])
+
+        topics = (job.options or {}).get('topics_snapshot') or []
+        queued = _enqueue(job, mode='generate', topics=topics)
+        job.refresh_from_db()
+        payload = CourseGenerationJobSerializer(job).data
+        if queued:
+            return Response(payload, status=status.HTTP_202_ACCEPTED)
+        if job.status == CourseGenerationJob.STATUS_FAILED:
+            return Response(payload, status=status.HTTP_502_BAD_GATEWAY)
+        return Response(payload)
 
 
 class JobApplyView(_StudioView):

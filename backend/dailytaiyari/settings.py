@@ -426,6 +426,11 @@ NOTEBOOKS_JUDGE_ASYNC = config('NOTEBOOKS_JUDGE_ASYNC', default=True, cast=bool)
 # if the broker is unreachable.
 NOTEBOOKS_GEN_ASYNC = config('NOTEBOOKS_GEN_ASYNC', default=True, cast=bool)
 
+# Same for the AI Course Builder: a content job makes several sequential LLM
+# calls and routinely outlives an HTTP timeout, so it runs on the worker and the
+# studio polls the job. Falls back to inline generation if the broker is down.
+COURSEGEN_ASYNC = config('COURSEGEN_ASYNC', default=True, cast=bool)
+
 # Celery (broker + result backend on Redis). Result backend stores the task
 # state so the poll endpoint can distinguish queued/running/done.
 CELERY_BROKER_URL = config('CELERY_BROKER_URL', default='redis://redis:6379/0')

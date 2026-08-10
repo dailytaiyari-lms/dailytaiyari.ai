@@ -50,6 +50,10 @@ class CourseGenerationJob(TimeStampedModel):
         (STATUS_DISCARDED, 'Discarded'),
     ]
 
+    # Statuses a background run may legitimately be started from. Anything else
+    # is either already running or terminal, so the worker must not claim it.
+    RUNNABLE_STATUSES = (STATUS_PENDING, STATUS_PREVIEW, STATUS_FAILED)
+
     INPUT_TEXT = 'text'
     INPUT_VOICE = 'voice'
     INPUT_CHOICES = [(INPUT_TEXT, 'Typed'), (INPUT_VOICE, 'Dictated')]
@@ -124,6 +128,15 @@ class CourseGenerationJob(TimeStampedModel):
     @property
     def is_reviewable(self):
         return self.status == self.STATUS_PREVIEW
+
+    @property
+    def is_running(self):
+        """True while a background worker is (or is about to be) on this job.
+
+        The studio polls until this flips false, so ``pending`` counts as running:
+        the job is queued but the worker has not claimed it yet.
+        """
+        return self.status in (self.STATUS_PENDING, self.STATUS_GENERATING)
 
     def record_revision(self, action, detail=''):
         """Append an audit entry describing how the draft changed."""

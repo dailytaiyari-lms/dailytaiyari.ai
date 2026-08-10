@@ -9,7 +9,7 @@ The LLM itself is stubbed — what is under test is the pipeline around it
 """
 from unittest.mock import patch
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -64,8 +64,15 @@ CONTENT_RESPONSE = """
 """
 
 
+@override_settings(COURSEGEN_ASYNC=False)
 class _StudioTestCase(TestCase):
-    """Shared fixtures: a tenant with a configured provider and a small course."""
+    """Shared fixtures: a tenant with a configured provider and a small course.
+
+    Generation is forced inline here: the suite stubs the provider call
+    in-process, so dispatching to a Celery worker would bypass the stub (and
+    there is no broker in CI). The async path itself is exercised separately by
+    :class:`AsyncGenerationTests`.
+    """
 
     @classmethod
     def setUpTestData(cls):
@@ -691,3 +698,119 @@ class LooseModelOutputTests(TestCase):
         topic = draft['topics'][0]
         self.assertIn('500 words', topic['assignments'][0]['html'])
         self.assertIn('print the sum', topic['coding_problems'][0]['html'])
+
+
+@override_settings(COURSEGEN_ASYNC=True)
+class AsyncGenerationTests(_StudioTestCase):
+    """The background path: the view queues and returns, the worker generates.
+
+    Long authoring runs must not be held open on an HTTP request, so `POST
+    /jobs/` answers 202 with a still-`pending` job and the studio polls it.
+    """
+
+    def test_generate_queues_and_returns_a_pending_job(self):
+        with patch('coursegen.tasks.run_generation_job.delay') as delay:
+            response = self.post(self.admin, '/jobs/', {
+                'kind': 'outline', 'prompt': 'A beginner Python course',
+            })
+
+        self.assertEqual(response.status_code, 202, response.data)
+        self.assertEqual(response.data['status'], 'pending')
+        self.assertTrue(response.data['is_running'])
+        delay.assert_called_once()
+        # Nothing was generated on the request thread.
+        job = CourseGenerationJob.objects.get(id=response.data['id'])
+        self.assertEqual(job.draft, {})
+
+    def test_content_job_snapshots_its_topics_for_a_later_retry(self):
+        with patch('coursegen.tasks.run_generation_job.delay'):
+            response = self.post(self.admin, '/jobs/', {
+                'kind': 'content', 'prompt': '', 'course': str(self.course.id),
+                'topic_ids': [str(self.topic.id)],
+            })
+
+        job = CourseGenerationJob.objects.get(id=response.data['id'])
+        snapshot = job.options.get('topics_snapshot')
+        self.assertEqual([t['id'] for t in snapshot], [str(self.topic.id)])
+
+    def test_a_broker_outage_falls_back_to_inline_generation(self):
+        with patch(
+            'coursegen.tasks.run_generation_job.delay', side_effect=OSError('no broker')
+        ), self.stub_provider(), self.stub_llm(OUTLINE_RESPONSE):
+            response = self.post(self.admin, '/jobs/', {
+                'kind': 'outline', 'prompt': 'A beginner Python course',
+            })
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['status'], 'preview')
+
+    def test_worker_runs_the_job_and_leaves_it_reviewable(self):
+        from coursegen.tasks import run_generation_job
+
+        job = CourseGenerationJob.objects.create(
+            tenant=self.tenant, created_by=self.admin, kind='outline',
+            prompt='A beginner Python course',
+        )
+        with self.stub_provider(), self.stub_llm(OUTLINE_RESPONSE):
+            run_generation_job(str(job.id))
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, 'preview')
+        self.assertTrue(job.draft.get('subjects'))
+        self.assertFalse(job.is_running)
+
+    def test_worker_ignores_a_job_that_is_not_runnable(self):
+        from coursegen.tasks import run_generation_job
+
+        job = CourseGenerationJob.objects.create(
+            tenant=self.tenant, created_by=self.admin, kind='outline',
+            prompt='x', status='applied',
+        )
+        # A broker redelivery must not re-run an already-applied job.
+        self.assertIsNone(run_generation_job(str(job.id)))
+        job.refresh_from_db()
+        self.assertEqual(job.status, 'applied')
+
+    def test_only_a_failed_job_can_be_regenerated(self):
+        job = CourseGenerationJob.objects.create(
+            tenant=self.tenant, created_by=self.admin, kind='outline',
+            prompt='x', status='preview', draft={'subjects': []},
+        )
+        response = self.post(self.admin, f'/jobs/{job.id}/regenerate/')
+        self.assertEqual(response.status_code, 409)
+
+    def test_regenerate_requeues_a_failed_job(self):
+        job = CourseGenerationJob.objects.create(
+            tenant=self.tenant, created_by=self.admin, kind='outline',
+            prompt='x', status='failed', error='boom',
+        )
+        with patch('coursegen.tasks.run_generation_job.delay') as delay:
+            response = self.post(self.admin, f'/jobs/{job.id}/regenerate/')
+
+        self.assertEqual(response.status_code, 202, response.data)
+        self.assertEqual(response.data['status'], 'pending')
+        self.assertEqual(response.data['error'], '')
+        delay.assert_called_once()
+
+    def test_a_failed_refine_restores_the_previous_draft(self):
+        from coursegen import generation
+
+        job = CourseGenerationJob.objects.create(
+            tenant=self.tenant, created_by=self.admin, kind='outline',
+            prompt='x', status='preview',
+            draft=normalize_outline({
+                'course': {'name': 'Intro', 'code': 'intro'},
+                'subjects': [{'name': 'S', 'code': 's', 'chapters': [
+                    {'name': 'C', 'code': 'c', 'topics': [{'name': 'T', 'code': 't'}]},
+                ]}],
+            }),
+        )
+        keep = job.draft
+        with self.stub_provider(), self.stub_llm('not json at all'):
+            with self.assertRaises(generation.GenerationError):
+                generation.apply_refinement(job, 'make it harder')
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, 'preview')
+        self.assertEqual(job.draft, keep)
+        self.assertTrue(job.error)

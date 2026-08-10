@@ -10,9 +10,9 @@ const BASE = '/tenant-admin/course-ai'
  *  1. `generate` and `refine` never write course data — they only produce a
  *     draft on the job. `apply` is the single endpoint that touches the real
  *     course tables, and it refuses to run without `confirm: true`.
- *  2. Generation is synchronous and can take a while (a content job makes
- *     several sequential LLM calls), so callers should show a patient
- *     progress state rather than a spinner that implies "any second now".
+ *  2. Generation runs in the background. `generate` / `refine` / `regenerate`
+ *     answer 202 with a job in `pending`, and the caller polls `getJob` until
+ *     its status leaves `pending`/`generating` — see `useGenerationJob`.
  */
 export const courseAiService = {
     // Providers, models, editable courses, limits and defaults for the composer.
@@ -54,6 +54,12 @@ export const courseAiService = {
     // Produces a draft for review. Returns 502 with the failed job on error.
     generate: async (payload) => {
         const response = await api.post(`${BASE}/jobs/`, payload)
+        return response.data
+    },
+
+    // Retry a failed job with its original prompt, options and topics.
+    regenerate: async (jobId) => {
+        const response = await api.post(`${BASE}/jobs/${jobId}/regenerate/`)
         return response.data
     },
 

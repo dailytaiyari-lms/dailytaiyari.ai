@@ -129,6 +129,29 @@ services:
       redis:
         condition: service_healthy
 
+  # Dedicated worker for the `aigen` queue: AI authoring (course studio +
+  # notebook generator). These are long-form LLM calls that can run for minutes
+  # and are I/O-bound rather than CPU-bound, so they get their own worker with
+  # higher concurrency — a slow generation must never head-of-line block coding
+  # or notebook grading, and several admins may generate at once.
+  celery-aiworker:
+    build: .
+    restart: unless-stopped
+    entrypoint: []
+    command: >
+      celery -A dailytaiyari worker --loglevel=info
+      --queues=aigen
+      --concurrency=${CELERY_AI_CONCURRENCY:-4}
+    volumes:
+      - .:/app
+      - media_volume:/app/media
+    environment: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   # Sandboxed notebook grading runner. Runs untrusted student notebook code.
   # SECURITY: never publish ports (internal docker network only); reachable only
   # from `web`/`celery-nbworker` at http://nbrunner:2100. Unlike Piston it needs
