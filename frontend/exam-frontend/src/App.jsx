@@ -60,6 +60,10 @@ import SubmissionReview from './pages/SubmissionReview'
 import CodingProblem from './pages/CodingProblem'
 import CodingGrading from './pages/CodingGrading'
 import CodingSubmissionReview from './pages/CodingSubmissionReview'
+import NotebookPage from './pages/NotebookPage'
+import NotebookBuilder from './pages/NotebookBuilder'
+import NotebookGrading from './pages/NotebookGrading'
+import NotebookSubmissionReview from './pages/NotebookSubmissionReview'
 import MockTestManager from './pages/MockTestManager'
 import MockTestBuilder from './pages/MockTestBuilder'
 import RichMockAttempt from './pages/RichMockAttempt'
@@ -244,6 +248,9 @@ function App() {
           <Route path="/courses/:courseId/manage/assignments/:assignmentId/submissions/:submissionId" element={<LoginGate><EditorRoute><SubmissionReview /></EditorRoute></LoginGate>} />
           <Route path="/courses/:courseId/manage/coding/:problemId" element={<LoginGate><EditorRoute><CodingGrading /></EditorRoute></LoginGate>} />
           <Route path="/courses/:courseId/manage/coding/:problemId/submissions/:submissionId" element={<LoginGate><EditorRoute><CodingSubmissionReview /></EditorRoute></LoginGate>} />
+          <Route path="/courses/:courseId/manage/notebooks/:notebookId/edit" element={<LoginGate><EditorRoute><NotebookBuilder /></EditorRoute></LoginGate>} />
+          <Route path="/courses/:courseId/manage/notebooks/:notebookId" element={<LoginGate><EditorRoute><NotebookGrading /></EditorRoute></LoginGate>} />
+          <Route path="/courses/:courseId/manage/notebooks/:notebookId/submissions/:submissionId" element={<LoginGate><EditorRoute><NotebookSubmissionReview /></EditorRoute></LoginGate>} />
           <Route path="/study" element={<LoginGate><FeatureRoute feature="study"><Study /></FeatureRoute></LoginGate>} />
           <Route path="/study/course/:courseId" element={<LoginGate><FeatureRoute feature="study"><StudyCourse /></FeatureRoute></LoginGate>} />
           <Route path="/study/:subjectId" element={<LoginGate><FeatureRoute feature="study"><StudyChapters /></FeatureRoute></LoginGate>} />
@@ -254,6 +261,7 @@ function App() {
           <Route path="/revision" element={<LoginGate><FeatureRoute feature="study"><Revision /></FeatureRoute></LoginGate>} />
           <Route path="/assignment/:assignmentId" element={<LoginGate><AssignmentView /></LoginGate>} />
           <Route path="/coding/:problemId" element={<LoginGate><CodingProblem /></LoginGate>} />
+          <Route path="/notebooks/:notebookId" element={<LoginGate><NotebookPage /></LoginGate>} />
           <Route path="/quiz" element={<LoginGate><FeatureRoute feature="quiz"><Quiz /></FeatureRoute></LoginGate>} />
           <Route path="/quiz/:quizId" element={<LoginGate><FeatureRoute feature="quiz"><QuizAttempt /></FeatureRoute></LoginGate>} />
           <Route path="/quiz/review/:attemptId" element={<LoginGate><FeatureRoute feature="quiz"><QuizReview /></FeatureRoute></LoginGate>} />

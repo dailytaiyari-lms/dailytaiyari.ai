@@ -13,6 +13,7 @@ import {
     Trophy,
     Gift,
     SlidersHorizontal,
+    Notebook as NotebookIcon,
 } from 'lucide-react'
 
 /**
@@ -49,6 +50,12 @@ export const XP_META = {
         label: 'Coding problem solved',
         color: 'text-cyan-600 dark:text-cyan-400',
         bg: 'bg-cyan-100 dark:bg-cyan-900/30',
+    },
+    notebook_graded: {
+        Icon: NotebookIcon,
+        label: 'Notebook completed',
+        color: 'text-indigo-600 dark:text-indigo-400',
+        bg: 'bg-indigo-100 dark:bg-indigo-900/30',
     },
     assignment_graded: {
         Icon: ClipboardCheck,

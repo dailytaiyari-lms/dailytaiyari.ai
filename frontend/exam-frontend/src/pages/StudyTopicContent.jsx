@@ -5,12 +5,14 @@ import { useQuery } from '@tanstack/react-query'
 import { courseService } from '../services/courseService'
 import { assignmentService } from '../services/assignmentService'
 import { codingService } from '../services/codingService'
+import { notebookService } from '../services/notebookService'
 import { liveClassService } from '../services/liveClassService'
 import Loading from '../components/common/Loading'
 import {
   BookOpen, PlayCircle, PenTool, ArrowLeft, CheckCircle2, Clock,
   Bookmark, FileText, RefreshCw, BarChart3, Eye, Star, LayoutList,
-  Circle, ChevronRight, Trophy, ClipboardList, Lock, Code2, Radio
+  Circle, ChevronRight, Trophy, ClipboardList, Lock, Code2, Radio,
+  Notebook as NotebookIcon
 } from 'lucide-react'
 
 const TABS = [
@@ -20,6 +22,7 @@ const TABS = [
   { key: 'quizzes', label: 'Quizzes', icon: PenTool },
   { key: 'assignments', label: 'Assignments', icon: ClipboardList },
   { key: 'coding', label: 'Coding', icon: Code2 },
+  { key: 'notebooks', label: 'Notebooks', icon: NotebookIcon },
   { key: 'live', label: 'Live', icon: Radio },
 ]
 
@@ -50,6 +53,12 @@ const StudyTopicContent = () => {
   const { data: codingProblems = [] } = useQuery({
     queryKey: ['topicCoding', topicId],
     queryFn: () => codingService.getByTopic(topicId),
+    enabled: !!topicId,
+  })
+
+  const { data: notebooks = [] } = useQuery({
+    queryKey: ['topicNotebooks', topicId],
+    queryFn: () => notebookService.getByTopic(topicId),
     enabled: !!topicId,
   })
 
@@ -112,12 +121,14 @@ const StudyTopicContent = () => {
   const quizzesAttempted = quizzes.filter(q => q.attempts_count > 0).length
   const codingDone = codingProblems.filter(p => p.my_best?.all_passed).length
   const assignmentsDone = assignments.filter(a => a.is_completed).length
+  const notebooksDone = notebooks.filter(n => n.is_complete).length
   const liveNow = liveClasses.filter(l => l.live_status === 'live').length
   const headerStats = [
     { icon: BookOpen, color: 'text-blue-500', done: readingDone, total: reading.length, label: 'read' },
     { icon: PlayCircle, color: 'text-red-500', done: videosDone, total: videos.length, label: 'watched' },
     { icon: PenTool, color: 'text-green-500', done: quizzesAttempted, total: quizzes.length, label: 'quizzes' },
     { icon: Code2, color: 'text-primary-500', done: codingDone, total: codingProblems.length, label: 'coding' },
+    { icon: NotebookIcon, color: 'text-indigo-500', done: notebooksDone, total: notebooks.length, label: 'notebooks' },
     { icon: ClipboardList, color: 'text-purple-500', done: assignmentsDone, total: assignments.length, label: 'assignments' },
     { icon: Radio, color: 'text-red-500', done: liveNow, total: liveClasses.length, label: 'live' },
   ].filter(s => s.total > 0)
@@ -167,12 +178,13 @@ const StudyTopicContent = () => {
       <div className="flex gap-1 p-1 bg-surface-100 dark:bg-surface-800 rounded-xl overflow-x-auto scrollbar-hide">
         {TABS.map((tab) => {
           const Icon = tab.icon
-          const count = tab.key === 'all' ? reading.length + videos.length + quizzes.length + assignments.length + codingProblems.length + liveClasses.length
+          const count = tab.key === 'all' ? reading.length + videos.length + quizzes.length + assignments.length + codingProblems.length + notebooks.length + liveClasses.length
             : tab.key === 'reading' ? reading.length
             : tab.key === 'videos' ? videos.length
             : tab.key === 'quizzes' ? quizzes.length
             : tab.key === 'assignments' ? assignments.length
             : tab.key === 'coding' ? codingProblems.length
+            : tab.key === 'notebooks' ? notebooks.length
             : tab.key === 'live' ? liveClasses.length
             : 0
           // Hide categories that have no content (keep "All" always visible).
@@ -212,6 +224,7 @@ const StudyTopicContent = () => {
           {activeTab === 'quizzes' && <QuizzesTab items={quizzes} navigate={navigate} quizNavState={quizNavState} />}
           {activeTab === 'assignments' && <AssignmentsTab items={assignments} navigate={navigate} />}
           {activeTab === 'coding' && <CodingTab items={codingProblems} navigate={navigate} />}
+          {activeTab === 'notebooks' && <NotebooksTab items={notebooks} navigate={navigate} />}
           {activeTab === 'live' && <LiveTab items={liveClasses} />}
         </motion.div>
       </AnimatePresence>
@@ -659,6 +672,50 @@ const AssignmentsTab = ({ items, navigate }) => {
                   className={`w-full text-xs py-1.5 ${submitted || !a.is_open ? 'btn-outline' : 'btn-primary'}`}
                 >
                   {graded ? 'View feedback' : submitted ? 'View submission' : a.is_open ? 'Start' : 'View'}
+                </button>
+              </div>
+            }
+          />
+        )
+      })}
+    </div>
+  )
+}
+
+const NotebooksTab = ({ items, navigate }) => {
+  if (items.length === 0) {
+    return <EmptyState icon={NotebookIcon} message="No notebooks have been added yet" />
+  }
+  return (
+    <div className={TILE_GRID}>
+      {items.map((n) => {
+        const attempted = !!n.my_best
+        const done = n.is_complete
+        return (
+          <Tile
+            key={n.id}
+            icon={NotebookIcon}
+            iconColor={attempted
+              ? 'bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30'
+              : 'bg-blue-50 text-blue-600 dark:bg-blue-900/30'}
+            label="Notebook"
+            title={n.title}
+            meta={<>{n.difficulty || 'notebook'}{n.max_marks ? ` \u00b7 ${n.max_marks} marks` : ''}{n.estimated_time_minutes ? ` \u00b7 ${n.estimated_time_minutes} min` : ''}</>}
+            completed={done}
+            badge={attempted && (
+              <span className={`flex items-center gap-0.5 text-[11px] font-bold ${done ? 'text-success-600' : 'text-warning-600'}`}>
+                {done ? <CheckCircle2 size={12} /> : <Star size={12} className="text-warning-500" />}
+                {n.my_best.passed_points}/{n.my_best.total_points}
+              </span>
+            )}
+            onClick={() => navigate(`/notebooks/${n.id}`)}
+            action={
+              <div className="mt-3">
+                <button
+                  onClick={(e) => { e.stopPropagation(); navigate(`/notebooks/${n.id}`) }}
+                  className={`w-full text-xs py-1.5 ${attempted ? 'btn-outline' : 'btn-primary'}`}
+                >
+                  {done ? 'Review' : attempted ? 'Continue' : 'Open'}
                 </button>
               </div>
             }

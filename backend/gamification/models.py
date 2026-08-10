@@ -93,6 +93,7 @@ class XPTransaction(TimeStampedModel):
         ('ai_quiz', 'AI Quiz Completed'),
         ('coding_solved', 'Coding Problem Solved'),
         ('assignment_graded', 'Assignment Graded'),
+        ('notebook_graded', 'Notebook Completed'),
         ('daily_goal', 'Daily Goal Met'),
         ('streak_bonus', 'Streak Bonus'),
         ('badge_earned', 'Badge Earned'),
