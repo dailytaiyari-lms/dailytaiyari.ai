@@ -29,6 +29,10 @@ const PYODIDE_CDN = `https://cdn.jsdelivr.net/pyodide/${PYODIDE_VERSION}/full/`
 let pyodide = null
 let readyPromise = null
 const loadedPackages = new Set()
+// Names we already tried and could not resolve. Without this a package that
+// isn't available in the browser kernel would be re-attempted (network and all)
+// on every single cell run, which is what made every run look like a cold start.
+const failedPackages = new Set()
 
 const post = (msg) => self.postMessage(msg)
 
@@ -163,48 +167,75 @@ _dt_kernel = _DTKernel()
 `
 
 async function loadRequestedPackages(wanted) {
-  if (!wanted.length) return
-  post({ type: 'status', phase: 'packages', detail: `Loading ${wanted.join(', ')}…` })
-  const pending = wanted.filter((p) => !loadedPackages.has(p))
+  const pending = wanted.filter((p) => p && !loadedPackages.has(p) && !failedPackages.has(p))
+  if (!pending.length) return
+
+  post({ type: 'status', phase: 'packages', detail: `Loading ${pending.join(', ')}…` })
+
+  // The happy path: one batched download of everything that ships as a wheel.
   try {
-    await pyodide.loadPackage(pending)
+    await pyodide.loadPackage(pending, { messageCallback: () => {}, errorCallback: () => {} })
     pending.forEach((p) => loadedPackages.add(p))
     return
   } catch {
-    // Not all names are bundled wheels — fall back to micropip per package so
-    // one unavailable extra doesn't stop the rest from loading.
+    // One unresolvable name fails the whole batch, so fall back to per-package
+    // loading — but only for the ones still genuinely missing.
   }
+
+  let micropip = null
   try {
-    await pyodide.loadPackage('micropip')
-    const micropip = pyodide.pyimport('micropip')
-    for (const pkg of pending) {
-      if (loadedPackages.has(pkg)) continue
-      try {
-        await pyodide.loadPackage(pkg)
-        loadedPackages.add(pkg)
-      } catch {
-        try {
-          await micropip.install(pkg)
-          loadedPackages.add(pkg)
-        } catch {
-          post({
-            type: 'status',
-            phase: 'warning',
-            detail: `Could not load "${pkg}" — it may not be available in the browser kernel.`,
-          })
-        }
-      }
+    await pyodide.loadPackage('micropip', { messageCallback: () => {} })
+    micropip = pyodide.pyimport('micropip')
+  } catch {
+    micropip = null
+  }
+
+  for (const pkg of pending) {
+    if (loadedPackages.has(pkg)) continue
+    try {
+      await pyodide.loadPackage(pkg, { messageCallback: () => {} })
+      loadedPackages.add(pkg)
+      continue
+    } catch {
+      // Not a bundled wheel — try PyPI.
     }
-  } catch (err) {
-    post({ type: 'status', phase: 'warning', detail: String(err?.message || err) })
+    try {
+      if (!micropip) throw new Error('micropip unavailable')
+      await micropip.install(pkg)
+      loadedPackages.add(pkg)
+    } catch {
+      // Remember the miss so we never pay for this lookup again this session.
+      failedPackages.add(pkg)
+      post({
+        type: 'status',
+        phase: 'warning',
+        detail: `Could not load "${pkg}" — it may not be available in the browser kernel.`,
+      })
+    }
+  }
+}
+
+/**
+ * Load whatever a cell's imports need, once.
+ *
+ * Students write `import pandas` whether or not an author declared it, so the
+ * kernel resolves imports itself. It is skipped entirely once a cell's imports
+ * are already satisfied, which is the common case after the first run.
+ */
+async function loadImportsFor(code) {
+  if (!code || !/^\s*(import|from)\s/m.test(code)) return
+  try {
+    await pyodide.loadPackagesFromImports(code, { messageCallback: () => {} })
+  } catch {
+    // A missing third-party import surfaces as a normal Python ImportError,
+    // which is far more useful to a student than a kernel-level failure.
   }
 }
 
 async function ensurePyodide(packages) {
   if (readyPromise) {
     await readyPromise
-    const extra = (packages || []).filter((p) => p && !loadedPackages.has(p))
-    if (extra.length) await loadRequestedPackages(extra)
+    await loadRequestedPackages(packages || [])
     return pyodide
   }
   readyPromise = (async () => {
@@ -248,12 +279,17 @@ self.onmessage = async (event) => {
       case 'init': {
         await ensurePyodide(msg.packages)
         writeFiles(msg.files)
-        post({ type: 'ready' })
+        // The id matters: the main thread resolves the caller's promise on it.
+        // Without it `boot`/`restart` would wait forever.
+        post({ type: 'ready', id: msg.id })
         break
       }
       case 'run': {
         await ensurePyodide(msg.packages)
-        const raw = pyodide.runPython(`_dt_kernel.run(${JSON.stringify(msg.code || '')})`)
+        const code = msg.code || ''
+        await loadImportsFor(code)
+        post({ type: 'status', phase: 'ready', detail: '' })
+        const raw = pyodide.runPython(`_dt_kernel.run(${JSON.stringify(code)})`)
         post({ type: 'result', id: msg.id, ...JSON.parse(raw) })
         break
       }

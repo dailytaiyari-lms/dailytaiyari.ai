@@ -208,7 +208,9 @@ const NotebookPage = () => {
       if (notebook.provisional_grading !== 'none' && runnableTests.length) {
         setSubmitPhase('Running your notebook…')
         try {
-          provisional = await editorRef.current.executeForGrading(runnableTests)
+          provisional = await editorRef.current.executeForGrading(runnableTests, {
+            onProgress: setSubmitPhase,
+          })
         } catch {
           provisional = []
         }

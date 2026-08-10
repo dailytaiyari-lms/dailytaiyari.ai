@@ -8,6 +8,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
  * interrupt a running cell from inside). A fresh worker is spun up immediately
  * so the student can carry on; they just lose their in-memory variables, which
  * is exactly what "Restart kernel" means in Jupyter.
+ *
+ * Busy state is tracked with an explicit count of in-flight executions. It was
+ * previously inferred from "are any promises still pending", so a single
+ * unresolved message left the notebook stuck on "Running" for the whole
+ * session — and made submitting hang.
  */
 export const KERNEL_IDLE = 'idle'
 export const KERNEL_LOADING = 'loading'
@@ -23,8 +28,10 @@ export default function usePyodideKernel({ packages = [], files = [] } = {}) {
   const workerRef = useRef(null)
   const pendingRef = useRef(new Map())
   const seqRef = useRef(0)
+  const execRef = useRef(0)
   const filesRef = useRef(files)
   const packagesRef = useRef(packages)
+  const stateRef = useRef(KERNEL_IDLE)
 
   const [state, setState] = useState(KERNEL_IDLE)
   const [status, setStatus] = useState('')
@@ -34,10 +41,25 @@ export default function usePyodideKernel({ packages = [], files = [] } = {}) {
   filesRef.current = files
   packagesRef.current = packages
 
+  const moveTo = useCallback((next) => {
+    stateRef.current = next
+    setState(next)
+  }, [])
+
   const rejectAll = useCallback((reason) => {
     pendingRef.current.forEach(({ reject }) => reject(new Error(reason)))
     pendingRef.current.clear()
+    execRef.current = 0
   }, [])
+
+  /** An execution finished: drop back to ready once nothing is left running. */
+  const finishExec = useCallback(() => {
+    execRef.current = Math.max(0, execRef.current - 1)
+    if (execRef.current === 0) {
+      setRunningCellId(null)
+      if (stateRef.current === KERNEL_BUSY) moveTo(KERNEL_READY)
+    }
+  }, [moveTo])
 
   const attach = useCallback((worker) => {
     worker.onmessage = (event) => {
@@ -51,45 +73,36 @@ export default function usePyodideKernel({ packages = [], files = [] } = {}) {
         return
       }
       if (msg.type === 'stream') {
-        const handler = pendingRef.current.get(msg.id)
-        handler?.onStream?.(msg)
+        pendingRef.current.get(msg.id)?.onStream?.(msg)
         return
       }
+
+      const entry = msg.id ? pendingRef.current.get(msg.id) : null
+      if (entry) pendingRef.current.delete(msg.id)
+
       if (msg.type === 'ready') {
-        setState(KERNEL_READY)
         setStatus('')
-        const entry = pendingRef.current.get(msg.id)
-        if (entry) {
-          pendingRef.current.delete(msg.id)
-          entry.resolve({ ready: true })
-        }
+        entry?.resolve({ ready: true })
+        if (entry?.isExec) finishExec()
+        else if (stateRef.current !== KERNEL_BUSY) moveTo(KERNEL_READY)
         return
       }
       if (msg.type === 'result' || msg.type === 'tests') {
-        const entry = pendingRef.current.get(msg.id)
-        if (entry) {
-          pendingRef.current.delete(msg.id)
-          entry.resolve(msg)
-        }
-        if (!pendingRef.current.size) setState(KERNEL_READY)
+        entry?.resolve(msg)
+        finishExec()
         return
       }
       if (msg.type === 'fatal') {
-        const entry = pendingRef.current.get(msg.id)
-        if (entry) {
-          pendingRef.current.delete(msg.id)
-          entry.reject(new Error(msg.error))
-        } else {
-          setWarnings((prev) => [...prev, msg.error])
-        }
-        if (!pendingRef.current.size) setState(KERNEL_READY)
+        if (entry) entry.reject(new Error(msg.error))
+        else setWarnings((prev) => [...prev, msg.error])
+        finishExec()
       }
     }
     worker.onerror = (err) => {
       rejectAll(err?.message || 'The Python kernel crashed.')
-      setState(KERNEL_IDLE)
+      moveTo(KERNEL_IDLE)
     }
-  }, [rejectAll])
+  }, [finishExec, moveTo, rejectAll])
 
   const ensureWorker = useCallback(() => {
     if (workerRef.current) return workerRef.current
@@ -99,46 +112,39 @@ export default function usePyodideKernel({ packages = [], files = [] } = {}) {
     return worker
   }, [attach])
 
-  const send = useCallback((payload, { onStream } = {}) => {
+  const send = useCallback((payload, { onStream, isExec = false } = {}) => {
     const worker = ensureWorker()
     const id = `m${++seqRef.current}`
+    if (isExec) execRef.current += 1
     return new Promise((resolve, reject) => {
-      pendingRef.current.set(id, { resolve, reject, onStream })
+      pendingRef.current.set(id, { resolve, reject, onStream, isExec })
       worker.postMessage({ ...payload, id, packages: packagesRef.current })
     })
   }, [ensureWorker])
 
   /** Boot the kernel and stage the notebook's dataset files. */
   const boot = useCallback(async () => {
-    if (state === KERNEL_READY || state === KERNEL_LOADING) return
-    setState(KERNEL_LOADING)
+    if (stateRef.current === KERNEL_READY || stateRef.current === KERNEL_LOADING) return
+    moveTo(KERNEL_LOADING)
     try {
       await send({ type: 'init', files: filesRef.current })
-      setState(KERNEL_READY)
+      moveTo(KERNEL_READY)
     } catch (err) {
-      setState(KERNEL_IDLE)
+      moveTo(KERNEL_IDLE)
       setWarnings((prev) => [...prev, err.message])
     }
-  }, [send, state])
+  }, [moveTo, send])
 
-  const runCell = useCallback(async (cellId, code, { onStream } = {}) => {
-    setState(KERNEL_BUSY)
+  const runCell = useCallback((cellId, code, { onStream } = {}) => {
+    moveTo(KERNEL_BUSY)
     setRunningCellId(cellId)
-    try {
-      return await send({ type: 'run', code }, { onStream })
-    } finally {
-      setRunningCellId(null)
-    }
-  }, [send])
+    return send({ type: 'run', code }, { onStream, isExec: true })
+  }, [moveTo, send])
 
-  const runTests = useCallback(async (tests) => {
-    setState(KERNEL_BUSY)
-    try {
-      return await send({ type: 'runTests', tests })
-    } finally {
-      setRunningCellId(null)
-    }
-  }, [send])
+  const runTests = useCallback((tests) => {
+    moveTo(KERNEL_BUSY)
+    return send({ type: 'runTests', tests }, { isExec: true })
+  }, [moveTo, send])
 
   /** Hard-stop: terminate the worker (the only way to kill running WASM). */
   const stop = useCallback(() => {
@@ -148,22 +154,24 @@ export default function usePyodideKernel({ packages = [], files = [] } = {}) {
     }
     rejectAll('Execution stopped.')
     setRunningCellId(null)
-    setState(KERNEL_IDLE)
+    moveTo(KERNEL_IDLE)
     setStatus('')
-  }, [rejectAll])
+  }, [moveTo, rejectAll])
 
   /** Restart: clear the namespace but keep the (already downloaded) runtime. */
   const restart = useCallback(async () => {
-    if (!workerRef.current) return
-    setState(KERNEL_BUSY)
+    if (!workerRef.current) return boot()
+    moveTo(KERNEL_BUSY)
     try {
       await send({ type: 'reset' })
       await send({ type: 'init', files: filesRef.current })
-      setState(KERNEL_READY)
+      setRunningCellId(null)
+      moveTo(KERNEL_READY)
     } catch {
       stop()
     }
-  }, [send, stop])
+    return undefined
+  }, [boot, moveTo, send, stop])
 
   useEffect(() => () => {
     workerRef.current?.terminate()

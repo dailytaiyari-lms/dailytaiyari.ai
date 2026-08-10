@@ -144,15 +144,17 @@ const NotebookEditor = forwardRef(({
     }
   }, [applyResult, kernel])
 
-  const runAll = useCallback(async () => {
+  const runAll = useCallback(async ({ onProgress } = {}) => {
     abortRunAll.current = false
     setRunningAll(true)
     try {
       const indexes = docRef.current.cells
         .map((cell, index) => (cell.cell_type === 'code' ? index : -1))
         .filter((index) => index >= 0)
+      let done = 0
       for (const index of indexes) {
         if (abortRunAll.current) break
+        onProgress?.(++done, indexes.length)
         // Stop at the first failure, like "Run all" in Jupyter — continuing past
         // a NameError just produces a cascade of confusing errors.
         const result = await runCellAt(index)
@@ -238,9 +240,13 @@ const NotebookEditor = forwardRef(({
     stop,
     isReady: () => kernel.isReady,
     /** Fresh kernel -> run all cells -> run tests. Returns test results. */
-    async executeForGrading(tests) {
+    async executeForGrading(tests, { onProgress } = {}) {
+      onProgress?.('Restarting Python…')
       await restart()
-      await runAll()
+      await runAll({
+        onProgress: (done, total) => onProgress?.(`Running your notebook — cell ${done} of ${total}…`),
+      })
+      onProgress?.('Checking your answers…')
       return runTests(tests)
     },
   }), [kernel.isReady, restart, runAll, runTests, stop])
@@ -274,7 +280,7 @@ const NotebookEditor = forwardRef(({
 
         <button
           type="button"
-          onClick={runAll}
+          onClick={() => runAll()}
           disabled={busy}
           className="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-700 disabled:opacity-50"
         >
