@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, forwardRef } from 'react'
 import {
   Play, FastForward, RotateCcw, Square, Loader2, Plus, Download, Database,
-  CircleDot, AlertTriangle,
+  CircleDot, AlertTriangle, CheckCircle2, XCircle, X,
 } from 'lucide-react'
 import NotebookCell from './NotebookCell'
 import usePyodideKernel, { KERNEL_IDLE } from '../../hooks/usePyodideKernel'
@@ -35,6 +35,14 @@ const NotebookEditor = forwardRef(({
   const [runningAll, setRunningAll] = useState(false)
   const [datasetFiles, setDatasetFiles] = useState([])
   const [datasetError, setDatasetError] = useState('')
+  // Per-cell outcome of the last run, keyed by cell key: how it finished, how
+  // long it took, and whether the code has been edited since. Plenty of correct
+  // cells (a `def`, an import) print nothing at all, so without this a
+  // successful run is visually indistinguishable from nothing happening.
+  const [runStatus, setRunStatus] = useState({})
+  // One-line verdict after "Run all", so the student isn't left inferring it
+  // from a wall of cells.
+  const [runSummary, setRunSummary] = useState(null)
   const docRef = useRef(doc)
   const abortRunAll = useRef(false)
 
@@ -45,6 +53,7 @@ const NotebookEditor = forwardRef(({
   const documentKey = initialDocument
   useEffect(() => {
     setDoc(withKeys(initialDocument))
+    setRunStatus({})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentKey])
 
@@ -104,6 +113,16 @@ const NotebookEditor = forwardRef(({
       cells[index] = { ...cells[index], source: value }
       return { ...prev, cells }
     })
+    // The previous result no longer describes what's in the editor. Say so,
+    // rather than leaving a stale green tick under changed code.
+    const key = docRef.current.cells[index]?.__key
+    if (key) {
+      setRunStatus((prev) => (
+        prev[key] && prev[key].state !== 'stale'
+          ? { ...prev, [key]: { ...prev[key], state: 'stale' } }
+          : prev
+      ))
+    }
   }, [update])
 
   const applyResult = useCallback((index, result) => {
@@ -122,21 +141,41 @@ const NotebookEditor = forwardRef(({
   const runCellAt = useCallback(async (index) => {
     const cell = docRef.current.cells[index]
     if (!cell || cell.cell_type !== 'code') return { error: null }
+    const key = cell.__key
+    const startedAt = performance.now()
     setRunningIndex(index)
     setLiveOutput('')
     try {
       const result = await kernel.runCell(
-        cell.__key,
+        key,
         sourceToText(cell.source),
         { onStream: (msg) => setLiveOutput((prev) => prev + msg.text) },
       )
       applyResult(index, result)
+      setRunStatus((prev) => ({
+        ...prev,
+        [key]: {
+          state: result.error ? 'error' : 'ok',
+          ms: Math.round(performance.now() - startedAt),
+          at: Date.now(),
+          hasOutput: (result.outputs || []).length > 0,
+        },
+      }))
       return result
     } catch (err) {
       applyResult(index, {
         outputs: [{ output_type: 'error', traceback: err.message }],
         execution_count: null,
       })
+      setRunStatus((prev) => ({
+        ...prev,
+        [key]: {
+          state: 'error',
+          ms: Math.round(performance.now() - startedAt),
+          at: Date.now(),
+          hasOutput: true,
+        },
+      }))
       return { error: err.message }
     } finally {
       setRunningIndex(null)
@@ -147,18 +186,29 @@ const NotebookEditor = forwardRef(({
   const runAll = useCallback(async ({ onProgress } = {}) => {
     abortRunAll.current = false
     setRunningAll(true)
+    setRunSummary(null)
     try {
       const indexes = docRef.current.cells
         .map((cell, index) => (cell.cell_type === 'code' ? index : -1))
         .filter((index) => index >= 0)
       let done = 0
+      let failedAt = null
       for (const index of indexes) {
         if (abortRunAll.current) break
         onProgress?.(++done, indexes.length)
         // Stop at the first failure, like "Run all" in Jupyter — continuing past
         // a NameError just produces a cascade of confusing errors.
         const result = await runCellAt(index)
-        if (result?.error) break
+        if (result?.error) { failedAt = done; break }
+      }
+      if (abortRunAll.current) setRunSummary(null)
+      else if (failedAt) {
+        setRunSummary({ state: 'error', text: `Stopped at cell ${failedAt} — see the error below.` })
+      } else if (done) {
+        setRunSummary({
+          state: 'ok',
+          text: `All ${done} cell${done > 1 ? 's' : ''} ran successfully.`,
+        })
       }
     } finally {
       setRunningAll(false)
@@ -174,6 +224,8 @@ const NotebookEditor = forwardRef(({
 
   const restart = useCallback(async () => {
     abortRunAll.current = true
+    setRunStatus({})
+    setRunSummary(null)
     update((prev) => ({
       ...prev,
       cells: prev.cells.map((cell) =>
@@ -351,6 +403,30 @@ const NotebookEditor = forwardRef(({
         </div>
       )}
 
+      {runSummary && !runningAll && (
+        <div
+          key={runSummary.text}
+          className={`animate-in flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium ${
+            runSummary.state === 'ok'
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-900/10 dark:text-emerald-300'
+              : 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/40 dark:bg-red-900/10 dark:text-red-300'
+          }`}
+        >
+          {runSummary.state === 'ok'
+            ? <CheckCircle2 className="w-4 h-4 shrink-0" />
+            : <XCircle className="w-4 h-4 shrink-0" />}
+          <span>{runSummary.text}</span>
+          <button
+            type="button"
+            onClick={() => setRunSummary(null)}
+            className="ml-auto opacity-60 hover:opacity-100"
+            aria-label="Dismiss"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       <div className="space-y-3">
         {doc.cells.map((cell, index) => (
           <NotebookCell
@@ -361,6 +437,7 @@ const NotebookEditor = forwardRef(({
             isRunning={runningIndex === index}
             liveOutput={liveOutput}
             kernelBusy={busy}
+            runStatus={runStatus[cell.__key]}
             canEditStructure={canEditStructure}
             onChangeSource={setCellSource}
             onRun={runCellAt}

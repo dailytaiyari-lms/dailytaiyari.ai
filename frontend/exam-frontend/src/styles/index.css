@@ -255,6 +255,36 @@
     display: inline-block;
   }
 
+  /* A short green pulse when a notebook cell finishes, so the confirmation is
+     noticed even when the student is looking elsewhere on the page. */
+  .nb-run-flash {
+    animation: nbRunFlash 1.1s ease-out;
+  }
+
+  @keyframes nbRunFlash {
+    0% {
+      opacity: 0;
+      transform: translateY(-2px);
+    }
+    15% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    35% {
+      box-shadow: 0 0 0 3px rgb(16 185 129 / 0.35);
+    }
+    100% {
+      opacity: 1;
+      box-shadow: 0 0 0 0 rgb(16 185 129 / 0);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .nb-run-flash {
+      animation: none;
+    }
+  }
+
   @keyframes wave {
     0% { transform: rotate( 0.0deg) }
     10% { transform: rotate(14.0deg) }

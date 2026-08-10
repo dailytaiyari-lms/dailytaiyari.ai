@@ -5,6 +5,7 @@ import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import {
   Play, Loader2, Lock, Pencil, Target, Trash2, ChevronUp, ChevronDown, Square,
+  CheckCircle2, XCircle, RefreshCw,
 } from 'lucide-react'
 import CellOutput from './CellOutput'
 import { ROLE_ANSWER, ROLE_READONLY, cellGradeId, cellRole, sourceToText } from './notebookDoc'
@@ -33,6 +34,57 @@ const ROLE_BADGE = {
 const editorHeight = (source) => {
   const lines = sourceToText(source).split('\n').length
   return Math.min(Math.max(lines + 2, 5), 30) * 19 + 24
+}
+
+const formatDuration = (ms) => {
+  if (ms == null) return ''
+  if (ms < 1000) return `${ms} ms`
+  return `${(ms / 1000).toFixed(1)}s`
+}
+
+/**
+ * The outcome of the last run, shown in the cell header.
+ *
+ * This is the only feedback for the many cells that legitimately print
+ * nothing — a `def`, an import, an assignment — where otherwise the screen
+ * simply doesn't change and the student can't tell the run happened.
+ */
+const RunStatusChip = ({ isRunning, status }) => {
+  if (isRunning) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+        <Loader2 className="w-3 h-3 animate-spin" />
+        Running…
+      </span>
+    )
+  }
+  if (!status) return null
+
+  if (status.state === 'ok') {
+    return (
+      <span
+        key={status.at}
+        className="nb-run-flash inline-flex items-center gap-1 rounded-md bg-emerald-50 px-1.5 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300"
+      >
+        <CheckCircle2 className="w-3 h-3" />
+        Ran in {formatDuration(status.ms)}
+      </span>
+    )
+  }
+  if (status.state === 'error') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-md bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-700 dark:bg-red-900/20 dark:text-red-300">
+        <XCircle className="w-3 h-3" />
+        Error
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-md bg-surface-100 px-1.5 py-0.5 text-[11px] font-medium text-surface-500 dark:bg-surface-700 dark:text-surface-300">
+      <RefreshCw className="w-3 h-3" />
+      Edited — run again
+    </span>
+  )
 }
 
 const MarkdownCell = ({ cell, editing, onChange, onToggleEdit, readOnly }) => {
@@ -80,6 +132,7 @@ const NotebookCell = ({
   onMove,
   canEditStructure = false,
   kernelBusy = false,
+  runStatus = null,
 }) => {
   const role = cellRole(cell)
   const readOnly = role === ROLE_READONLY
@@ -87,13 +140,20 @@ const NotebookCell = ({
   const BadgeIcon = badge.icon
   const gradeId = cellGradeId(cell)
   const isCode = cell.cell_type === 'code'
+  const ranClean = isCode && !isRunning && runStatus?.state === 'ok' && !runStatus.hasOutput
 
   return (
     <div
       className={`group rounded-xl border transition-colors ${
-        role === ROLE_ANSWER
-          ? 'border-primary-200 dark:border-primary-800'
-          : 'border-surface-200 dark:border-surface-700'
+        isRunning
+          ? 'border-amber-300 dark:border-amber-700'
+          : runStatus?.state === 'error'
+            ? 'border-red-200 dark:border-red-900/60'
+            : runStatus?.state === 'ok'
+              ? 'border-emerald-200 dark:border-emerald-900/60'
+              : role === ROLE_ANSWER
+                ? 'border-primary-200 dark:border-primary-800'
+                : 'border-surface-200 dark:border-surface-700'
       } bg-white dark:bg-surface-800`}
     >
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-surface-100 dark:border-surface-700">
@@ -107,8 +167,13 @@ const NotebookCell = ({
         <span className="text-[11px] text-surface-400">
           {isCode ? `[${cell.execution_count ?? ' '}]` : 'Markdown'}
         </span>
+        {isCode && <RunStatusChip isRunning={isRunning} status={runStatus} />}
 
-        <div className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+        <div
+          className={`ml-auto flex items-center gap-1 transition-opacity ${
+            isRunning ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'
+          }`}
+        >
           {canEditStructure && (
             <>
               <button
@@ -191,7 +256,18 @@ const NotebookCell = ({
       )}
 
       {isCode && (
-        <CellOutput outputs={cell.outputs} live={isRunning ? liveOutput : ''} />
+        <>
+          <CellOutput outputs={cell.outputs} live={isRunning ? liveOutput : ''} />
+          {ranClean && (
+            <div
+              key={runStatus.at}
+              className="nb-run-flash flex items-center gap-1.5 border-t border-emerald-100 dark:border-emerald-900/40 rounded-b-xl bg-emerald-50/60 dark:bg-emerald-900/10 px-3 py-1.5 text-[11px] text-emerald-700 dark:text-emerald-300"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+              Ran successfully — this cell doesn&apos;t print anything.
+            </div>
+          )}
+        </>
       )}
     </div>
   )
