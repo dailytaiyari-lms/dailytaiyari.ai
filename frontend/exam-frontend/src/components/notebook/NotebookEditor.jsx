@@ -32,6 +32,7 @@ const NotebookEditor = forwardRef(({
   const [editingMarkdown, setEditingMarkdown] = useState(null)
   const [liveOutput, setLiveOutput] = useState('')
   const [runningIndex, setRunningIndex] = useState(null)
+  const [runningAll, setRunningAll] = useState(false)
   const [datasetFiles, setDatasetFiles] = useState([])
   const [datasetError, setDatasetError] = useState('')
   const docRef = useRef(doc)
@@ -145,15 +146,20 @@ const NotebookEditor = forwardRef(({
 
   const runAll = useCallback(async () => {
     abortRunAll.current = false
-    const indexes = docRef.current.cells
-      .map((cell, index) => (cell.cell_type === 'code' ? index : -1))
-      .filter((index) => index >= 0)
-    for (const index of indexes) {
-      if (abortRunAll.current) break
-      // Stop at the first failure, like "Run all" in Jupyter — continuing past
-      // a NameError just produces a cascade of confusing errors.
-      const result = await runCellAt(index)
-      if (result?.error) break
+    setRunningAll(true)
+    try {
+      const indexes = docRef.current.cells
+        .map((cell, index) => (cell.cell_type === 'code' ? index : -1))
+        .filter((index) => index >= 0)
+      for (const index of indexes) {
+        if (abortRunAll.current) break
+        // Stop at the first failure, like "Run all" in Jupyter — continuing past
+        // a NameError just produces a cascade of confusing errors.
+        const result = await runCellAt(index)
+        if (result?.error) break
+      }
+    } finally {
+      setRunningAll(false)
     }
   }, [runCellAt])
 
@@ -272,7 +278,7 @@ const NotebookEditor = forwardRef(({
           disabled={busy}
           className="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-700 disabled:opacity-50"
         >
-          {kernel.isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FastForward className="w-3.5 h-3.5" />}
+          {runningAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FastForward className="w-3.5 h-3.5" />}
           Run all
         </button>
         {busy && (
