@@ -21,6 +21,9 @@ The frontend identifies itself to a specific tenant via the `VITE_TENANT_ID` env
 | `src/components/layout/AuthLayout.jsx` | Desktop tenant branding (login/register) |
 | `src/pages/auth/Login.jsx` | Mobile tenant branding + login form |
 | `src/pages/auth/Register.jsx` | Mobile tenant branding + register form |
+| `src/pages/NotebookPage.jsx` | Student lab surface (see [Labs](./notebooks-labs.md)) |
+| `src/hooks/usePyodideKernel.js` | In-browser Python kernel state machine |
+| `src/workers/pyodideKernel.worker.js` | Pyodide Web Worker |
 
 ---
 
