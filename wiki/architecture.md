@@ -120,6 +120,8 @@ Tenant (core.models.Tenant)
 ├── Badge, StudentBadge, XPTransaction — via TimeStampedModel
 ├── Post, Comment, Like — via TimeStampedModel
 ├── ChatSession, ChatMessage, AIQuizAttempt — via TimeStampedModel
+├── Notebook, NotebookTest, NotebookDataset — via TimeStampedModel
+│   └── NotebookDraft, NotebookSubmission, NotebookCompletion
 └── ... (all models inherit tenant from TimeStampedModel)
 ```
 
@@ -127,3 +129,24 @@ The `TimeStampedModel` base class includes:
 - `id` (UUID, primary key)
 - `tenant` (FK to Tenant, nullable for backward compatibility)
 - `created_at`, `updated_at` (auto timestamps)
+
+---
+
+## Async Processing
+
+Long-running work runs on Celery rather than in the request thread, with
+**queue-per-workload** so a slow job can't block a fast one:
+
+```
+                    ┌─ default   ─► celery-worker     (email, code judging)
+Django (web) ─ redis ├─ notebooks ─► celery-nbworker   ─► nbrunner  (lab grading)
+                    └─ aigen     ─► celery-aiworker   (LLM authoring jobs)
+```
+
+Untrusted student code never runs in `web`. It runs in one of two sandboxes —
+`piston` for coding questions, `nbrunner` for labs — neither of which publishes
+ports, holds credentials, or has database access.
+
+Each async path falls back to inline execution if the broker is unreachable, so
+a Redis outage degrades latency rather than breaking the feature. See
+[Labs](./notebooks-labs.md) for the full pipeline.

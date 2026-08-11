@@ -76,6 +76,15 @@ Decision guide:
 - **Backend code only, no migrations, no dep changes** → pull + restart (steps 2, 5, 6).
 - **New migration files** → pull + migrate the affected app(s) + restart (steps 2, 3, 5, 6).
 - **`requirements.txt` (or other dependency) changes** → pull + **rebuild image** + migrate if needed + restart (steps 2, 4, 3, 6).
+- **New service in `docker-compose.yml`** → also do step 4b **before** restarting.
+  A plain restart only restarts what is already running, so a new worker or
+  sandbox silently never starts.
+
+Check for new services explicitly — it is the easiest thing to miss:
+
+```bash
+git --no-pager diff <VM_HEAD>..origin/main -- backend/docker-compose.yml
+```
 
 ## 2. Pull the latest code on the VM
 
@@ -117,6 +126,45 @@ dt_ssh "cd $DT_APP_DIR/backend && sudo docker compose build web && sudo docker c
 
 (When you rebuild + `up -d`, you do not also need the restart in step 5.)
 
+## 4b. New Compose services (only if the release adds one)
+
+If `docker-compose.yml` gained a service, it needs new env keys, an image, and
+an explicit start. Nothing warns you if you skip this — the API stays healthy
+while jobs on the new worker's queue never run.
+
+```bash
+# i. Append any missing env keys (back up first, never overwrite existing values):
+dt_ssh "cd $DT_APP_DIR/backend && cp .env .env.bak.\$(date +%Y%m%d%H%M%S) && \
+  for kv in KEY_ONE=value KEY_TWO=value; do k=\${kv%%=*}; \
+  grep -q \"^\$k=\" .env || printf '%s\n' \"\$kv\" >> .env; done"
+
+# ii. Build the new images (a new sandbox is a new image; new Celery workers
+#     reuse the web image but must still be built so they exist locally):
+dt_ssh "cd $DT_APP_DIR/backend && sudo docker compose build <new-services>"
+
+# iii. Start them, then recreate web so it picks up the new env:
+dt_ssh "cd $DT_APP_DIR/backend && sudo docker compose up -d <new-services> && \
+  sudo docker compose up -d web"
+```
+
+Cross-check the new keys against the *other* environment's `.env` — pre-prod is
+the reference for what prod is missing:
+
+```bash
+dt_ssh "cd $DT_APP_DIR/backend && grep -E '^(NEW_PREFIX_)' .env"
+```
+
+Then verify the services are doing their job, not merely running:
+
+```bash
+# A new Celery worker logs its queue and task list on boot:
+dt_ssh "cd $DT_APP_DIR/backend && sudo docker compose logs <worker> | grep -A5 'queues'"
+
+# A new internal sandbox must be reachable from web (and must NOT be exposed):
+dt_ssh "cd $DT_APP_DIR/backend && sudo docker compose exec -T web python -c \
+  \"import urllib.request;print(urllib.request.urlopen('http://<svc>:<port>/health',timeout=5).status)\""
+```
+
 ## 5. Restart the web container
 
 For code-only or migration deploys (no image rebuild):
@@ -128,8 +176,11 @@ dt_ssh "cd $DT_APP_DIR/backend && sudo docker compose restart web"
 ## 6. Verify the deploy
 
 ```bash
-# Container is up:
+# Containers are up:
 dt_ssh "cd $DT_APP_DIR/backend && sudo docker compose ps web"
+
+# Every service is up — not just web (catches a worker that failed to start):
+dt_ssh "cd $DT_APP_DIR/backend && sudo docker compose ps --format '{{.Service}}\t{{.State}}'"
 
 # API is serving (expect 200):
 curl -s -o /dev/null -w '%{http_code}\n' "$DT_API_URL/api/docs/"
@@ -169,13 +220,21 @@ Keep such scripts idempotent so they are safe to re-run.
   step 3's `showmigrations` check.
 - **Feature still missing after a green deploy** → confirm the PR actually
   merged to `main` and the VM's HEAD matches `origin/main` (step 1).
+- **Background jobs stuck at `queued` forever, no error** → the worker for that
+  queue isn't running. `docker compose ps` and check every service, not just
+  `web`. Common after a release that added a worker (step 4b).
+- **`[ERROR] Control server error: [Errno 13] Permission denied: '/nonexistent'`**
+  in the `web` logs → harmless gunicorn noise; not a deploy failure.
 
 ## Notes / conventions
 
+- **Current stack** (both environments): `web`, `nginx`, `redis`, `db`,
+  `celery-worker` (default queue), `celery-nbworker` (`notebooks` queue),
+  `celery-aiworker` (`aigen` queue), `piston` and `nbrunner` (sandboxes).
+- **Sandboxes never publish ports.** `piston` and `nbrunner` are reachable only
+  on the internal Docker network. Never add a `ports:` mapping to either.
 - **Local machine has no Django/Postgres access.** Validate code locally only
   with `python3 -m py_compile <file>`; run `check` / `migrate` on the VM.
 - **Frontend & landing page deploy via Netlify automatically on merge** — no VM
   action needed for those.
-- The Compose services on the VM are typically: `web`, a `db`/`nginx` proxy,
-  `piston` (code execution), plus any others defined in `docker-compose.yml`.
 - Never commit the SSH key, its path, host IPs, or tenant IDs to the repo.

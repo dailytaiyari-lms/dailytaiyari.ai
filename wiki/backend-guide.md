@@ -17,6 +17,9 @@ backend/
 ├── gamification/          # Badges, XP, leaderboard, challenges
 ├── community/             # Posts, comments, polls, community quizzes
 ├── chatbot/               # AI chat sessions, FAQ, AI quizzes
+├── coursegen/             # AI course/content authoring (async, `aigen` queue)
+├── notebooks/             # Labs — gradeable Python notebooks + AI lab generator
+├── deploy/nbrunner/       # Sandboxed notebook execution service (no app code)
 └── dailytaiyari/          # Django project settings & URLs
 ```
 
@@ -223,6 +226,17 @@ Below is every app and which ViewSets are tenant-aware:
 | `SavedResponseViewSet` | `TenantAwareViewSet` | |
 | `FrequentQuestionViewSet` | `TenantAwareReadOnlyViewSet` | |
 | `AIQuizAttemptViewSet` | `TenantAwareViewSet` | |
+
+### `notebooks`
+| ViewSet | Base Class | Notes |
+|---|---|---|
+| `NotebookViewSet` | `ReadOnlyModelViewSet` | Student-facing. Scoped to the student's **enrolled courses**, not just the tenant. Adds `draft/`, `submit/`, `my-submissions/` actions |
+| `AdminNotebookViewSet` | `TenantAwareViewSet` | Lab authoring, incl. nested tests |
+| `AdminNotebookDatasetViewSet` | `TenantAwareViewSet` | Dataset uploads |
+| `AdminNotebookSubmissionViewSet` | `TenantAwareViewSet` | Submission review + mark override |
+
+See [notebooks-labs.md](./notebooks-labs.md) for the grading pipeline and the
+sandbox's security properties.
 
 ---
 

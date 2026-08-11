@@ -206,6 +206,74 @@ All exam endpoints are **read-only** and tenant-filtered.
 
 ---
 
+## Lab (Notebook) Endpoints
+
+Gradeable Python notebooks. Surfaced to users as **"Labs"**; the API path stays
+`notebooks`. Full details in [notebooks-labs.md](./notebooks-labs.md).
+
+### Student
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/v1/notebooks/` | Labs across the student's enrolled courses |
+| GET | `/api/v1/notebooks/<id>/` | Lab detail + attempt state + best result |
+| GET/PUT/DELETE | `/api/v1/notebooks/<id>/draft/` | Autosaved work-in-progress |
+| POST | `/api/v1/notebooks/<id>/submit/` | Submit for grading |
+| GET | `/api/v1/notebooks/<id>/submissions/<sub_id>/` | Poll submission status |
+| GET | `/api/v1/notebooks/<id>/my-submissions/` | Attempt history |
+
+Submission is **asynchronous by default**: `submit/` returns a submission with
+`status: "queued"` and the client polls the status endpoint until it reads
+`graded` (or `failed`).
+
+```json
+{
+  "id": "…",
+  "status": "graded",
+  "attempt_number": 2,
+  "passed_count": 4,
+  "total_count": 5,
+  "passed_points": 8,
+  "total_points": 10,
+  "marks": "16.00",
+  "is_late": false,
+  "results": [
+    { "name": "returns the sum", "passed": true, "points": 2 },
+    { "name": "handles negatives", "passed": false, "points": 2,
+      "failure_hint": "Check the sign handling" }
+  ]
+}
+```
+
+Lab detail includes the attempt policy so the client never reimplements it:
+`can_submit`, `allow_resubmission`, `max_attempts`, `attempts_used`,
+`attempts_remaining`, `is_past_due`, `hidden_test_count`, `my_best`,
+`is_complete`.
+
+### Author / admin
+
+| Method | Endpoint | Description |
+|---|---|---|
+| — | `/api/v1/notebooks/admin/notebooks/` | Lab CRUD (incl. tests) |
+| — | `/api/v1/notebooks/admin/datasets/` | Dataset management |
+| — | `/api/v1/notebooks/admin/submissions/` | Review, override marks, feedback |
+| GET | `/api/v1/notebooks/meta/` | Available packages, limits, defaults |
+
+### AI lab generation
+
+Always a background job — poll it, then `apply/` to write a real lab.
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET/POST | `/api/v1/notebooks/admin/generate/jobs/` | List / start a job |
+| GET | `/api/v1/notebooks/admin/generate/jobs/<id>/` | Poll status + draft |
+| POST | `/api/v1/notebooks/admin/generate/jobs/<id>/refine/` | Modify the draft |
+| POST | `/api/v1/notebooks/admin/generate/jobs/<id>/regenerate/` | Retry |
+| POST | `/api/v1/notebooks/admin/generate/jobs/<id>/apply/` | Persist as a lab |
+| POST | `/api/v1/notebooks/admin/generate/jobs/<id>/discard/` | Discard the draft |
+
+---
+
 ## Error Responses
 
 ### 403 — Tenant Required

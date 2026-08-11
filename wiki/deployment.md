@@ -35,13 +35,26 @@ Each VM runs the same Docker Compose stack:
 | `nginx`        | TLS termination + reverse proxy                 |
 | `redis`        | Celery broker / cache                           |
 | `celery-worker`| Async tasks (email, async code judging, etc.)   |
+| `celery-nbworker` | Notebook/lab grading (`notebooks` queue)     |
+| `celery-aiworker` | AI authoring — course + lab generation (`aigen` queue) |
 | `piston`       | Sandboxed code execution engine                 |
+| `nbrunner`     | Sandboxed notebook/lab execution engine         |
+
+The three Celery workers are split by queue so a multi-minute LLM call or a
+notebook that trains a model can't head-of-line block a quick coding
+submission. See [Labs](./notebooks-labs.md) for the split and its rationale.
+
+> **If `celery-aiworker` isn't running**, AI generation jobs are enqueued and
+> then silently never execute — they sit at `queued` with no error. Check all
+> workers are up after any deploy.
 
 - **Database:** managed **Azure PostgreSQL Flexible Server** (SSL required). The
   `db` service in `docker-compose.yml` is unused in cloud deploys.
 - **Media:** **Azure Blob Storage**, served as public blob URLs.
 - **TLS:** Let's Encrypt certs per hostname, auto-renewed via a certbot deploy
   hook that reloads nginx.
+- **Sandboxes:** neither `piston` nor `nbrunner` publishes ports — they are
+  reachable only on the internal Docker network. Never add a `ports:` mapping.
 
 ## Configuration
 
@@ -91,6 +104,39 @@ Deploy **pre-prod from `main`** first; deploy **prod from `production`** only
 after promotion (see branching doc). The canonical, secret-aware runbook lives
 in the `deploy-backend` skill under `.github/skills/`.
 
+## Deploying a release that adds a service
+
+A `restart` only restarts what is already running, so a release that introduces
+a **new Compose service** needs extra steps — and missing them fails *silently*
+(the API is healthy, but jobs on the new worker's queue never run). The labs
+release added `nbrunner`, `celery-nbworker` and `celery-aiworker`; use it as the
+template.
+
+```bash
+# 1. New env keys first — check against docker-compose.yml and the env doc.
+#    Back up before editing, and only append keys that are missing.
+cp .env .env.bak.$(date +%Y%m%d%H%M%S)
+
+# 2. Build the new images (a new sandbox is a new image; workers usually
+#    reuse the web image but must still be built to exist locally).
+docker compose build <new-services>
+
+# 3. Migrations for any new app.
+docker compose exec -T web python manage.py migrate <app>
+
+# 4. Start the new services, then recreate web so it picks up new env.
+docker compose up -d <new-services>
+docker compose up -d web
+
+# 5. Verify every service is up — not just web.
+docker compose ps
+```
+
+Then confirm the new services are actually *doing* their job: check a worker
+logged the queue and tasks you expect, and that `web` can reach a new sandbox
+over the internal network. The labs checklist is in
+[notebooks-labs.md](./notebooks-labs.md#operating-notes).
+
 ## Verify a deploy
 
 ```bash
@@ -100,12 +146,22 @@ curl -s -o /dev/null -w '%{http_code}\n' https://<hostname>/api/docs/
 # Containers healthy
 docker compose ps
 
+# All three Celery workers consuming their queues
+docker compose logs celery-worker celery-nbworker celery-aiworker | grep -A4 'queues'
+
 # Recent logs if anything is off
 docker compose logs web --tail=50
 ```
 
 For prod, `<hostname>` is `api-prod.dailytaiyari.in`; for pre-prod,
 `api.dailytaiyari.in`.
+
+> A bare `curl` of a tenant-scoped endpoint returns
+> `{"error": "X-Tenant-ID header is required."}` — that means the API is **up**,
+> not broken.
+>
+> `[ERROR] Control server error: [Errno 13] Permission denied: '/nonexistent'`
+> in the `web` logs is harmless gunicorn noise, not a deploy failure.
 
 ## TLS certificates
 
