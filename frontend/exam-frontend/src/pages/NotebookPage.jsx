@@ -5,10 +5,12 @@ import { motion } from 'framer-motion'
 import toast from 'react-hot-toast'
 import {
   ArrowLeft, Send, Loader2, CheckCircle2, XCircle, Clock, AlertTriangle,
-  Trophy, RotateCcw, History, Save, Lock, FlaskConical, Notebook as NotebookIcon,
+  RotateCcw, Save, Lock, FlaskConical, Notebook as NotebookIcon,
 } from 'lucide-react'
 import notebookService from '../services/notebookService'
 import NotebookEditor from '../components/notebook/NotebookEditor'
+import LabStatusCard from '../components/notebook/LabStatusCard'
+import SubmitFlowModal from '../components/notebook/LabSubmitFlow'
 import Loading from '../components/common/Loading'
 import { forApi } from '../components/notebook/notebookDoc'
 
@@ -85,7 +87,8 @@ const NotebookPage = () => {
   const [submitPhase, setSubmitPhase] = useState('')
   const [result, setResult] = useState(null)
   const [selfCheck, setSelfCheck] = useState(null)
-  const [showHistory, setShowHistory] = useState(false)
+  // Drives the submit modal: null | 'confirm' | 'running' | 'result'.
+  const [flowPhase, setFlowPhase] = useState(null)
 
   const saveTimer = useRef(null)
   const pendingDoc = useRef(null)
@@ -190,14 +193,14 @@ const NotebookPage = () => {
     }
   }
 
-  const handleSubmit = async () => {
-    if (!notebook?.can_submit) return
-    const remaining = notebook.attempts_remaining
-    const warn = remaining === null
-      ? 'Submit this lab for grading?'
-      : `Submit for grading? You have ${remaining} attempt${remaining === 1 ? '' : 's'} left.`
-    if (!window.confirm(warn)) return
+  const handleSubmit = () => {
+    if (!notebook?.can_submit || submitting) return
+    setSubmitPhase('')
+    setFlowPhase('confirm')
+  }
 
+  const runSubmission = async () => {
+    setFlowPhase('running')
     setSubmitting(true)
     setResult(null)
     setSelfCheck(null)
@@ -224,24 +227,24 @@ const NotebookPage = () => {
         provisional_results: provisional,
       })
 
+      let final = submission
       if (submission.status === 'queued' || submission.status === 'running') {
         setSubmitPhase('Grading on the server…')
         setResult(submission)
-        const final = await pollSubmission(notebookId, submission.id)
-        setResult(final)
-      } else {
-        setResult(submission)
+        final = await pollSubmission(notebookId, submission.id)
       }
+      setResult(final)
+      setFlowPhase('result')
 
       queryClient.invalidateQueries({ queryKey: ['notebook', notebookId] })
       refetchHistory()
-      toast.success('Submitted.')
     } catch (err) {
       const message = err.friendly
         || err.response?.data?.error
         || err.message
         || 'Could not submit. Please try again.'
       toast.error(message)
+      setFlowPhase(null)
     } finally {
       setSubmitting(false)
       setSubmitPhase('')
@@ -267,10 +270,7 @@ const NotebookPage = () => {
   }
 
   const displayed = result || null
-  const isPending = displayed && ['queued', 'running'].includes(displayed.status)
-  const attemptsLabel = notebook.attempts_remaining === null
-    ? 'Unlimited attempts'
-    : `${notebook.attempts_remaining} attempt${notebook.attempts_remaining === 1 ? '' : 's'} left`
+  const hasSubmitted = !!result || history.length > 0
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 space-y-5">
@@ -298,7 +298,6 @@ const NotebookPage = () => {
             ) : null}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-surface-500 dark:text-surface-400">
-            <span>{attemptsLabel}</span>
             {notebook.is_timed && notebook.due_at && (
               <span className={`inline-flex items-center gap-1 ${notebook.is_past_due ? 'text-red-500' : ''}`}>
                 <Clock className="w-3 h-3" />
@@ -337,6 +336,32 @@ const NotebookPage = () => {
         </div>
       )}
 
+      <LabStatusCard
+        notebook={notebook}
+        result={displayed}
+        history={history}
+        submitting={submitting}
+        onSubmit={handleSubmit}
+        onViewDetails={() => setFlowPhase('result')}
+      />
+
+      {selfCheck && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 p-4 space-y-2"
+        >
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-surface-800 dark:text-surface-100">
+            <FlaskConical className="w-4 h-4 text-primary-600" />
+            Practice checks
+            <span className="ml-auto text-xs font-normal text-surface-500">
+              These don&apos;t count towards your grade
+            </span>
+          </h2>
+          {selfCheck.map((r, i) => <TestResultRow key={i} result={r} />)}
+        </motion.div>
+      )}
+
       <NotebookEditor
         ref={editorRef}
         document={initialDocument}
@@ -368,135 +393,37 @@ const NotebookPage = () => {
               type="button"
               onClick={handleSubmit}
               disabled={submitting || !notebook.can_submit}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-              title={notebook.can_submit ? 'Submit for grading' : 'No attempts remaining'}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium ${
+                notebook.can_submit
+                  ? 'bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50'
+                  : 'bg-surface-100 dark:bg-surface-700 text-surface-400 dark:text-surface-500 cursor-not-allowed'
+              }`}
+              title={
+                notebook.can_submit
+                  ? 'Submit for grading'
+                  : notebook.is_past_due
+                    ? 'The due date has passed'
+                    : 'No attempts remaining'
+              }
             >
               {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-              Submit
+              {hasSubmitted && notebook.can_submit ? 'Resubmit' : 'Submit'}
             </button>
           </div>
         }
       />
 
-      {submitting && submitPhase && (
-        <div className="flex items-center gap-2 rounded-xl border border-primary-200 dark:border-primary-800 bg-primary-50 dark:bg-primary-900/10 px-4 py-2.5 text-sm text-primary-700 dark:text-primary-300">
-          <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-          {submitPhase}
-        </div>
-      )}
+      <SubmitFlowModal
+        phase={flowPhase}
+        notebook={notebook}
+        progress={submitPhase}
+        result={displayed}
+        onCancel={() => { if (!submitting) setFlowPhase(null) }}
+        onConfirm={runSubmission}
+        onClose={() => setFlowPhase(null)}
+        onRetry={() => setFlowPhase('confirm')}
+      />
 
-      {selfCheck && (
-        <motion.div
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="rounded-xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 p-4 space-y-2"
-        >
-          <h2 className="flex items-center gap-2 text-sm font-semibold text-surface-800 dark:text-surface-100">
-            <FlaskConical className="w-4 h-4 text-primary-600" />
-            Practice checks
-            <span className="ml-auto text-xs font-normal text-surface-500">
-              These don&apos;t count towards your grade
-            </span>
-          </h2>
-          {selfCheck.map((r, i) => <TestResultRow key={i} result={r} />)}
-        </motion.div>
-      )}
-
-      {displayed && (
-        <motion.div
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="rounded-xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 p-4 space-y-3"
-        >
-          <div className="flex flex-wrap items-center gap-3">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-surface-800 dark:text-surface-100">
-              <Trophy className="w-4 h-4 text-amber-500" />
-              Attempt {displayed.attempt_number}
-            </h2>
-            {isPending ? (
-              <span className="inline-flex items-center gap-1.5 text-xs text-amber-600">
-                <Loader2 className="w-3 h-3 animate-spin" /> Grading…
-              </span>
-            ) : displayed.status === 'error' ? (
-              <span className="text-xs text-red-600">Grading failed</span>
-            ) : (
-              <>
-                <span className="text-sm font-semibold text-surface-900 dark:text-white">
-                  {displayed.passed_points}/{displayed.total_points} points
-                </span>
-                {displayed.final_marks !== null && displayed.notebook_max_marks ? (
-                  <span className="rounded-md bg-emerald-50 dark:bg-emerald-900/20 px-2 py-0.5 text-xs font-semibold text-emerald-600">
-                    {displayed.final_marks} / {displayed.notebook_max_marks} marks
-                  </span>
-                ) : null}
-              </>
-            )}
-            {displayed.is_late && (
-              <span className="rounded-md bg-amber-50 dark:bg-amber-900/20 px-2 py-0.5 text-xs font-medium text-amber-600">
-                Late
-              </span>
-            )}
-          </div>
-
-          {displayed.execution_error && (
-            <pre className="rounded-lg bg-red-50 dark:bg-red-900/10 p-3 font-mono text-xs text-red-700 dark:text-red-300 whitespace-pre-wrap break-words">
-              {displayed.execution_error}
-            </pre>
-          )}
-
-          {(displayed.results || []).length > 0 && (
-            <div className="space-y-2">
-              {displayed.results.map((r, i) => <TestResultRow key={i} result={r} />)}
-            </div>
-          )}
-
-          {displayed.feedback && (
-            <div className="rounded-lg border border-surface-200 dark:border-surface-700 p-3">
-              <p className="text-xs font-semibold text-surface-500 mb-1">Instructor feedback</p>
-              <p className="text-sm text-surface-700 dark:text-surface-200 whitespace-pre-wrap">
-                {displayed.feedback}
-              </p>
-            </div>
-          )}
-        </motion.div>
-      )}
-
-      {history.length > 0 && (
-        <div className="rounded-xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800">
-          <button
-            type="button"
-            onClick={() => setShowHistory((v) => !v)}
-            className="flex w-full items-center gap-2 px-4 py-3 text-sm font-semibold text-surface-800 dark:text-surface-100"
-          >
-            <History className="w-4 h-4 text-surface-400" />
-            Previous attempts ({history.length})
-          </button>
-          {showHistory && (
-            <div className="border-t border-surface-100 dark:border-surface-700 divide-y divide-surface-100 dark:divide-surface-700">
-              {history.map((s) => (
-                <div key={s.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
-                  <span className="font-medium text-surface-700 dark:text-surface-200">
-                    Attempt {s.attempt_number}
-                  </span>
-                  <span className="text-xs text-surface-500">
-                    {new Date(s.submitted_at).toLocaleString()}
-                  </span>
-                  <span className="ml-auto text-xs font-semibold text-surface-600 dark:text-surface-300">
-                    {s.status === 'graded'
-                      ? `${s.passed_points}/${s.total_points} pts`
-                      : s.status}
-                  </span>
-                  {s.final_marks !== null && (
-                    <span className="text-xs font-semibold text-emerald-600">
-                      {s.final_marks} marks
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   )
 }
