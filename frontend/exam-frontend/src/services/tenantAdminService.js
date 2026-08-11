@@ -114,6 +114,30 @@ export const tenantAdminService = {
         return response.data
     },
 
+    // Zoom — one Server-to-Server OAuth connection per tenant. Secrets are
+    // write-only; the response carries has_* flags and the webhook URL to paste
+    // into the Zoom app. Returns { zoom, webhook_url }.
+    getZoomIntegration: async () => {
+        const response = await api.get('/tenant-admin/zoom/')
+        return response.data
+    },
+
+    saveZoomIntegration: async (payload) => {
+        const response = await api.put('/tenant-admin/zoom/', payload)
+        return response.data
+    },
+
+    // "Test connection" — asks Zoom for a token and the host account.
+    testZoomIntegration: async () => {
+        const response = await api.post('/tenant-admin/zoom/')
+        return response.data
+    },
+
+    disconnectZoom: async () => {
+        const response = await api.delete('/tenant-admin/zoom/')
+        return response.data
+    },
+
     // Sales dashboard — payment orders, summary aggregates, refunds & access.
     getSalesOrders: async (params = {}) => {
         const response = await api.get('/payments/admin/sales/orders/', {

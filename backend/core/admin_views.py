@@ -4,13 +4,16 @@ Scoped to the current tenant resolved by ``TenantMiddleware`` from the
 ``X-Tenant-ID`` header, and restricted to users with the ``admin`` role.
 """
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import generics, permissions, parsers
 from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
 
 from core.permissions import IsTenantAdmin
-from .models import PaymentGateway
-from .admin_serializers import TenantSettingsSerializer, PaymentGatewaySerializer
+from .models import PaymentGateway, ZoomIntegration
+from .admin_serializers import (
+    TenantSettingsSerializer, PaymentGatewaySerializer, ZoomIntegrationSerializer,
+)
 
 
 class TenantSettingsView(generics.RetrieveUpdateAPIView):
@@ -96,3 +99,89 @@ class PaymentGatewayView(generics.GenericAPIView):
         if gateway is not None:
             gateway.delete()
         return self._list_response()
+
+
+class ZoomIntegrationView(generics.GenericAPIView):
+    """Manage the current tenant's Zoom connection (one per tenant).
+
+    * ``GET``    — the stored connection (secrets replaced by ``has_*`` flags),
+      plus the webhook URL to paste into the Zoom app.
+    * ``PUT``    — create/update it. Blank secrets keep the stored ones.
+    * ``POST``   — "Test connection": fetch a token and the host user from Zoom.
+    * ``DELETE`` — disconnect Zoom entirely.
+    """
+    serializer_class = ZoomIntegrationSerializer
+    permission_classes = [permissions.IsAuthenticated, IsTenantAdmin]
+
+    def _tenant(self):
+        tenant = getattr(self.request, 'tenant', None)
+        if tenant is None:
+            raise NotFound('No tenant is associated with this request.')
+        return tenant
+
+    def _integration(self):
+        return ZoomIntegration.objects.filter(tenant=self._tenant()).first()
+
+    def _payload(self, integration=None):
+        integration = integration or self._integration()
+        if integration is None:
+            # Nothing saved yet — still return the webhook URL so the admin can
+            # set up the Zoom app before saving credentials.
+            return {
+                'zoom': None,
+                'webhook_url': self.get_serializer().get_webhook_url(None),
+            }
+        return {
+            'zoom': self.get_serializer(integration).data,
+            'webhook_url': self.get_serializer(integration).data.get('webhook_url'),
+        }
+
+    def get(self, request, *args, **kwargs):
+        return Response(self._payload())
+
+    def put(self, request, *args, **kwargs):
+        integration = self._integration()
+        serializer = self.get_serializer(
+            integration, data=request.data, partial=integration is not None
+        )
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save(tenant=self._tenant())
+        return Response(self._payload(instance))
+
+    def post(self, request, *args, **kwargs):
+        """Verify the stored credentials against Zoom and record the result."""
+        from liveclass.zoom import ZoomClient, ZoomError
+
+        integration = self._integration()
+        if integration is None or not integration.is_configured:
+            return Response(
+                {'detail': 'Add your Zoom Account ID, Client ID and Client Secret first.'},
+                status=400,
+            )
+        try:
+            user = ZoomClient(integration).verify()
+        except ZoomError as exc:
+            integration.last_error = str(exc)
+            integration.save(update_fields=['last_error', 'updated_at'])
+            return Response({'detail': str(exc), **self._payload(integration)}, status=400)
+
+        integration.last_verified_at = timezone.now()
+        integration.last_error = ''
+        integration.save(update_fields=['last_verified_at', 'last_error', 'updated_at'])
+        return Response({
+            'detail': 'Zoom connected successfully.',
+            'account': {
+                'email': user.get('email', ''),
+                'display_name': user.get('display_name') or user.get('first_name', ''),
+                # 1 = Basic (free), 2 = Licensed/Pro. Reports and registration
+                # need a licensed host, so the UI warns when this is Basic.
+                'type': user.get('type'),
+            },
+            **self._payload(integration),
+        })
+
+    def delete(self, request, *args, **kwargs):
+        integration = self._integration()
+        if integration is not None:
+            integration.delete()
+        return Response(self._payload(None))

@@ -7,6 +7,7 @@ import { assignmentService } from '../services/assignmentService'
 import { codingService } from '../services/codingService'
 import { notebookService } from '../services/notebookService'
 import { liveClassService } from '../services/liveClassService'
+import toast from 'react-hot-toast'
 import Loading from '../components/common/Loading'
 import {
   BookOpen, PlayCircle, PenTool, ArrowLeft, CheckCircle2, Clock,
@@ -296,9 +297,21 @@ const liveStatus = (l) => {
   return { tone: 'progress', icon: Clock, label: when }
 }
 
-// Open a live class's join link (Google Meet) in a new tab.
-const openLive = (l) => {
-  if (l.meeting_url) window.open(l.meeting_url, '_blank', 'noopener,noreferrer')
+// Open a live class. We always ask the backend for the link rather than using
+// meeting_url directly: for a registered Zoom meeting it returns *this
+// student's* personal join URL (which is what makes the attendance report map
+// to them), and the request itself records the join. Falls back to whatever
+// link we already have if the call fails, so a student is never locked out.
+const openLive = async (l) => {
+  if (l.live_status === 'ended') return
+  try {
+    const { join_url: url } = await liveClassService.join(l.id)
+    if (url) return window.open(url, '_blank', 'noopener,noreferrer')
+    toast.error('No join link has been set up for this class yet')
+  } catch {
+    if (l.meeting_url) return window.open(l.meeting_url, '_blank', 'noopener,noreferrer')
+    toast.error('Could not open this live class. Please try again.')
+  }
 }
 
 const labStatus = (n) => {
@@ -805,6 +818,9 @@ const LiveTab = ({ items }) => {
         const s = liveStatus(l)
         const isLive = l.live_status === 'live'
         const ended = l.live_status === 'ended'
+        // A registered Zoom class has no shared link — the join endpoint issues
+        // a personal one — so it must not look unavailable.
+        const canJoin = Boolean(l.meeting_url || l.requires_join_request)
         return (
           <Tile
             key={l.id}
@@ -825,8 +841,8 @@ const LiveTab = ({ items }) => {
               <div className="mt-3">
                 <button
                   onClick={(e) => { e.stopPropagation(); openLive(l) }}
-                  disabled={ended || !l.meeting_url}
-                  className={`w-full text-xs py-1.5 ${isLive ? 'btn-primary' : 'btn-outline'} ${(ended || !l.meeting_url) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  disabled={ended || !canJoin}
+                  className={`w-full text-xs py-1.5 ${isLive ? 'btn-primary' : 'btn-outline'} ${(ended || !canJoin) ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
                   {ended ? 'Ended' : isLive ? 'Join now' : 'Join'}
                 </button>
