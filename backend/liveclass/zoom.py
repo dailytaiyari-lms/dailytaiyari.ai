@@ -18,6 +18,7 @@ import base64
 import hashlib
 import hmac
 import logging
+import re
 import time
 
 import requests
@@ -306,8 +307,28 @@ def verify_webhook_signature(secret_token, headers, raw_body):
     return hmac.compare_digest(f'v0={digest}', signature)
 
 
+# Zoom's url_validation challenge is a short random token. We pin that shape
+# hard, because the endpoint HMACs whatever it is handed with the same Secret
+# Token used to sign real events: if an attacker could pass
+# ``v0:<timestamp>:<body>`` they would get back a valid ``x-zm-signature`` for a
+# payload of their choosing and could forge webhooks. Barring ':' (which every
+# signing payload contains) makes the two message spaces disjoint.
+PLAIN_TOKEN_RE = re.compile(r'^[A-Za-z0-9_\-.]{1,128}$')
+
+
+def is_valid_plain_token(plain_token):
+    """True if ``plain_token`` looks like a genuine Zoom challenge token."""
+    return bool(plain_token) and bool(PLAIN_TOKEN_RE.match(plain_token))
+
+
 def webhook_validation_response(secret_token, plain_token):
-    """Answer Zoom's ``endpoint.url_validation`` challenge."""
+    """Answer Zoom's ``endpoint.url_validation`` challenge.
+
+    Raises ``ValueError`` for tokens outside the expected shape so this can
+    never be used as a signing oracle — see :data:`PLAIN_TOKEN_RE`.
+    """
+    if not is_valid_plain_token(plain_token):
+        raise ValueError('Unexpected plainToken shape.')
     encrypted = hmac.new(
         (secret_token or '').encode(), (plain_token or '').encode(), hashlib.sha256
     ).hexdigest()

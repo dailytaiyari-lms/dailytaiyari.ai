@@ -133,6 +133,16 @@ export const tenantAdminService = {
         return response.data
     },
 
+    // Opens a short window in which the legacy (unscoped) webhook URL will
+    // answer Zoom's URL-validation challenge. Only needed for Zoom apps
+    // configured before tenant-scoped webhook URLs existed.
+    startZoomWebhookVerification: async () => {
+        const response = await api.post('/tenant-admin/zoom/', {
+            action: 'start_verification',
+        })
+        return response.data
+    },
+
     disconnectZoom: async () => {
         const response = await api.delete('/tenant-admin/zoom/')
         return response.data

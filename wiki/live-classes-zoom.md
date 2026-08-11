@@ -30,7 +30,8 @@ stored on `core.ZoomIntegration` (one per tenant) and encrypted at rest with
    - `report:read:admin` (participant reports)
    - `user:read:admin` (host lookup / "Test connection")
 4. Under **Feature → Event Subscriptions**, add the webhook URL shown in the form
-   (`https://<your-api>/api/v1/live-classes/zoom/webhook/`) and subscribe to:
+   (`https://<your-api>/api/v1/live-classes/zoom/webhook/<tenant-id>/`) and
+   subscribe to:
    - `meeting.started`, `meeting.ended`
    - `meeting.participant_joined`, `meeting.participant_left`
    Paste the app's **Secret Token** into "Webhook Secret Token".
@@ -152,17 +153,38 @@ erroring. When none are available the failure is stored on
 
 ## 5. Webhook security
 
-`/api/v1/live-classes/zoom/webhook/` is in `TENANT_EXEMPT_PATHS` (Zoom cannot
-send `X-Tenant-ID`) and takes no auth, so it is protected by signature instead:
+`/api/v1/live-classes/zoom/webhook/<tenant-id>/` is in `TENANT_EXEMPT_PATHS`
+(Zoom cannot send `X-Tenant-ID`) and takes no auth, so it is protected by
+signature instead:
 
 - Zoom signs `v0:<timestamp>:<raw body>` with the app's Secret Token.
-- We resolve the tenant from `payload.object.id` (the meeting id), then verify
-  `x-zm-signature` against **that tenant's** token with `hmac.compare_digest`.
+- The tenant comes from the URL (or, on the legacy unscoped path, from
+  `payload.object.id`); the `x-zm-signature` header is then verified against
+  **that tenant's** token with `hmac.compare_digest`.
 - Unknown meetings are acked with `200` so Zoom stops retrying.
 - Handler exceptions are logged, never raised — a 500 would make Zoom retry a
   poisoned event for hours.
-- `endpoint.url_validation` is answered before any signature check (that is the
-  challenge that establishes the endpoint).
+
+### The URL-validation challenge is a signing oracle — treat it as one
+
+`endpoint.url_validation` asks us to return `HMAC(secret, plainToken)`. That is
+*exactly* the primitive that authenticates real events, so an unconstrained
+implementation lets anyone request the HMAC of `v0:<ts>:<body>` and replay it as
+`x-zm-signature` to forge attendance data. Three defences:
+
+1. **Domain separation (the real fix).** `plainToken` must match
+   `^[A-Za-z0-9_\-.]{1,128}$`. Every signing payload contains `:`, so the two
+   message spaces cannot overlap and the oracle can never produce a usable
+   signature. `webhook_validation_response()` raises `ValueError` otherwise.
+2. **Tenant scoping.** The scoped URL only ever uses that one academy's token.
+3. **A time-boxed window.** The legacy unscoped URL answers the challenge only
+   while an admin has opened a 30-minute verification window
+   (`ZoomIntegration.webhook_validation_until`, opened by saving a Secret Token
+   or via *Allow validation on the old URL*). Outside it we return 400 rather
+   than hashing with an arbitrary tenant's secret.
+
+If you add another webhook provider, copy this shape — a challenge/echo endpoint
+that shares a key with your signature check is a forgery primitive by default.
 
 ---
 
@@ -194,7 +216,7 @@ send `X-Tenant-ID`) and takes no auth, so it is protected by signature instead:
 |---|---|---|
 | `GET` | `/api/v1/tenant-admin/zoom/` | Connection + webhook URL |
 | `PUT` | `/api/v1/tenant-admin/zoom/` | Save credentials/settings (blank secret = keep) |
-| `POST` | `/api/v1/tenant-admin/zoom/` | Test connection |
+| `POST` | `/api/v1/tenant-admin/zoom/` | Test connection, or `{"action":"start_verification"}` to open the legacy-URL validation window |
 | `DELETE` | `/api/v1/tenant-admin/zoom/` | Disconnect |
 
 ---

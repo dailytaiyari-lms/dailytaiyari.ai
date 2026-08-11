@@ -290,19 +290,21 @@ class ZoomIntegrationSerializer(serializers.ModelSerializer):
     has_client_secret = serializers.SerializerMethodField()
     has_webhook_secret_token = serializers.SerializerMethodField()
     webhook_url = serializers.SerializerMethodField()
+    webhook_validation_open = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = ZoomIntegration
         fields = [
             'id', 'account_id', 'client_id', 'client_secret', 'has_client_secret',
             'webhook_secret_token', 'has_webhook_secret_token', 'webhook_url',
+            'webhook_validation_open', 'webhook_validation_until',
             'host_email', 'use_registration', 'pull_reports',
             'attendance_threshold_percent', 'is_active', 'is_configured',
             'last_verified_at', 'last_error', 'created_at', 'updated_at',
         ]
         read_only_fields = [
             'id', 'is_configured', 'last_verified_at', 'last_error',
-            'created_at', 'updated_at',
+            'webhook_validation_until', 'created_at', 'updated_at',
         ]
 
     def get_has_client_secret(self, obj):
@@ -312,9 +314,18 @@ class ZoomIntegrationSerializer(serializers.ModelSerializer):
         return bool(obj.webhook_secret_token_encrypted)
 
     def get_webhook_url(self, obj):
-        """The URL the admin must paste into their Zoom app's event subscription."""
+        """The URL the admin must paste into their Zoom app's event subscription.
+
+        Tenant-scoped, so events and the validation challenge are pinned to this
+        academy's Secret Token instead of being resolved against every tenant.
+        """
         request = self.context.get('request')
-        path = '/api/v1/live-classes/zoom/webhook/'
+        tenant_id = getattr(obj, 'tenant_id', None) or getattr(
+            getattr(request, 'tenant', None), 'id', None
+        )
+        if not tenant_id:
+            return ''
+        path = f'/api/v1/live-classes/zoom/webhook/{tenant_id}/'
         return request.build_absolute_uri(path) if request else path
 
     def validate_attendance_threshold_percent(self, value):

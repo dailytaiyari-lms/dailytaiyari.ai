@@ -15,6 +15,18 @@ Signature verification uses the tenant's Zoom Secret Token. Because the tenant
 is only known *after* parsing the payload, we look up the meeting first and then
 verify against that tenant's token; unknown meetings are acked (200) so Zoom
 stops retrying rather than being told something went wrong.
+
+Two forms of the URL exist. The tenant-scoped one (``.../zoom/webhook/<tenant
+id>/``) is what the settings screen hands out; it pins every event and the
+validation challenge to a single academy. The legacy unscoped one still accepts
+events (resolved via the meeting id) so existing Zoom apps keep working.
+
+Answering ``endpoint.url_validation`` means HMAC-ing a caller-supplied value
+with the very token that signs real events, so it is fenced in three ways: the
+plainToken must match Zoom's token shape (:func:`~liveclass.zoom.is_valid_plain_token`),
+so it can never be a ``v0:<ts>:<body>`` signing payload; the unscoped URL only
+answers while an admin has opened a short verification window; and the scoped
+URL only ever uses that one tenant's token.
 """
 import json
 import logging
@@ -30,7 +42,9 @@ from .models import LiveClass
 from .services import (
     handle_participant_joined, handle_participant_left, sync_attendance_from_zoom,
 )
-from .zoom import verify_webhook_signature, webhook_validation_response
+from .zoom import (
+    is_valid_plain_token, verify_webhook_signature, webhook_validation_response,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +55,7 @@ class ZoomWebhookView(APIView):
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
 
-    def post(self, request):
+    def post(self, request, tenant_id=None):
         raw_body = request.body
         try:
             body = json.loads(raw_body.decode('utf-8') or '{}')
@@ -53,9 +67,9 @@ class ZoomWebhookView(APIView):
         obj = payload.get('object') or {}
 
         if event == 'endpoint.url_validation':
-            return self._validate(payload, obj)
+            return self._validate(payload, obj, tenant_id)
 
-        live_class = self._resolve_class(obj)
+        live_class = self._resolve_class(obj, tenant_id)
         if live_class is None:
             # Unknown meeting (e.g. one created outside DailyTaiyari) — ack.
             return Response({'detail': 'Ignored.'}, status=200)
@@ -75,30 +89,55 @@ class ZoomWebhookView(APIView):
         return Response({'detail': 'ok'}, status=200)
 
     # -------------------------------------------------------------- helpers
-    def _validate(self, payload, obj):
+    def _validate(self, payload, obj, tenant_id=None):
         """Answer the URL-validation challenge.
 
-        Zoom does not identify the tenant here, so we try every configured
-        Secret Token: whichever tenant owns this endpoint will match on Zoom's
-        side, and a wrong hash is simply rejected.
+        The response is ``HMAC(secret, plainToken)``, i.e. exactly the primitive
+        that authenticates real events, so this is deliberately narrow:
+
+        * ``plainToken`` must look like a Zoom challenge token, which makes it
+          impossible to request the HMAC of a ``v0:<ts>:<body>`` signing payload
+          and replay it as ``x-zm-signature``;
+        * the tenant-scoped URL uses only that academy's token;
+        * the legacy unscoped URL answers only while an admin has opened a
+          verification window from the settings screen — outside of it we say no
+          rather than trying every tenant's secret in turn.
         """
         from core.models import ZoomIntegration
-        plain = (payload.get('plainToken') or obj.get('plainToken') or '')
-        for integration in ZoomIntegration.objects.exclude(
-            webhook_secret_token_encrypted=''
-        ):
-            token = integration.webhook_secret_token
-            if token:
-                return Response(webhook_validation_response(token, plain), status=200)
-        return Response({'detail': 'No Zoom secret token configured.'}, status=400)
 
-    def _resolve_class(self, obj):
+        plain = (payload.get('plainToken') or obj.get('plainToken') or '')
+        if not is_valid_plain_token(plain):
+            logger.warning('Rejected Zoom URL validation with an unexpected plainToken.')
+            return Response({'detail': 'Invalid plainToken.'}, status=400)
+
+        qs = ZoomIntegration.objects.exclude(webhook_secret_token_encrypted='')
+        if tenant_id:
+            integration = qs.filter(tenant_id=tenant_id).first()
+        else:
+            integration = qs.filter(
+                webhook_validation_until__gt=timezone.now()
+            ).order_by('-webhook_validation_until').first()
+
+        token = integration.webhook_secret_token if integration else ''
+        if not token:
+            return Response(
+                {'detail': 'No Zoom secret token available for validation. Open '
+                           'Settings → Integrations → Zoom and start verification, '
+                           'or use the tenant-specific webhook URL shown there.'},
+                status=400,
+            )
+        return Response(webhook_validation_response(token, plain), status=200)
+
+    def _resolve_class(self, obj, tenant_id=None):
         meeting_id = str(obj.get('id') or '')
         if not meeting_id:
             return None
-        return LiveClass.objects.select_related('tenant', 'course').filter(
+        qs = LiveClass.objects.select_related('tenant', 'course').filter(
             zoom_meeting_id=meeting_id
-        ).order_by('-created_at').first()
+        )
+        if tenant_id:
+            qs = qs.filter(tenant_id=tenant_id)
+        return qs.order_by('-created_at').first()
 
     def _dispatch(self, event, live_class, obj):
         if event == 'meeting.started':

@@ -17,10 +17,16 @@ from users.models import User, StudentProfile, CourseEnrollment
 
 from .models import LiveClass, LiveClassAttendance, LiveClassRegistrant
 from .services import handle_participant_joined, handle_participant_left, ensure_absent_rows
-from .zoom import verify_webhook_signature, webhook_validation_response
+from .zoom import (
+    is_valid_plain_token, verify_webhook_signature, webhook_validation_response,
+)
 
 WEBHOOK_PATH = '/api/v1/live-classes/zoom/webhook/'
 SECRET = 'test-secret-token'
+
+
+def tenant_webhook_path(tenant):
+    return f'/api/v1/live-classes/zoom/webhook/{tenant.id}/'
 
 
 def sign(secret, timestamp, body):
@@ -54,6 +60,18 @@ class ZoomSignatureTests(TestCase):
         out = webhook_validation_response(SECRET, 'abc')
         expected = hmac.new(SECRET.encode(), b'abc', hashlib.sha256).hexdigest()
         self.assertEqual(out, {'plainToken': 'abc', 'encryptedToken': expected})
+
+    def test_signing_payload_is_not_a_valid_plain_token(self):
+        # The challenge HMACs caller-supplied input with the same secret that
+        # signs events. If a 'v0:<ts>:<body>' payload were accepted, the reply
+        # would *be* a valid x-zm-signature for a forged event.
+        body = '{"event":"meeting.participant_joined"}'
+        self.assertFalse(is_valid_plain_token(f'v0:1700000000:{body}'))
+        self.assertFalse(is_valid_plain_token('a' * 129))
+        self.assertFalse(is_valid_plain_token(''))
+        self.assertTrue(is_valid_plain_token('kIdN2_5rSY-jkjSDaP-t3w'))
+        with self.assertRaises(ValueError):
+            webhook_validation_response(SECRET, f'v0:1700000000:{body}')
 
 
 class AttendanceBaseTestCase(TestCase):
@@ -212,9 +230,9 @@ class ZoomWebhookEndpointTests(AttendanceBaseTestCase):
             },
         )
 
-    def test_url_validation_challenge(self):
+    def test_url_validation_challenge_on_tenant_scoped_url(self):
         resp = self.client.post(
-            WEBHOOK_PATH,
+            tenant_webhook_path(self.tenant),
             data=json.dumps({
                 'event': 'endpoint.url_validation',
                 'payload': {'plainToken': 'xyz'},
@@ -223,6 +241,73 @@ class ZoomWebhookEndpointTests(AttendanceBaseTestCase):
         )
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()['plainToken'], 'xyz')
+        self.assertEqual(
+            resp.json()['encryptedToken'],
+            hmac.new(SECRET.encode(), b'xyz', hashlib.sha256).hexdigest(),
+        )
+
+    def _challenge(self, path, plain):
+        return self.client.post(
+            path,
+            data=json.dumps({
+                'event': 'endpoint.url_validation',
+                'payload': {'plainToken': plain},
+            }),
+            content_type='application/json',
+        )
+
+    def test_unscoped_url_validation_needs_an_open_window(self):
+        # Without an explicitly opened window the legacy URL must not hand out
+        # an HMAC computed with some arbitrary tenant's secret.
+        ZoomIntegration.objects.filter(pk=self.zoom.pk).update(
+            webhook_validation_until=None
+        )
+        self.assertEqual(self._challenge(WEBHOOK_PATH, 'xyz').status_code, 400)
+
+        self.zoom.refresh_from_db()
+        self.zoom.open_webhook_validation()
+        self.assertEqual(self._challenge(WEBHOOK_PATH, 'xyz').status_code, 200)
+
+        ZoomIntegration.objects.filter(pk=self.zoom.pk).update(
+            webhook_validation_until=timezone.now() - timezone.timedelta(minutes=1)
+        )
+        self.assertEqual(self._challenge(WEBHOOK_PATH, 'xyz').status_code, 400)
+
+    def test_validation_cannot_be_used_to_forge_a_signature(self):
+        """The challenge must never sign a 'v0:<ts>:<body>' payload."""
+        ts = '1700000000'
+        body = json.dumps({
+            'event': 'meeting.participant_joined',
+            'payload': {'object': {'id': '9988776655',
+                                   'participant': {'email': 'asha@example.com'}}},
+        })
+        resp = self._challenge(tenant_webhook_path(self.tenant), f'v0:{ts}:{body}')
+        self.assertEqual(resp.status_code, 400)
+        self.assertNotIn('encryptedToken', resp.json())
+
+        # …and the forged event that HMAC would have authenticated is rejected.
+        forged = self.client.post(
+            WEBHOOK_PATH, data=body, content_type='application/json',
+            headers={'x-zm-signature': 'v0=deadbeef', 'x-zm-request-timestamp': ts},
+        )
+        self.assertEqual(forged.status_code, 401)
+        self.assertFalse(LiveClassAttendance.objects.exists())
+
+    def test_scoped_url_ignores_another_tenants_meeting(self):
+        other = Tenant.objects.create(name='Other', subdomain='other-zoom')
+        body = json.dumps({
+            'event': 'meeting.started',
+            'payload': {'object': {'id': '9988776655', 'uuid': 'zzz=='}},
+        })
+        ts = '1700000000'
+        resp = self.client.post(
+            tenant_webhook_path(other), data=body, content_type='application/json',
+            headers={'x-zm-signature': sign(SECRET, ts, body),
+                     'x-zm-request-timestamp': ts},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.live_class.refresh_from_db()
+        self.assertNotEqual(self.live_class.zoom_meeting_uuid, 'zzz==')
 
     def test_forged_signature_rejected(self):
         resp = self._post({

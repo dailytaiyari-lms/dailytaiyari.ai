@@ -2587,6 +2587,19 @@ const IntegrationSettings = () => {
         onError: (err) => toast.error(err?.response?.data?.detail || 'Could not reach Zoom'),
     })
 
+    const verifyWebhookMutation = useMutation({
+        mutationFn: () => tenantAdminService.startZoomWebhookVerification(),
+        onSuccess: (res) => {
+            queryClient.setQueryData(['tenantZoomIntegration'], {
+                zoom: res.zoom, webhook_url: res.webhook_url,
+            })
+            toast.success(res.detail || 'Webhook verification is open for 30 minutes')
+        },
+        onError: (err) => toast.error(
+            err?.response?.data?.detail || 'Could not open webhook verification'
+        ),
+    })
+
     const disconnectMutation = useMutation({
         mutationFn: () => tenantAdminService.disconnectZoom(),
         onSuccess: (res) => {
@@ -2663,6 +2676,30 @@ const IntegrationSettings = () => {
                                 <Copy className="w-3.5 h-3.5" /> Copy
                             </button>
                         </div>
+                        <p className="text-[11px] text-surface-500 mt-1">
+                            This URL is unique to your academy — Zoom's validation and every event
+                            are checked against your Secret Token only.
+                        </p>
+                        {zoom?.has_webhook_secret_token && (
+                            <div className="mt-2 flex items-center gap-2 flex-wrap">
+                                <button
+                                    type="button"
+                                    onClick={() => verifyWebhookMutation.mutate()}
+                                    disabled={verifyWebhookMutation.isPending}
+                                    className="btn-secondary text-xs px-3 py-1.5"
+                                >
+                                    {verifyWebhookMutation.isPending
+                                        ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                        : <ShieldCheck className="w-3.5 h-3.5" />}
+                                    Allow validation on the old URL
+                                </button>
+                                <span className="text-[11px] text-surface-500">
+                                    {zoom?.webhook_validation_open
+                                        ? 'Open now — hit Validate in Zoom.'
+                                        : 'Only needed if your Zoom app still points at the old shared URL.'}
+                                </span>
+                            </div>
+                        )}
                     </div>
                 )}
 

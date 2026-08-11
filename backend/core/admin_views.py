@@ -146,13 +146,37 @@ class ZoomIntegrationView(generics.GenericAPIView):
         )
         serializer.is_valid(raise_exception=True)
         instance = serializer.save(tenant=self._tenant())
+        # Saving a Secret Token means the admin is wiring up the Zoom app right
+        # now, so let the legacy unscoped webhook URL answer Zoom's validation
+        # challenge for a short while (the scoped URL never needs this).
+        if request.data.get('webhook_secret_token'):
+            instance.open_webhook_validation()
         return Response(self._payload(instance))
 
     def post(self, request, *args, **kwargs):
-        """Verify the stored credentials against Zoom and record the result."""
+        """Verify the stored credentials against Zoom and record the result.
+
+        ``{"action": "start_verification"}`` instead opens the short window in
+        which the unscoped webhook URL will answer Zoom's URL-validation
+        challenge, for admins whose Zoom app predates tenant-scoped URLs.
+        """
         from liveclass.zoom import ZoomClient, ZoomError
 
         integration = self._integration()
+
+        if request.data.get('action') == 'start_verification':
+            if integration is None or not integration.webhook_secret_token_encrypted:
+                return Response(
+                    {'detail': 'Save your Zoom webhook Secret Token first.'}, status=400
+                )
+            until = integration.open_webhook_validation()
+            return Response({
+                'detail': 'Webhook verification is open for the next 30 minutes. '
+                          'Hit "Validate" in your Zoom app now.',
+                'webhook_validation_until': until,
+                **self._payload(integration),
+            })
+
         if integration is None or not integration.is_configured:
             return Response(
                 {'detail': 'Add your Zoom Account ID, Client ID and Client Secret first.'},

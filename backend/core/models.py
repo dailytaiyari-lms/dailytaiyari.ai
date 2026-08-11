@@ -3,6 +3,7 @@ Core models - Base classes for all models in the platform.
 """
 from django.db import models
 from django.utils import timezone
+from datetime import timedelta
 import uuid
 
 
@@ -508,6 +509,12 @@ class ZoomIntegration(models.Model):
     last_verified_at = models.DateTimeField(null=True, blank=True)
     last_error = models.TextField(blank=True, default='')
 
+    # Answering Zoom's endpoint.url_validation challenge means HMAC-ing an
+    # attacker-supplied value with the same Secret Token that signs real events,
+    # so the unscoped webhook URL only answers it while an admin has explicitly
+    # opened a short verification window from the settings screen.
+    webhook_validation_until = models.DateTimeField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -542,6 +549,25 @@ class ZoomIntegration(models.Model):
     def is_configured(self):
         """True once all three S2S OAuth credentials are present."""
         return bool(self.account_id and self.client_id and self.client_secret_encrypted)
+
+    # How long a verification window stays open after an admin asks for one.
+    WEBHOOK_VALIDATION_WINDOW = timedelta(minutes=30)
+
+    @property
+    def webhook_validation_open(self):
+        """True while this integration may answer Zoom's URL-validation challenge."""
+        from django.utils import timezone as _tz
+        return bool(
+            self.webhook_validation_until and self.webhook_validation_until > _tz.now()
+        )
+
+    def open_webhook_validation(self, save=True):
+        """Allow the unscoped webhook URL to answer Zoom's challenge for a while."""
+        from django.utils import timezone as _tz
+        self.webhook_validation_until = _tz.now() + self.WEBHOOK_VALIDATION_WINDOW
+        if save:
+            self.save(update_fields=['webhook_validation_until', 'updated_at'])
+        return self.webhook_validation_until
 
 
 class LandingPage(models.Model):

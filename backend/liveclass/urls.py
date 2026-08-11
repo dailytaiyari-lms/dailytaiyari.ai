@@ -14,6 +14,10 @@ admin_router.register(r'classes', AdminLiveClassViewSet, basename='admin-live-cl
 
 urlpatterns = [
     # Zoom posts here with no auth and no tenant header (see TENANT_EXEMPT_PATHS).
+    # The tenant-scoped form is what the settings screen hands out; the bare one
+    # is kept so Zoom apps configured before scoping keep delivering events.
+    path('zoom/webhook/<uuid:tenant_id>/', ZoomWebhookView.as_view(),
+         name='zoom-webhook-tenant'),
     path('zoom/webhook/', ZoomWebhookView.as_view(), name='zoom-webhook'),
     path('admin/', include(admin_router.urls)),
     path('', include(router.urls)),
