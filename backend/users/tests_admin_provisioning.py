@@ -194,3 +194,97 @@ class AdminStudentProvisioningTests(APITestCase):
         )
         self.assertEqual(resp.status_code, 200, resp.data)
         self.assertEqual(CourseEnrollment.objects.filter(student=profile).count(), 0)
+
+
+@override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+class RosterCourseProgressTests(APITestCase):
+    """The roster progress endpoint must be correct and query-bounded."""
+
+    def setUp(self):
+        from exams.models import Subject, Topic
+        from content.models import Content
+
+        self.tenant = Tenant.objects.create(name='Progress Academy')
+        self.admin = User.objects.create_user(
+            email='padmin@test.com', tenant=self.tenant, password='adminpass123',
+            first_name='P', role='admin',
+        )
+        self.course = Course.objects.create(
+            name='Python', code='PY', tenant=self.tenant, status='active',
+        )
+        subject = Subject.objects.create(course=self.course, name='Basics', tenant=self.tenant)
+        topic = Topic.objects.create(subject=subject, name='Vars', tenant=self.tenant)
+        self.contents = [
+            Content.objects.create(
+                title=f'Note {i}', subject=subject, topic=topic, tenant=self.tenant,
+                content_type='notes', status='published', slug=f'progress-note-{i}',
+            )
+            for i in range(4)
+        ]
+        self.client.force_authenticate(user=self.admin)
+        self.headers = {'HTTP_X_TENANT_ID': str(self.tenant.id)}
+
+    def _make_student(self, email):
+        user = User.objects.create_user(
+            email=email, tenant=self.tenant, password='pass12345', first_name='S',
+        )
+        profile = StudentProfile.objects.get(user=user)
+        CourseEnrollment.objects.create(
+            student=profile, course=self.course, status='approved',
+        )
+        return profile
+
+    def test_reports_percent_complete_per_course(self):
+        from content.models import ContentProgress
+
+        profile = self._make_student('p1@test.com')
+        for content in self.contents[:1]:
+            ContentProgress.objects.create(
+                student=profile, content=content, is_completed=True, tenant=self.tenant,
+            )
+
+        resp = self.client.get('/api/v1/auth/tenant-students/course-progress/', **self.headers)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        row = next(r for r in resp.data['results'] if r['student_id'] == str(profile.id))
+        self.assertEqual(row['courses'][0]['total'], 4)
+        self.assertEqual(row['courses'][0]['completed'], 1)
+        self.assertEqual(row['courses'][0]['percent'], 25)
+
+    def test_query_count_does_not_grow_with_roster_size(self):
+        """The whole point of the bulk endpoint: cost stays flat as students are added."""
+        for i in range(2):
+            self._make_student(f'few{i}@test.com')
+        few = len(self._capture_queries())
+
+        for i in range(8):
+            self._make_student(f'many{i}@test.com')
+        many = len(self._capture_queries())
+
+        self.assertEqual(few, many)
+
+    def _capture_queries(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        with CaptureQueriesContext(connection) as ctx:
+            resp = self.client.get(
+                '/api/v1/auth/tenant-students/course-progress/', **self.headers)
+        self.assertEqual(resp.status_code, 200)
+        return ctx.captured_queries
+
+    def test_progress_endpoint_is_tenant_scoped(self):
+        other_tenant = Tenant.objects.create(name='Other')
+        outsider = User.objects.create_user(
+            email='out2@test.com', tenant=other_tenant, password='pass12345', first_name='O',
+        )
+        other_course = Course.objects.create(
+            name='Foreign', code='F2', tenant=other_tenant, status='active',
+        )
+        CourseEnrollment.objects.create(
+            student=StudentProfile.objects.get(user=outsider), course=other_course,
+            status='approved',
+        )
+        mine = self._make_student('mine@test.com')
+
+        resp = self.client.get('/api/v1/auth/tenant-students/course-progress/', **self.headers)
+        ids = {r['student_id'] for r in resp.data['results']}
+        self.assertEqual(ids, {str(mine.id)})

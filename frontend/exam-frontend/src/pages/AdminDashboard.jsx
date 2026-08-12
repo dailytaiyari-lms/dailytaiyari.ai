@@ -132,6 +132,76 @@ const roleBadgeClass = (role) =>
             : 'bg-surface-100 text-surface-600 dark:bg-surface-800 dark:text-surface-300'
 
 /* ---------------------------------------------------------------------------
+ * Modal chrome
+ *
+ * No backdrop-blur: blurring the overlay forces the browser to repaint the
+ * entire page behind it, which makes these dialogs feel laggy on top of the
+ * long student table. A plain translucent scrim plus very short transitions
+ * gives the same visual separation and opens instantly. Mirrors the pattern
+ * already used by the course builder (components/admin/builderShared.jsx).
+ * ------------------------------------------------------------------------- */
+const MODAL_OVERLAY = 'fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-surface-900/60'
+const OVERLAY_MOTION = {
+    initial: { opacity: 0 },
+    animate: { opacity: 1 },
+    exit: { opacity: 0 },
+    transition: { duration: 0.12 },
+}
+const PANEL_MOTION = {
+    initial: { opacity: 0, scale: 0.97, y: 8 },
+    animate: { opacity: 1, scale: 1, y: 0 },
+    exit: { opacity: 0, scale: 0.97, y: 8 },
+    transition: { duration: 0.14, ease: 'easeOut' },
+}
+
+/** Overlay that closes on backdrop click and on Escape. */
+const ModalOverlay = ({ onClose, children }) => {
+    useEffect(() => {
+        const onKey = (e) => e.key === 'Escape' && onClose?.()
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+    }, [onClose])
+
+    return (
+        <motion.div
+            {...OVERLAY_MOTION}
+            className={MODAL_OVERLAY}
+            onMouseDown={(e) => { if (e.target === e.currentTarget) onClose?.() }}
+        >
+            {children}
+        </motion.div>
+    )
+}
+
+/**
+ * Icon button with an instant CSS tooltip.
+ *
+ * The native `title` attribute only appears after a ~1s browser delay, which
+ * makes icon-only toolbars feel unlabelled; this shows the label on hover and
+ * on keyboard focus straight away.
+ */
+const IconAction = ({ label, onClick, danger = false, children }) => (
+    <div className="relative group">
+        <button
+            type="button"
+            onClick={onClick}
+            aria-label={label}
+            className={`p-2 rounded-lg transition-colors text-surface-400 ${danger
+                ? 'hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20'
+                : 'hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/20'}`}
+        >
+            {children}
+        </button>
+        <span
+            role="tooltip"
+            className="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 z-20 whitespace-nowrap rounded-md bg-surface-900 dark:bg-surface-700 px-2 py-1 text-[11px] font-medium text-white opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-75"
+        >
+            {label}
+        </span>
+    </div>
+)
+
+/* ---------------------------------------------------------------------------
  * StatCard
  * ------------------------------------------------------------------------- */
 const TrendBadge = ({ change }) => {
@@ -279,11 +349,10 @@ const StudentEditModal = ({ student, onClose }) => {
     }
 
     return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-surface-900/60 backdrop-blur-sm">
+        <ModalOverlay onClose={onClose}>
             <motion.form
                 onSubmit={handleSubmit}
-                initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
+                {...PANEL_MOTION}
                 className="bg-white dark:bg-surface-800 rounded-3xl w-full max-w-4xl max-h-[92vh] overflow-hidden shadow-2xl border border-surface-100 dark:border-surface-700 flex flex-col"
             >
                 {/* Header */}
@@ -379,14 +448,14 @@ const StudentEditModal = ({ student, onClose }) => {
                     </button>
                 </div>
             </motion.form>
-        </div>
+        </ModalOverlay>
     )
 }
 
 /* ---------------------------------------------------------------------------
  * StudentDetailModal — read-only full profile
  * ------------------------------------------------------------------------- */
-const StudentDetailModal = ({ student, onClose, onEdit }) => {
+const StudentDetailModal = ({ student, onClose, onEdit, courseProgress = [] }) => {
     if (!student) return null
 
     const sections = [
@@ -441,10 +510,9 @@ const StudentDetailModal = ({ student, onClose, onEdit }) => {
     ]
 
     return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-surface-900/60 backdrop-blur-sm">
+        <ModalOverlay onClose={onClose}>
             <motion.div
-                initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
+                {...PANEL_MOTION}
                 className="bg-white dark:bg-surface-800 rounded-3xl w-full max-w-4xl max-h-[90vh] overflow-hidden shadow-2xl border border-surface-100 dark:border-surface-700 flex flex-col"
             >
                 <div className="p-5 sm:p-6 border-b dark:border-surface-700 flex items-center justify-between bg-surface-50/50 dark:bg-surface-900/20">
@@ -463,6 +531,24 @@ const StudentDetailModal = ({ student, onClose, onEdit }) => {
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-5 sm:p-8 space-y-8 sm:space-y-10">
+                    {courseProgress.length > 0 && (
+                        <div className="space-y-4">
+                            <h3 className="text-xs font-black uppercase tracking-widest text-primary-600 dark:text-primary-400 flex items-center gap-2">
+                                <BookOpen className="w-4 h-4" />
+                                Course Completion
+                            </h3>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
+                                {courseProgress.map((row) => (
+                                    <div key={row.course_id} className="space-y-1">
+                                        <CourseProgressBar row={row} />
+                                        <p className="text-[11px] text-surface-400">
+                                            {row.total ? `${row.completed} of ${row.total} items completed` : 'No published content yet'}
+                                        </p>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8 sm:gap-10">
                         {sections.map((section, idx) => (
                             <div key={idx} className="space-y-4">
@@ -492,7 +578,7 @@ const StudentDetailModal = ({ student, onClose, onEdit }) => {
                     </button>
                 </div>
             </motion.div>
-        </div>
+        </ModalOverlay>
     )
 }
 
@@ -579,6 +665,7 @@ const CreateStudentModal = ({ courses, onClose }) => {
         mutationFn: (payload) => tenantAdminService.createStudent(payload),
         onSuccess: (data) => {
             queryClient.invalidateQueries({ queryKey: ['tenantStudents'] })
+            queryClient.invalidateQueries({ queryKey: ['tenantRosterProgress'] })
             if (data?.temporary_password) {
                 // Email failed — keep the modal open so the admin can copy the password.
                 setCredentials({ email: form.email.trim(), password: data.temporary_password })
@@ -624,11 +711,10 @@ const CreateStudentModal = ({ courses, onClose }) => {
     }
 
     return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-surface-900/60 backdrop-blur-sm">
+        <ModalOverlay onClose={onClose}>
             <motion.form
                 onSubmit={handleSubmit}
-                initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
+                {...PANEL_MOTION}
                 className="bg-white dark:bg-surface-800 rounded-3xl w-full max-w-3xl max-h-[92vh] overflow-hidden shadow-2xl border border-surface-100 dark:border-surface-700 flex flex-col"
             >
                 <div className="p-5 sm:p-6 border-b dark:border-surface-700 flex items-center justify-between bg-surface-50/50 dark:bg-surface-900/20">
@@ -729,7 +815,7 @@ const CreateStudentModal = ({ courses, onClose }) => {
                     )}
                 </div>
             </motion.form>
-        </div>
+        </ModalOverlay>
     )
 }
 
@@ -751,6 +837,7 @@ const AssignCoursesModal = ({ student, courses, onClose }) => {
         mutationFn: () => tenantAdminService.assignCourses(student.id, courseIds, sendEmail),
         onSuccess: (data) => {
             queryClient.invalidateQueries({ queryKey: ['tenantStudents'] })
+            queryClient.invalidateQueries({ queryKey: ['tenantRosterProgress'] })
             const count = data?.assigned?.length || 0
             toast.success(count
                 ? `Enrolled in ${count} course${count === 1 ? '' : 's'}${sendEmail ? ' — student notified' : ''}`
@@ -764,6 +851,7 @@ const AssignCoursesModal = ({ student, courses, onClose }) => {
         mutationFn: (courseId) => tenantAdminService.removeCourse(student.id, courseId),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['tenantStudents'] })
+            queryClient.invalidateQueries({ queryKey: ['tenantRosterProgress'] })
             toast.success('Enrollment removed')
             onClose()
         },
@@ -771,10 +859,9 @@ const AssignCoursesModal = ({ student, courses, onClose }) => {
     })
 
     return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-surface-900/60 backdrop-blur-sm">
+        <ModalOverlay onClose={onClose}>
             <motion.div
-                initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
+                {...PANEL_MOTION}
                 className="bg-white dark:bg-surface-800 rounded-3xl w-full max-w-xl max-h-[92vh] overflow-hidden shadow-2xl border border-surface-100 dark:border-surface-700 flex flex-col"
             >
                 <div className="p-5 sm:p-6 border-b dark:border-surface-700 flex items-center justify-between bg-surface-50/50 dark:bg-surface-900/20">
@@ -850,6 +937,82 @@ const AssignCoursesModal = ({ student, courses, onClose }) => {
                     </button>
                 </div>
             </motion.div>
+        </ModalOverlay>
+    )
+}
+
+/* ---------------------------------------------------------------------------
+ * Course completion
+ * ------------------------------------------------------------------------- */
+const progressTone = (percent) =>
+    percent >= 100 ? 'bg-emerald-500'
+        : percent >= 60 ? 'bg-primary-500'
+            : percent >= 25 ? 'bg-amber-500'
+                : 'bg-surface-400'
+
+const CourseProgressBar = ({ row }) => (
+    <div className="space-y-1">
+        <div className="flex items-baseline justify-between gap-3">
+            <span className="truncate text-xs font-medium text-surface-700 dark:text-surface-200" title={row.course_name}>
+                {row.course_name}
+            </span>
+            <span className="shrink-0 text-[11px] font-bold tabular-nums text-surface-500">
+                {row.total ? `${row.percent}%` : 'No content'}
+            </span>
+        </div>
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-100 dark:bg-surface-700">
+            <div className={`h-full rounded-full ${progressTone(row.percent)}`} style={{ width: `${row.percent}%` }} />
+        </div>
+    </div>
+)
+
+/**
+ * Completion summary for one student.
+ *
+ * A student can sit in many batches, so only the top few courses get a bar and
+ * the rest collapse into a "+N more" button that opens the full list — the row
+ * height stays constant no matter how many enrollments exist.
+ */
+const COURSE_PREVIEW_COUNT = 2
+
+const CourseCompletionCell = ({ rows, loading, onExpand }) => {
+    if (loading) {
+        return (
+            <div className="space-y-2">
+                {[0, 1].map((i) => (
+                    <div key={i} className="h-1.5 w-32 animate-pulse rounded-full bg-surface-100 dark:bg-surface-700" />
+                ))}
+            </div>
+        )
+    }
+    if (!rows || rows.length === 0) {
+        return <span className="text-xs text-surface-400 italic">Not enrolled</span>
+    }
+
+    const done = rows.filter((r) => r.total > 0 && r.percent >= 100).length
+    const hidden = rows.length - COURSE_PREVIEW_COUNT
+
+    return (
+        <div className="min-w-[11rem] max-w-[16rem] space-y-2">
+            {rows.slice(0, COURSE_PREVIEW_COUNT).map((row) => (
+                <CourseProgressBar key={row.course_id} row={row} />
+            ))}
+            <div className="flex items-center gap-2 text-[11px] text-surface-500">
+                {hidden > 0 && (
+                    <button
+                        type="button"
+                        onClick={onExpand}
+                        className="font-semibold text-primary-600 hover:underline"
+                    >
+                        +{hidden} more
+                    </button>
+                )}
+                {done > 0 && (
+                    <span className="inline-flex items-center gap-1 font-semibold text-emerald-600">
+                        <CheckCircle2 className="w-3 h-3" /> {done}/{rows.length} complete
+                    </span>
+                )}
+            </div>
         </div>
     )
 }
@@ -859,21 +1022,11 @@ const AssignCoursesModal = ({ student, courses, onClose }) => {
  * ------------------------------------------------------------------------- */
 const RowActions = ({ student, onView, onEdit, onReset, onCourses, onResetPassword }) => (
     <div className="flex items-center gap-1">
-        <button onClick={() => onCourses(student)} className="p-2 text-surface-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded-lg transition-all" title="Manage courses">
-            <BookOpen className="w-4 h-4" />
-        </button>
-        <button onClick={() => onEdit(student)} className="p-2 text-surface-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded-lg transition-all" title="Edit record">
-            <Pencil className="w-4 h-4" />
-        </button>
-        <button onClick={() => onResetPassword(student)} className="p-2 text-surface-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded-lg transition-all" title="Email a new password">
-            <KeyRound className="w-4 h-4" />
-        </button>
-        <button onClick={() => onView(student)} className="p-2 text-surface-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded-lg transition-all" title="View full profile">
-            <ExternalLink className="w-4 h-4" />
-        </button>
-        <button onClick={() => onReset(student)} className="p-2 text-surface-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-lg transition-all" title="Reset progress">
-            <RotateCcw className="w-4 h-4" />
-        </button>
+        <IconAction label="Manage courses" onClick={() => onCourses(student)}><BookOpen className="w-4 h-4" /></IconAction>
+        <IconAction label="Edit record" onClick={() => onEdit(student)}><Pencil className="w-4 h-4" /></IconAction>
+        <IconAction label="Email a new password" onClick={() => onResetPassword(student)}><KeyRound className="w-4 h-4" /></IconAction>
+        <IconAction label="View full profile" onClick={() => onView(student)}><ExternalLink className="w-4 h-4" /></IconAction>
+        <IconAction label="Reset progress" danger onClick={() => onReset(student)}><RotateCcw className="w-4 h-4" /></IconAction>
     </div>
 )
 
@@ -897,6 +1050,29 @@ const StudentManagement = () => {
         queryFn: () => tenantAdminService.getStudents(),
     })
 
+    // Loaded on its own key so the roster paints immediately and completion
+    // bars fill in a moment later instead of blocking the whole table.
+    const { data: progressData, isLoading: progressLoading } = useQuery({
+        queryKey: ['tenantRosterProgress'],
+        queryFn: () => tenantAdminService.getRosterCourseProgress(),
+        staleTime: 60_000,
+    })
+
+    const progressByStudent = useMemo(() => {
+        const map = new Map()
+        for (const row of progressData?.results || []) {
+            map.set(String(row.student_id), row.courses || [])
+        }
+        return map
+    }, [progressData])
+
+    const averagePercent = (student) => {
+        const rows = progressByStudent.get(String(student.id)) || []
+        const graded = rows.filter((r) => r.total > 0)
+        if (!graded.length) return -1
+        return graded.reduce((sum, r) => sum + r.percent, 0) / graded.length
+    }
+
     const { data: examsData } = useQuery({
         queryKey: ['adminExamOptions'],
         queryFn: () => courseService.getAvailableCoursesForEnrollment(),
@@ -907,6 +1083,7 @@ const StudentManagement = () => {
         mutationFn: (id) => tenantAdminService.resetStudentProgress(id),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['tenantStudents'] })
+            queryClient.invalidateQueries({ queryKey: ['tenantRosterProgress'] })
             toast.success('Student progress reset')
         },
         onError: () => toast.error('Failed to reset progress'),
@@ -961,12 +1138,12 @@ const StudentManagement = () => {
 
         const sorted = [...result].sort((a, b) => {
             switch (sortBy) {
-                case 'xp':
-                    return (b.total_xp || 0) - (a.total_xp || 0)
-                case 'accuracy':
-                    return (b.overall_accuracy || 0) - (a.overall_accuracy || 0)
-                case 'level':
-                    return (b.current_level || 0) - (a.current_level || 0)
+                case 'completion_desc':
+                    return averagePercent(b) - averagePercent(a)
+                case 'completion_asc':
+                    return averagePercent(a) - averagePercent(b)
+                case 'courses':
+                    return (b.enrolled_course_ids || []).length - (a.enrolled_course_ids || []).length
                 case 'email':
                     return a.user.email.localeCompare(b.user.email)
                 default:
@@ -974,7 +1151,7 @@ const StudentManagement = () => {
             }
         })
         return sorted
-    }, [studentList, searchTerm, filterRole, filterStatus, filterExam, sortBy])
+    }, [studentList, searchTerm, filterRole, filterStatus, filterExam, sortBy, progressByStudent])
 
     const handleReset = (student) => {
         if (window.confirm(`Reset ALL progress for ${student.user.full_name}? This cannot be undone.`)) {
@@ -991,6 +1168,7 @@ const StudentManagement = () => {
             'Full Name', 'Email', 'Phone', 'Role', 'Status', 'Enrolled Courses', 'Target Year',
             'Grade', 'School', 'Coaching', 'Board', 'Medium', 'City', 'State',
             'Level', 'Total XP', 'Accuracy %', 'Questions Attempted', 'Correct Answers', 'Study Minutes',
+            'Course Completion',
         ]
         const escape = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
         const rows = filteredStudents.map((s) => [
@@ -1000,6 +1178,8 @@ const StudentManagement = () => {
             s.target_year, s.grade, s.school, s.coaching, s.board, s.medium,
             s.city, s.state, s.current_level, s.total_xp, s.overall_accuracy,
             s.total_questions_attempted, s.total_correct_answers, s.total_study_time_minutes,
+            (progressByStudent.get(String(s.id)) || [])
+                .map((r) => `${r.course_name}: ${r.total ? `${r.percent}%` : 'no content'}`).join('; '),
         ].map(escape).join(','))
         const csv = [headers.map(escape).join(','), ...rows].join('\n')
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
@@ -1078,9 +1258,9 @@ const StudentManagement = () => {
                         <select className="input py-2.5" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
                             <option value="name">Name (A-Z)</option>
                             <option value="email">Email (A-Z)</option>
-                            <option value="xp">XP (High-Low)</option>
-                            <option value="accuracy">Accuracy (High-Low)</option>
-                            <option value="level">Level (High-Low)</option>
+                            <option value="completion_desc">Completion (High-Low)</option>
+                            <option value="completion_asc">Completion (Low-High)</option>
+                            <option value="courses">Courses Enrolled</option>
                         </select>
                     </div>
                 </div>
@@ -1103,9 +1283,9 @@ const StudentManagement = () => {
                         <thead className="bg-surface-50 dark:bg-surface-800/50 text-xs font-semibold text-surface-500 uppercase">
                             <tr>
                                 <th className="px-6 py-4">Student</th>
-                                <th className="px-6 py-4">Course</th>
+                                <th className="px-6 py-4">Courses</th>
                                 <th className="px-6 py-4">Status</th>
-                                <th className="px-6 py-4">Performance</th>
+                                <th className="px-6 py-4">Course Completion</th>
                                 <th className="px-6 py-4 text-right">Actions</th>
                             </tr>
                         </thead>
@@ -1152,10 +1332,12 @@ const StudentManagement = () => {
                                             {!student.user.is_suspended ? <><Shield className="w-3.5 h-3.5" /> Active</> : <><ShieldOff className="w-3.5 h-3.5" /> Suspended</>}
                                         </button>
                                     </td>
-                                    <td className="px-6 py-4 text-xs space-y-1 whitespace-nowrap">
-                                        <div className="flex justify-between gap-4"><span className="text-surface-500">Lvl</span><span className="font-semibold text-surface-900 dark:text-white">{student.current_level}</span></div>
-                                        <div className="flex justify-between gap-4"><span className="text-surface-500">XP</span><span className="font-semibold text-surface-900 dark:text-white">{student.total_xp}</span></div>
-                                        <div className="flex justify-between gap-4"><span className="text-surface-500">Acc</span><span className="font-semibold text-surface-900 dark:text-white">{student.overall_accuracy}%</span></div>
+                                    <td className="px-6 py-4">
+                                        <CourseCompletionCell
+                                            rows={progressByStudent.get(String(student.id))}
+                                            loading={progressLoading}
+                                            onExpand={() => setSelectedStudent(student)}
+                                        />
                                     </td>
                                     <td className="px-6 py-4">
                                         <div className="flex justify-end">
@@ -1189,10 +1371,13 @@ const StudentManagement = () => {
                             </div>
                             <span className={`px-2 py-0.5 rounded-full text-[10px] uppercase font-bold shrink-0 ${roleBadgeClass(student.user.role)}`}>{student.user.role}</span>
                         </div>
-                        <div className="grid grid-cols-3 gap-2 text-center text-xs bg-surface-50 dark:bg-surface-800/50 rounded-xl p-2.5">
-                            <div><div className="font-bold text-surface-900 dark:text-white">{student.current_level}</div><div className="text-surface-400">Level</div></div>
-                            <div><div className="font-bold text-surface-900 dark:text-white">{student.total_xp}</div><div className="text-surface-400">XP</div></div>
-                            <div><div className="font-bold text-surface-900 dark:text-white">{student.overall_accuracy}%</div><div className="text-surface-400">Accuracy</div></div>
+                        <div className="bg-surface-50 dark:bg-surface-800/50 rounded-xl p-3">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-surface-400 mb-2">Course Completion</div>
+                            <CourseCompletionCell
+                                rows={progressByStudent.get(String(student.id))}
+                                loading={progressLoading}
+                                onExpand={() => setSelectedStudent(student)}
+                            />
                         </div>
                         <div className="flex items-center justify-between">
                             <button
@@ -1218,6 +1403,7 @@ const StudentManagement = () => {
                         student={selectedStudent}
                         onClose={() => setSelectedStudent(null)}
                         onEdit={(s) => { setSelectedStudent(null); setEditingStudent(s) }}
+                        courseProgress={progressByStudent.get(String(selectedStudent.id)) || []}
                     />
                 )}
                 {editingStudent && (

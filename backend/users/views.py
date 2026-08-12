@@ -580,6 +580,31 @@ class TenantStudentViewSet(TenantAwareViewSet):
             payload['temporary_password'] = temp_password
         return Response(payload, status=status.HTTP_201_CREATED)
 
+    @action(detail=False, methods=['get'], url_path='course-progress')
+    def course_progress(self, request):
+        """Per-course completion for every student on the roster.
+
+        Loaded separately from the roster so the (heavier) progress aggregation
+        never delays the student list itself. Costs a fixed number of queries
+        regardless of how many students or courses are involved.
+        """
+        from certificates.bulk_progress import bulk_course_progress
+
+        tenant = request.tenant
+        enrollments = (
+            CourseEnrollment.objects
+            .filter(student__user__tenant=tenant, course__tenant=tenant)
+            .exclude(status='rejected')
+            .select_related('course')
+        )
+        progress = bulk_course_progress(enrollments)
+        return Response({
+            'results': [
+                {'student_id': str(student_id), 'courses': rows}
+                for student_id, rows in progress.items()
+            ],
+        })
+
     @action(detail=True, methods=['post'], url_path='assign-courses')
     def assign_courses(self, request, pk=None):
         """Enrol an existing student in one or more courses and notify them."""

@@ -36,6 +36,13 @@ export const tenantAdminService = {
         return response.data
     },
 
+    getRosterCourseProgress: async () => {
+        // Course completion for the whole roster in one bulk call — fetched
+        // separately from getStudents so the table paints before it lands.
+        const response = await api.get('/auth/tenant-students/course-progress/')
+        return response.data
+    },
+
     resetStudentProgress: async (studentId) => {
         const response = await api.post(`/auth/tenant-students/${studentId}/reset_progress/`)
         return response.data
