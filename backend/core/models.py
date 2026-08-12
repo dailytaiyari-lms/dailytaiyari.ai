@@ -3,6 +3,7 @@ Core models - Base classes for all models in the platform.
 """
 from django.db import models
 from django.utils import timezone
+from datetime import timedelta
 import uuid
 
 
@@ -344,6 +345,17 @@ class Tenant(models.Model):
         gateway = self.active_payment_gateway
         return bool(gateway and gateway.is_configured)
 
+    @property
+    def zoom_integration(self):
+        """This tenant's Zoom connection, if one has been saved."""
+        return getattr(self, 'zoom', None)
+
+    @property
+    def has_zoom(self):
+        """True when this tenant has an active, fully-credentialed Zoom connection."""
+        zoom = self.zoom_integration
+        return bool(zoom and zoom.is_active and zoom.is_configured)
+
     def enroll_mode_for(self, course):
         """Resolve how a student joins ``course`` given this tenant's flags.
 
@@ -444,6 +456,118 @@ class PaymentGateway(models.Model):
     def is_configured(self):
         """True once both the id and secret are present."""
         return bool(self.key_id and self.key_secret_encrypted)
+
+
+class ZoomIntegration(models.Model):
+    """A tenant's Zoom connection (Server-to-Server OAuth credentials).
+
+    Each academy connects its *own* Zoom account so meetings are created under
+    their host, recordings stay in their cloud, and attendance reports come from
+    their plan. Credentials come from a Zoom Marketplace "Server-to-Server OAuth"
+    app: ``account_id`` + ``client_id`` + ``client_secret``.
+
+    Secrets are encrypted at rest via :mod:`core.encryption` and are never
+    serialized back to API clients — the API only exposes ``has_*`` booleans.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.OneToOneField(
+        Tenant, on_delete=models.CASCADE, related_name='zoom'
+    )
+
+    # Server-to-Server OAuth app credentials.
+    account_id = models.CharField(max_length=255, blank=True, default='')
+    client_id = models.CharField(max_length=255, blank=True, default='')
+    client_secret_encrypted = models.TextField(blank=True, default='')
+
+    # Zoom event-subscription "Secret Token", used to verify webhook signatures
+    # and to answer Zoom's endpoint URL validation challenge.
+    webhook_secret_token_encrypted = models.TextField(blank=True, default='')
+
+    # The Zoom user (email or userId) meetings are created under. Blank means
+    # ``me`` — the account owner tied to the S2S app.
+    host_email = models.CharField(max_length=255, blank=True, default='')
+
+    # Registration gives each student a unique join URL, which makes attendance
+    # matching exact. It requires a paid Zoom plan, so it stays togglable.
+    use_registration = models.BooleanField(
+        default=True,
+        help_text='Register each enrolled student so they get a personal join '
+                  'link and attendance maps exactly to a student.',
+    )
+    # Pull the authoritative participant report after a class ends. Needs a
+    # Pro (or higher) Zoom plan; free accounts have no /report API access.
+    pull_reports = models.BooleanField(default=True)
+
+    # Minimum share of the class a student must be present for to count as
+    # "present" rather than "partial".
+    attendance_threshold_percent = models.PositiveIntegerField(default=60)
+
+    is_active = models.BooleanField(default=False)
+
+    # Result of the last "Test connection" / token fetch, for admin feedback.
+    last_verified_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default='')
+
+    # Answering Zoom's endpoint.url_validation challenge means HMAC-ing an
+    # attacker-supplied value with the same Secret Token that signs real events,
+    # so the unscoped webhook URL only answers it while an admin has explicitly
+    # opened a short verification window from the settings screen.
+    webhook_validation_until = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Zoom Integration'
+        verbose_name_plural = 'Zoom Integrations'
+
+    def __str__(self):
+        return f'{self.tenant.name} — Zoom'
+
+    @property
+    def client_secret(self):
+        from .encryption import decrypt
+        return decrypt(self.client_secret_encrypted)
+
+    @client_secret.setter
+    def client_secret(self, raw):
+        from .encryption import encrypt
+        self.client_secret_encrypted = encrypt(raw or '')
+
+    @property
+    def webhook_secret_token(self):
+        from .encryption import decrypt
+        return decrypt(self.webhook_secret_token_encrypted)
+
+    @webhook_secret_token.setter
+    def webhook_secret_token(self, raw):
+        from .encryption import encrypt
+        self.webhook_secret_token_encrypted = encrypt(raw or '')
+
+    @property
+    def is_configured(self):
+        """True once all three S2S OAuth credentials are present."""
+        return bool(self.account_id and self.client_id and self.client_secret_encrypted)
+
+    # How long a verification window stays open after an admin asks for one.
+    WEBHOOK_VALIDATION_WINDOW = timedelta(minutes=30)
+
+    @property
+    def webhook_validation_open(self):
+        """True while this integration may answer Zoom's URL-validation challenge."""
+        from django.utils import timezone as _tz
+        return bool(
+            self.webhook_validation_until and self.webhook_validation_until > _tz.now()
+        )
+
+    def open_webhook_validation(self, save=True):
+        """Allow the unscoped webhook URL to answer Zoom's challenge for a while."""
+        from django.utils import timezone as _tz
+        self.webhook_validation_until = _tz.now() + self.WEBHOOK_VALIDATION_WINDOW
+        if save:
+            self.save(update_fields=['webhook_validation_until', 'updated_at'])
+        return self.webhook_validation_until
 
 
 class LandingPage(models.Model):

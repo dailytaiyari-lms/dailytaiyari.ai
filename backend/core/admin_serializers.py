@@ -3,7 +3,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.validators import validate_email
 from rest_framework import serializers
 
-from .models import Tenant, PaymentGateway
+from .models import Tenant, PaymentGateway, ZoomIntegration
 
 
 class TenantSettingsSerializer(serializers.ModelSerializer):
@@ -267,6 +267,106 @@ class PaymentGatewaySerializer(serializers.ModelSerializer):
             instance.key_secret = secret
         if webhook:
             instance.webhook_secret = webhook
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        return instance
+
+
+class ZoomIntegrationSerializer(serializers.ModelSerializer):
+    """Read/write a tenant's Zoom Server-to-Server OAuth connection.
+
+    Like the payment gateway, secrets are write-only: they are accepted on
+    input, encrypted at rest and never returned. ``has_*`` booleans tell the UI
+    whether a value is already stored so it can leave the field blank to keep it.
+    """
+
+    client_secret = serializers.CharField(
+        write_only=True, required=False, allow_blank=True, style={'input_type': 'password'}
+    )
+    webhook_secret_token = serializers.CharField(
+        write_only=True, required=False, allow_blank=True, style={'input_type': 'password'}
+    )
+    has_client_secret = serializers.SerializerMethodField()
+    has_webhook_secret_token = serializers.SerializerMethodField()
+    webhook_url = serializers.SerializerMethodField()
+    webhook_validation_open = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = ZoomIntegration
+        fields = [
+            'id', 'account_id', 'client_id', 'client_secret', 'has_client_secret',
+            'webhook_secret_token', 'has_webhook_secret_token', 'webhook_url',
+            'webhook_validation_open', 'webhook_validation_until',
+            'host_email', 'use_registration', 'pull_reports',
+            'attendance_threshold_percent', 'is_active', 'is_configured',
+            'last_verified_at', 'last_error', 'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'is_configured', 'last_verified_at', 'last_error',
+            'webhook_validation_until', 'created_at', 'updated_at',
+        ]
+
+    def get_has_client_secret(self, obj):
+        return bool(obj.client_secret_encrypted)
+
+    def get_has_webhook_secret_token(self, obj):
+        return bool(obj.webhook_secret_token_encrypted)
+
+    def get_webhook_url(self, obj):
+        """The URL the admin must paste into their Zoom app's event subscription.
+
+        Tenant-scoped, so events and the validation challenge are pinned to this
+        academy's Secret Token instead of being resolved against every tenant.
+        """
+        request = self.context.get('request')
+        tenant_id = getattr(obj, 'tenant_id', None) or getattr(
+            getattr(request, 'tenant', None), 'id', None
+        )
+        if not tenant_id:
+            return ''
+        path = f'/api/v1/live-classes/zoom/webhook/{tenant_id}/'
+        return request.build_absolute_uri(path) if request else path
+
+    def validate_attendance_threshold_percent(self, value):
+        if not 1 <= int(value) <= 100:
+            raise serializers.ValidationError('Choose a threshold between 1 and 100 percent.')
+        return value
+
+    def validate(self, attrs):
+        is_active = attrs.get('is_active', getattr(self.instance, 'is_active', False))
+        if is_active:
+            account_id = attrs.get('account_id', getattr(self.instance, 'account_id', ''))
+            client_id = attrs.get('client_id', getattr(self.instance, 'client_id', ''))
+            has_secret = bool(attrs.get('client_secret')) or bool(
+                getattr(self.instance, 'client_secret_encrypted', '')
+            )
+            if not (account_id and client_id and has_secret):
+                raise serializers.ValidationError(
+                    'Provide the Account ID, Client ID and Client Secret before '
+                    'turning the Zoom connection on.'
+                )
+        return attrs
+
+    def create(self, validated_data):
+        secret = validated_data.pop('client_secret', '')
+        webhook = validated_data.pop('webhook_secret_token', '')
+        instance = ZoomIntegration(**validated_data)
+        if secret:
+            instance.client_secret = secret
+        if webhook:
+            instance.webhook_secret_token = webhook
+        instance.save()
+        return instance
+
+    def update(self, instance, validated_data):
+        # Only overwrite stored secrets when a non-blank value is supplied.
+        secret = validated_data.pop('client_secret', None)
+        webhook = validated_data.pop('webhook_secret_token', None)
+        if secret:
+            instance.client_secret = secret
+        if webhook:
+            instance.webhook_secret_token = webhook
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()

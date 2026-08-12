@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Tenant, DemoBooking, ContactMessage, JobApplication, PaymentGateway, LandingPage, LegalDocument
+from .models import Tenant, DemoBooking, ContactMessage, JobApplication, PaymentGateway, ZoomIntegration, LandingPage, LegalDocument
 
 
 @admin.register(Tenant)
@@ -17,6 +17,18 @@ class PaymentGatewayAdmin(admin.ModelAdmin):
     # Never expose the encrypted secret blobs for editing in the Django admin.
     exclude = ('key_secret_encrypted', 'webhook_secret_encrypted')
     readonly_fields = ('id', 'is_configured', 'created_at', 'updated_at')
+
+
+@admin.register(ZoomIntegration)
+class ZoomIntegrationAdmin(admin.ModelAdmin):
+    list_display = ('tenant', 'account_id', 'is_active', 'is_configured',
+                    'use_registration', 'last_verified_at')
+    list_filter = ('is_active', 'use_registration', 'pull_reports')
+    search_fields = ('tenant__name', 'account_id', 'client_id', 'host_email')
+    # Never expose the encrypted secret blobs for editing in the Django admin.
+    exclude = ('client_secret_encrypted', 'webhook_secret_token_encrypted')
+    readonly_fields = ('id', 'is_configured', 'last_verified_at', 'last_error',
+                       'created_at', 'updated_at')
 
 
 @admin.register(DemoBooking)

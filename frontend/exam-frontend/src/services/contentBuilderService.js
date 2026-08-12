@@ -137,6 +137,32 @@ export const contentBuilderService = {
   createLiveClass: async (data) => (await api.post('/live-classes/admin/classes/', data)).data,
   updateLiveClass: async (id, data) => (await api.patch(`/live-classes/admin/classes/${id}/`, data)).data,
   deleteLiveClass: async (id) => api.delete(`/live-classes/admin/classes/${id}/`),
+  // Retry creating/updating the Zoom meeting behind a live class.
+  syncLiveClassZoom: async (id) => (await api.post(`/live-classes/admin/classes/${id}/zoom-sync/`)).data,
+  // Host-only start URL — fetched on demand so it never sits in list payloads.
+  getLiveClassHostLink: async (id) => (await api.get(`/live-classes/admin/classes/${id}/host-link/`)).data,
+
+  // Attendance register: { live_class, summary, results: [...] }.
+  getLiveClassAttendance: async (id, params = {}) =>
+    (await api.get(`/live-classes/admin/classes/${id}/attendance/`, { params })).data,
+  syncLiveClassAttendance: async (id) =>
+    (await api.post(`/live-classes/admin/classes/${id}/attendance/sync/`)).data,
+  updateLiveClassAttendanceRow: async (id, rowId, data) =>
+    (await api.patch(`/live-classes/admin/classes/${id}/attendance/${rowId}/`, data)).data,
+  // Streams the CSV through the authenticated client, then triggers a download.
+  downloadLiveClassAttendance: async (id, filename = 'attendance.csv') => {
+    const res = await api.get(`/live-classes/admin/classes/${id}/attendance/export/`, {
+      responseType: 'blob',
+    })
+    const url = window.URL.createObjectURL(new Blob([res.data], { type: 'text/csv' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.URL.revokeObjectURL(url)
+  },
 }
 
 export default contentBuilderService

@@ -11,6 +11,7 @@ import {
     Notebook as NotebookIcon,
 } from 'lucide-react'
 import { contentBuilderService as svc } from '../services/contentBuilderService'
+import { tenantAdminService } from '../services/tenantAdminService'
 import { notebookAdminService } from '../services/notebookService'
 import courseAiService from '../services/courseAiService'
 import { useAuthStore } from '../context/authStore'
@@ -919,6 +920,7 @@ const NotebookSection = ({ topic, subjectId }) => {
  * ========================================================================= */
 const LIVE_PROVIDERS = [
     { key: 'gmeet', label: 'Google Meet', hint: 'Paste a Google Meet link students join at class time.', soon: false },
+    { key: 'zoom', label: 'Zoom', hint: 'We create the meeting on your Zoom account and track attendance.', soon: false },
     { key: 'in_house', label: 'In-house Live', hint: 'Go live from the portal with your own device.', soon: true },
 ]
 
@@ -938,7 +940,7 @@ const toLocalInput = (iso) => {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-const LiveClassModal = ({ instance, onClose, onSubmit, saving }) => {
+const LiveClassModal = ({ instance, onClose, onSubmit, saving, zoomReady }) => {
     const [form, setForm] = useState(() => ({
         title: instance?.title || '',
         description: instance?.description || '',
@@ -951,11 +953,19 @@ const LiveClassModal = ({ instance, onClose, onSubmit, saving }) => {
     }))
 
     const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
+    const isZoom = form.provider === 'zoom'
+    // Once a Zoom meeting exists we manage the link; before that (or when Zoom
+    // isn't connected) the admin can paste one themselves.
+    const zoomLinked = Boolean(instance?.zoom_linked)
 
     const submit = (e) => {
         e.preventDefault()
         if (!form.title.trim()) return toast.error('Title is required')
         if (form.provider === 'gmeet' && !form.meeting_url.trim()) return toast.error('A Google Meet link is required')
+        if (isZoom && !form.scheduled_start) return toast.error('A start time is required to schedule a Zoom meeting')
+        if (isZoom && !zoomReady && !zoomLinked && !form.meeting_url.trim()) {
+            return toast.error('Connect Zoom in Settings → Integrations, or paste a Zoom link')
+        }
         onSubmit({
             title: form.title.trim(),
             description: form.description,
@@ -988,7 +998,7 @@ const LiveClassModal = ({ instance, onClose, onSubmit, saving }) => {
 
                     <div>
                         <label className="block text-xs font-semibold text-surface-500 mb-1.5">Platform</label>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                             {LIVE_PROVIDERS.map((p) => {
                                 const active = form.provider === p.key
                                 return (
@@ -1002,6 +1012,9 @@ const LiveClassModal = ({ instance, onClose, onSubmit, saving }) => {
                                         <div className="flex items-center gap-1.5">
                                             <span className={`text-sm font-semibold ${active ? 'text-primary-600 dark:text-primary-400' : 'text-surface-700 dark:text-surface-200'}`}>{p.label}</span>
                                             {p.soon && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">Coming soon</span>}
+                                            {p.key === 'zoom' && !p.soon && (
+                                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">Attendance</span>
+                                            )}
                                         </div>
                                         <p className="text-[11px] text-surface-400 mt-0.5">{p.hint}</p>
                                     </button>
@@ -1016,6 +1029,53 @@ const LiveClassModal = ({ instance, onClose, onSubmit, saving }) => {
                             <div className="relative">
                                 <Link2 className="w-4 h-4 text-surface-400 absolute left-3 top-1/2 -translate-y-1/2" />
                                 <input className="input pl-9" value={form.meeting_url} onChange={(e) => set('meeting_url', e.target.value)} placeholder="https://meet.google.com/abc-defg-hij" />
+                            </div>
+                        </div>
+                    )}
+
+                    {isZoom && (
+                        <div className="space-y-2">
+                            {zoomLinked ? (
+                                <div className="rounded-xl border border-emerald-200 dark:border-emerald-900/40 bg-emerald-50 dark:bg-emerald-900/20 px-3 py-2.5">
+                                    <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
+                                        <CheckCircle2 className="w-3.5 h-3.5" /> Zoom meeting {instance.zoom_meeting_id} is linked
+                                    </p>
+                                    <p className="text-[11px] text-emerald-700/80 dark:text-emerald-400/80 mt-0.5">
+                                        Saving updates the topic, time and duration on Zoom too.
+                                        {instance.zoom_registration_enabled
+                                            ? ' Each student gets a personal join link, so attendance maps exactly to them.'
+                                            : ' Registration is off, so attendance is matched by name and email.'}
+                                    </p>
+                                </div>
+                            ) : zoomReady ? (
+                                <div className="rounded-xl border border-primary-200 dark:border-primary-900/40 bg-primary-50 dark:bg-primary-900/20 px-3 py-2.5">
+                                    <p className="text-xs text-primary-700 dark:text-primary-300">
+                                        We'll create this meeting on your Zoom account when you save — no link needed.
+                                    </p>
+                                </div>
+                            ) : (
+                                <div className="rounded-xl border border-amber-200 dark:border-amber-900/40 bg-amber-50 dark:bg-amber-900/20 px-3 py-2.5">
+                                    <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">Zoom isn't connected yet</p>
+                                    <p className="text-[11px] text-amber-700/80 dark:text-amber-400/80 mt-0.5">
+                                        Connect it in Settings → Integrations to auto-create meetings and track
+                                        attendance, or paste a Zoom link below to schedule this class manually.
+                                    </p>
+                                </div>
+                            )}
+                            <div>
+                                <label className="block text-xs font-semibold text-surface-500 mb-1">
+                                    Zoom link {zoomReady || zoomLinked ? '(managed automatically)' : ''}
+                                </label>
+                                <div className="relative">
+                                    <Link2 className="w-4 h-4 text-surface-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                                    <input
+                                        className="input pl-9"
+                                        value={form.meeting_url}
+                                        onChange={(e) => set('meeting_url', e.target.value)}
+                                        placeholder="https://zoom.us/j/1234567890"
+                                        disabled={zoomLinked}
+                                    />
+                                </div>
                             </div>
                         </div>
                     )}
@@ -1059,16 +1119,257 @@ const LiveClassModal = ({ instance, onClose, onSubmit, saving }) => {
     )
 }
 
+/* ===========================================================================
+ * Zoom attendance register for one live class
+ * ========================================================================= */
+const ATT_STATUS_PILL = {
+    present: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+    partial: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+    absent: 'bg-surface-200 text-surface-600 dark:bg-surface-700 dark:text-surface-300',
+}
+
+const fmtStamp = (iso) => {
+    if (!iso) return '—'
+    const d = new Date(iso)
+    return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })
+}
+
+const AttendanceDrawer = ({ liveClass, onClose }) => {
+    const queryClient = useQueryClient()
+    const [statusFilter, setStatusFilter] = useState('')
+    const [search, setSearch] = useState('')
+
+    const queryKey = ['cb-live-attendance', liveClass.id, statusFilter, search]
+    const { data, isLoading, isError, error } = useQuery({
+        queryKey,
+        queryFn: () => svc.getLiveClassAttendance(liveClass.id, {
+            status: statusFilter || undefined,
+            search: search || undefined,
+        }),
+        // While a class is running, keep the "in call now" column honest.
+        refetchInterval: liveClass.live_status === 'live' ? 30_000 : false,
+    })
+
+    const syncMutation = useMutation({
+        mutationFn: () => svc.syncLiveClassAttendance(liveClass.id),
+        onSuccess: (res) => {
+            toast.success(res?.detail || 'Attendance synced from Zoom')
+            queryClient.invalidateQueries({ queryKey: ['cb-live-attendance', liveClass.id] })
+        },
+        onError: (err) => toast.error(formatApiError(err)),
+    })
+
+    const markMutation = useMutation({
+        mutationFn: ({ rowId, status }) => svc.updateLiveClassAttendanceRow(liveClass.id, rowId, { status }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['cb-live-attendance', liveClass.id] })
+        },
+        onError: (err) => toast.error(formatApiError(err)),
+    })
+
+    const downloadMutation = useMutation({
+        mutationFn: () => {
+            const when = liveClass.scheduled_start
+                ? new Date(liveClass.scheduled_start).toISOString().slice(0, 10)
+                : 'unscheduled'
+            const slug = (liveClass.title || 'live-class').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+            return svc.downloadLiveClassAttendance(liveClass.id, `attendance-${slug}-${when}.csv`)
+        },
+        onSuccess: () => toast.success('Attendance CSV downloaded'),
+        onError: (err) => toast.error(formatApiError(err)),
+    })
+
+    const summary = data?.summary
+    const rows = data?.results || []
+    const meta = data?.live_class
+
+    const stat = (label, value, tone = '') => (
+        <div className="rounded-xl border border-surface-200 dark:border-surface-700 px-3 py-2">
+            <p className="text-[10px] uppercase tracking-wide text-surface-400">{label}</p>
+            <p className={`text-lg font-bold ${tone || 'text-surface-800 dark:text-surface-100'}`}>{value}</p>
+        </div>
+    )
+
+    return (
+        <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
+            <motion.div
+                className="bg-white dark:bg-surface-900 rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-xl"
+                initial={{ scale: 0.95, y: 10 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 10 }}
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div className="sticky top-0 bg-white dark:bg-surface-900 border-b border-surface-100 dark:border-surface-800 px-5 py-3.5 flex items-center justify-between z-10">
+                    <div className="min-w-0">
+                        <h3 className="font-bold flex items-center gap-2 truncate">
+                            <Users className="w-4 h-4 text-primary-500" /> Attendance — {liveClass.title}
+                        </h3>
+                        <p className="text-[11px] text-surface-400 mt-0.5">
+                            {fmtStamp(liveClass.scheduled_start)} · {liveClass.duration_minutes} min
+                            {meta?.threshold_percent ? ` · present at ≥ ${meta.threshold_percent}% attended` : ''}
+                        </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                        <button
+                            onClick={() => syncMutation.mutate()}
+                            disabled={syncMutation.isPending || !liveClass.zoom_linked}
+                            title={liveClass.zoom_linked ? 'Pull the latest report from Zoom' : 'Only available for Zoom classes'}
+                            className="btn-secondary text-xs px-2.5 py-1.5"
+                        >
+                            {syncMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Radio className="w-3.5 h-3.5" />} Sync
+                        </button>
+                        <button
+                            onClick={() => downloadMutation.mutate()}
+                            disabled={downloadMutation.isPending}
+                            className="btn-primary text-xs px-2.5 py-1.5"
+                        >
+                            {downloadMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5 rotate-180" />} CSV
+                        </button>
+                        <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-800"><X className="w-4 h-4" /></button>
+                    </div>
+                </div>
+
+                <div className="p-5 space-y-4">
+                    {summary?.sync_error && (
+                        <div className="rounded-xl border border-amber-200 dark:border-amber-900/40 bg-amber-50 dark:bg-amber-900/20 px-3 py-2.5">
+                            <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">Zoom report unavailable</p>
+                            <p className="text-[11px] text-amber-700/80 dark:text-amber-400/80 mt-0.5">{summary.sync_error}</p>
+                        </div>
+                    )}
+
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                        {stat('Enrolled', summary?.enrolled ?? '—')}
+                        {stat('Attended', summary?.attended ?? '—', 'text-emerald-600 dark:text-emerald-400')}
+                        {stat('Partial', summary?.partial ?? '—', 'text-amber-600 dark:text-amber-400')}
+                        {stat('Absent', summary?.absent ?? '—')}
+                        {stat('Rate', summary ? `${summary.attendance_rate}%` : '—', 'text-primary-600 dark:text-primary-400')}
+                    </div>
+
+                    {summary?.in_call_now > 0 && (
+                        <p className="text-xs text-red-600 dark:text-red-400 flex items-center gap-1.5">
+                            <Radio className="w-3.5 h-3.5" /> {summary.in_call_now} in the call right now
+                        </p>
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-2">
+                        <input
+                            className="input text-xs py-1.5 flex-1 min-w-[160px]"
+                            placeholder="Search name or email"
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                        />
+                        {['', 'present', 'partial', 'absent'].map((s) => (
+                            <button
+                                key={s || 'all'}
+                                onClick={() => setStatusFilter(s)}
+                                className={`text-xs px-2.5 py-1.5 rounded-lg capitalize ${statusFilter === s ? 'bg-primary-500 text-white' : 'bg-surface-100 dark:bg-surface-800 text-surface-600 dark:text-surface-300'}`}
+                            >
+                                {s || 'All'}
+                            </button>
+                        ))}
+                    </div>
+
+                    {isLoading ? (
+                        <div className="py-10 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-surface-400" /></div>
+                    ) : isError ? (
+                        <EmptyHint icon={Users} text="Could not load attendance" sub={formatApiError(error)} />
+                    ) : rows.length === 0 ? (
+                        <EmptyHint
+                            icon={Users}
+                            text="No attendance recorded yet"
+                            sub={liveClass.zoom_linked
+                                ? 'Data appears once the class starts, and the full report a few minutes after it ends.'
+                                : 'Attendance reports are available for Zoom classes.'}
+                        />
+                    ) : (
+                        <div className="overflow-x-auto -mx-1">
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr className="text-left text-[10px] uppercase tracking-wide text-surface-400 border-b border-surface-100 dark:border-surface-800">
+                                        <th className="py-2 px-2 font-semibold">Student</th>
+                                        <th className="py-2 px-2 font-semibold">Status</th>
+                                        <th className="py-2 px-2 font-semibold">Attended</th>
+                                        <th className="py-2 px-2 font-semibold hidden sm:table-cell">Joined</th>
+                                        <th className="py-2 px-2 font-semibold hidden md:table-cell">Left</th>
+                                        <th className="py-2 px-2 font-semibold text-right">Mark</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {rows.map((r) => (
+                                        <tr key={r.id} className="border-b border-surface-50 dark:border-surface-800/60">
+                                            <td className="py-2 px-2">
+                                                <div className="flex items-center gap-2 min-w-0">
+                                                    <div className="min-w-0">
+                                                        <p className="font-medium text-surface-800 dark:text-surface-100 truncate">
+                                                            {r.student_name || r.display_name || 'Unknown'}
+                                                        </p>
+                                                        <p className="text-[11px] text-surface-400 truncate">{r.student_email || r.email || '—'}</p>
+                                                    </div>
+                                                    {r.is_guest && (
+                                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-100 dark:bg-surface-800 text-surface-500 shrink-0">Guest</span>
+                                                    )}
+                                                    {r.is_currently_in_call && (
+                                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 shrink-0">In call</span>
+                                                    )}
+                                                </div>
+                                            </td>
+                                            <td className="py-2 px-2">
+                                                <span className={`text-[10px] px-1.5 py-0.5 rounded capitalize ${ATT_STATUS_PILL[r.status] || ''}`}>{r.status}</span>
+                                                {r.is_manual_override && <span className="text-[10px] text-surface-400 ml-1">edited</span>}
+                                            </td>
+                                            <td className="py-2 px-2 whitespace-nowrap">
+                                                {r.duration_minutes} min
+                                                <span className="text-[11px] text-surface-400 ml-1">({r.attendance_percent}%)</span>
+                                            </td>
+                                            <td className="py-2 px-2 text-[11px] text-surface-500 hidden sm:table-cell whitespace-nowrap">{fmtStamp(r.first_joined_at)}</td>
+                                            <td className="py-2 px-2 text-[11px] text-surface-500 hidden md:table-cell whitespace-nowrap">{fmtStamp(r.last_left_at)}</td>
+                                            <td className="py-2 px-2 text-right whitespace-nowrap">
+                                                {['present', 'absent'].map((s) => (
+                                                    <button
+                                                        key={s}
+                                                        onClick={() => markMutation.mutate({ rowId: r.id, status: s })}
+                                                        disabled={markMutation.isPending || r.status === s}
+                                                        className={`text-[10px] px-1.5 py-0.5 rounded ml-1 capitalize ${r.status === s ? 'opacity-40 cursor-default' : 'bg-surface-100 dark:bg-surface-800 hover:bg-surface-200 dark:hover:bg-surface-700'}`}
+                                                    >
+                                                        {s}
+                                                    </button>
+                                                ))}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+
+                    {summary?.synced_at && (
+                        <p className="text-[11px] text-surface-400">Last synced from Zoom: {fmtStamp(summary.synced_at)}</p>
+                    )}
+                </div>
+            </motion.div>
+        </motion.div>
+    )
+}
+
 const LiveClassSection = ({ topic, subjectId }) => {
     const { courseId } = useParams()
     const queryClient = useQueryClient()
     const [modal, setModal] = useState(null) // { instance } | null
     const [del, setDel] = useState(null)
+    const [attendanceFor, setAttendanceFor] = useState(null)
 
     const { data: classes = [], isLoading } = useQuery({
         queryKey: ['cb-live', topic.id],
         queryFn: () => svc.getLiveClasses(topic.id),
     })
+
+    // Whether this academy can auto-create Zoom meetings. Only admins can read
+    // the integration, so a failure here just means "offer the manual path".
+    const { data: zoomData } = useQuery({
+        queryKey: ['tenantZoomIntegration'],
+        queryFn: () => tenantAdminService.getZoomIntegration(),
+        staleTime: 5 * 60_000,
+        retry: false,
+    })
+    const zoomReady = Boolean(zoomData?.zoom?.is_active && zoomData?.zoom?.is_configured)
 
     const invalidate = () => queryClient.invalidateQueries({ queryKey: ['cb-live', topic.id] })
 
@@ -1077,13 +1378,34 @@ const LiveClassSection = ({ topic, subjectId }) => {
             const body = { ...payload, course: courseId, subject: subjectId, topic: topic.id }
             return instance ? svc.updateLiveClass(instance.id, body) : svc.createLiveClass(body)
         },
-        onSuccess: (_d, vars) => { toast.success(vars.instance ? 'Live class saved' : 'Live class created'); invalidate(); setModal(null) },
+        onSuccess: (data, vars) => {
+            // The class always saves; a Zoom failure is reported separately so
+            // the admin knows the meeting itself was not created.
+            if (data?.zoom_error) toast.error(data.zoom_error, { duration: 7000 })
+            else toast.success(vars.instance ? 'Live class saved' : 'Live class created')
+            invalidate()
+            setModal(null)
+        },
         onError: (err) => toast.error(formatApiError(err)),
     })
 
     const deleteMutation = useMutation({
         mutationFn: (c) => svc.deleteLiveClass(c.id),
         onSuccess: () => { toast.success('Deleted'); invalidate(); setDel(null) },
+        onError: (err) => toast.error(formatApiError(err)),
+    })
+
+    const zoomRetryMutation = useMutation({
+        mutationFn: (c) => svc.syncLiveClassZoom(c.id),
+        onSuccess: () => { toast.success('Zoom meeting created'); invalidate() },
+        onError: (err) => toast.error(formatApiError(err)),
+    })
+
+    const hostLinkMutation = useMutation({
+        mutationFn: (c) => svc.getLiveClassHostLink(c.id),
+        onSuccess: (data) => {
+            if (data?.start_url) window.open(data.start_url, '_blank', 'noopener')
+        },
         onError: (err) => toast.error(formatApiError(err)),
     })
 
@@ -1107,7 +1429,7 @@ const LiveClassSection = ({ topic, subjectId }) => {
                 </button>
             </div>
             {classes.length === 0 ? (
-                <EmptyHint icon={Radio} text="No live classes yet." sub="Schedule a Google Meet live class for students to join." />
+                <EmptyHint icon={Radio} text="No live classes yet." sub="Schedule a Google Meet or Zoom live class for students to join." />
             ) : (
                 <div className="space-y-2">
                     {classes.map((c) => (
@@ -1123,15 +1445,45 @@ const LiveClassSection = ({ topic, subjectId }) => {
                                         <span className={`text-[10px] px-1.5 py-0.5 rounded capitalize ${statusPill(c.status)}`}>{c.status}</span>
                                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-100 dark:bg-surface-800 text-surface-500">{c.provider_display || 'Google Meet'}</span>
                                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-100 dark:bg-surface-800 text-surface-500 inline-flex items-center gap-1"><Calendar className="w-3 h-3" /> {fmtWhen(c.scheduled_start)}</span>
+                                        {c.provider === 'zoom' && !c.zoom_linked && (
+                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">Not on Zoom yet</span>
+                                        )}
                                     </div>
                                 </div>
                             </div>
                             <div className="flex items-center gap-2 shrink-0">
-                                {c.meeting_url && (
+                                {c.supports_attendance && (
+                                    <button onClick={() => setAttendanceFor(c)} className="btn-secondary text-xs px-2.5 py-1.5" title="View & download attendance">
+                                        <Users className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Attendance</span>
+                                    </button>
+                                )}
+                                {c.provider === 'zoom' && !c.zoom_linked && zoomReady && (
+                                    <button
+                                        onClick={() => zoomRetryMutation.mutate(c)}
+                                        disabled={zoomRetryMutation.isPending}
+                                        className="btn-secondary text-xs px-2.5 py-1.5"
+                                        title="Create this meeting on Zoom"
+                                    >
+                                        {zoomRetryMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Radio className="w-3.5 h-3.5" />}
+                                        <span className="hidden sm:inline">Create on Zoom</span>
+                                    </button>
+                                )}
+                                {c.zoom_linked ? (
+                                    // Host start URL is fetched on demand: opening it starts the meeting.
+                                    <button
+                                        onClick={() => hostLinkMutation.mutate(c)}
+                                        disabled={hostLinkMutation.isPending}
+                                        className="btn-secondary text-xs px-2.5 py-1.5"
+                                        title="Start this meeting as host"
+                                    >
+                                        {hostLinkMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />}
+                                        <span className="hidden sm:inline">Start</span>
+                                    </button>
+                                ) : c.meeting_url ? (
                                     <a href={c.meeting_url} target="_blank" rel="noreferrer" className="btn-secondary text-xs px-2.5 py-1.5">
                                         <Link2 className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Join</span>
                                     </a>
-                                )}
+                                ) : null}
                                 <div className="opacity-0 group-hover:opacity-100 transition-opacity">
                                     <RowActions onEdit={() => setModal({ instance: c })} onDelete={() => setDel(c)} />
                                 </div>
@@ -1146,9 +1498,13 @@ const LiveClassSection = ({ topic, subjectId }) => {
                     <LiveClassModal
                         instance={modal.instance}
                         saving={saveMutation.isPending}
+                        zoomReady={zoomReady}
                         onClose={() => setModal(null)}
                         onSubmit={(payload) => saveMutation.mutate({ instance: modal.instance, payload })}
                     />
+                )}
+                {attendanceFor && (
+                    <AttendanceDrawer liveClass={attendanceFor} onClose={() => setAttendanceFor(null)} />
                 )}
                 {del && (
                     <ConfirmDialog label={del.title} deleting={deleteMutation.isPending} onCancel={() => setDel(null)} onConfirm={() => deleteMutation.mutate(del)} />

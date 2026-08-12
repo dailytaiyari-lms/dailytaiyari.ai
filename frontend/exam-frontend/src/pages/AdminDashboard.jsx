@@ -76,6 +76,8 @@ import {
     Minus,
     Sparkles,
     Wand2,
+    Video,
+    Copy,
 } from 'lucide-react'
 
 /* ---------------------------------------------------------------------------
@@ -2134,6 +2136,7 @@ const TenantSettings = () => {
                 {[
                     { id: 'general', label: 'General', icon: SlidersIcon },
                     { id: 'payments', label: 'Payments', icon: CreditCard },
+                    { id: 'integrations', label: 'Integrations', icon: Video },
                     { id: 'email', label: 'Email & Notifications', icon: Mail },
                 ].map((st) => {
                     const active = subTab === st.id
@@ -2153,6 +2156,8 @@ const TenantSettings = () => {
 
             {subTab === 'payments' ? (
                 <PaymentSettings settings={settings} />
+            ) : subTab === 'integrations' ? (
+                <IntegrationSettings />
             ) : subTab === 'email' ? (
                 <EmailSettings settings={settings} />
             ) : (
@@ -2507,6 +2512,314 @@ const TenantSettings = () => {
             </div>
             </div>
             )}
+        </div>
+    )
+}
+
+/* ---------------------------------------------------------------------------
+ * IntegrationSettings — third-party connections (currently Zoom)
+ *
+ * Zoom uses a "Server-to-Server OAuth" app on the academy's *own* Zoom account,
+ * so meetings are hosted by them and attendance reports come from their plan.
+ * Secrets are write-only: the API returns has_* flags, never the values, so a
+ * blank field means "keep what is stored".
+ * ------------------------------------------------------------------------- */
+const IntegrationSettings = () => {
+    const queryClient = useQueryClient()
+    const { data, isLoading } = useQuery({
+        queryKey: ['tenantZoomIntegration'],
+        queryFn: () => tenantAdminService.getZoomIntegration(),
+    })
+
+    const zoom = data?.zoom || null
+    const webhookUrl = data?.webhook_url || ''
+
+    const [form, setForm] = useState({
+        account_id: '', client_id: '', client_secret: '', webhook_secret_token: '',
+        host_email: '', use_registration: true, pull_reports: true,
+        attendance_threshold_percent: 60, is_active: false,
+    })
+    const [hydrated, setHydrated] = useState(false)
+    const [account, setAccount] = useState(null)
+
+    useEffect(() => {
+        if (!data || hydrated) return
+        setForm((f) => ({
+            ...f,
+            account_id: zoom?.account_id || '',
+            client_id: zoom?.client_id || '',
+            client_secret: '',
+            webhook_secret_token: '',
+            host_email: zoom?.host_email || '',
+            use_registration: zoom?.use_registration ?? true,
+            pull_reports: zoom?.pull_reports ?? true,
+            attendance_threshold_percent: zoom?.attendance_threshold_percent ?? 60,
+            is_active: zoom?.is_active ?? false,
+        }))
+        setHydrated(true)
+    }, [data, zoom, hydrated])
+
+    const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
+
+    const saveMutation = useMutation({
+        mutationFn: (payload) => tenantAdminService.saveZoomIntegration(payload),
+        onSuccess: (res) => {
+            queryClient.setQueryData(['tenantZoomIntegration'], res)
+            // Clear the secret inputs so they show as "stored" rather than blank-but-dirty.
+            setForm((f) => ({ ...f, client_secret: '', webhook_secret_token: '' }))
+            toast.success('Zoom settings saved')
+        },
+        onError: (err) => {
+            const d = err?.response?.data
+            toast.error(d?.non_field_errors?.[0] || d?.detail || 'Failed to save Zoom settings')
+        },
+    })
+
+    const testMutation = useMutation({
+        mutationFn: () => tenantAdminService.testZoomIntegration(),
+        onSuccess: (res) => {
+            queryClient.setQueryData(['tenantZoomIntegration'], {
+                zoom: res.zoom, webhook_url: res.webhook_url,
+            })
+            setAccount(res.account || null)
+            toast.success(res.detail || 'Zoom connected')
+        },
+        onError: (err) => toast.error(err?.response?.data?.detail || 'Could not reach Zoom'),
+    })
+
+    const verifyWebhookMutation = useMutation({
+        mutationFn: () => tenantAdminService.startZoomWebhookVerification(),
+        onSuccess: (res) => {
+            queryClient.setQueryData(['tenantZoomIntegration'], {
+                zoom: res.zoom, webhook_url: res.webhook_url,
+            })
+            toast.success(res.detail || 'Webhook verification is open for 30 minutes')
+        },
+        onError: (err) => toast.error(
+            err?.response?.data?.detail || 'Could not open webhook verification'
+        ),
+    })
+
+    const disconnectMutation = useMutation({
+        mutationFn: () => tenantAdminService.disconnectZoom(),
+        onSuccess: (res) => {
+            queryClient.setQueryData(['tenantZoomIntegration'], res)
+            setHydrated(false)
+            setAccount(null)
+            toast.success('Zoom disconnected')
+        },
+        onError: () => toast.error('Failed to disconnect Zoom'),
+    })
+
+    const submit = (e) => {
+        e.preventDefault()
+        const payload = { ...form }
+        // Blank secrets mean "keep the stored value" — don't send empties.
+        if (!payload.client_secret) delete payload.client_secret
+        if (!payload.webhook_secret_token) delete payload.webhook_secret_token
+        saveMutation.mutate(payload)
+    }
+
+    const copyWebhook = () => {
+        navigator.clipboard?.writeText(webhookUrl)
+        toast.success('Webhook URL copied')
+    }
+
+    if (isLoading) {
+        return (
+            <div className="flex items-center justify-center py-16">
+                <Loader2 className="w-8 h-8 animate-spin text-primary-500" />
+            </div>
+        )
+    }
+
+    const connected = Boolean(zoom?.is_configured && zoom?.is_active)
+    // Zoom type 1 = Basic (free). Registration and attendance reports need a
+    // licensed host, so warn instead of failing mysteriously later.
+    const basicPlan = account?.type === 1
+
+    return (
+        <div className="space-y-6">
+            <div className="card p-6 space-y-5">
+                <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-center gap-2">
+                        <Video className="w-5 h-5 text-primary-500" />
+                        <div>
+                            <h3 className="text-lg font-bold text-surface-900 dark:text-white">Zoom</h3>
+                            <p className="text-sm text-surface-500">
+                                Schedule live classes on your own Zoom account and track attendance automatically.
+                            </p>
+                        </div>
+                    </div>
+                    <span className={`text-xs px-2.5 py-1 rounded-full font-semibold shrink-0 ${connected
+                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                        : 'bg-surface-100 text-surface-500 dark:bg-surface-800'}`}>
+                        {connected ? 'Connected' : zoom?.is_configured ? 'Off' : 'Not connected'}
+                    </span>
+                </div>
+
+                <div className="rounded-xl bg-surface-50 dark:bg-surface-800/60 px-4 py-3 text-xs text-surface-600 dark:text-surface-300 space-y-1">
+                    <p className="font-semibold text-surface-700 dark:text-surface-200">How to get these values</p>
+                    <p>1. Go to marketplace.zoom.us → Develop → Build App → <b>Server-to-Server OAuth</b>.</p>
+                    <p>2. Copy the Account ID, Client ID and Client Secret below.</p>
+                    <p>3. Add scopes: <code>meeting:write:admin</code>, <code>meeting:read:admin</code>, <code>report:read:admin</code>, <code>user:read:admin</code>.</p>
+                    <p>4. Under Feature → Event Subscriptions, add the webhook URL below and subscribe to
+                        <b> meeting started/ended</b> and <b>participant joined/left</b>, then paste the Secret Token here.</p>
+                </div>
+
+                {webhookUrl && (
+                    <div>
+                        <label className="block text-xs font-semibold text-surface-500 mb-1">Webhook URL (paste into Zoom)</label>
+                        <div className="flex items-center gap-2">
+                            <input className="input flex-1 text-xs" value={webhookUrl} readOnly />
+                            <button type="button" onClick={copyWebhook} className="btn-secondary text-xs px-3 py-2">
+                                <Copy className="w-3.5 h-3.5" /> Copy
+                            </button>
+                        </div>
+                        <p className="text-[11px] text-surface-500 mt-1">
+                            This URL is unique to your academy — Zoom's validation and every event
+                            are checked against your Secret Token only.
+                        </p>
+                        {zoom?.has_webhook_secret_token && (
+                            <div className="mt-2 flex items-center gap-2 flex-wrap">
+                                <button
+                                    type="button"
+                                    onClick={() => verifyWebhookMutation.mutate()}
+                                    disabled={verifyWebhookMutation.isPending}
+                                    className="btn-secondary text-xs px-3 py-1.5"
+                                >
+                                    {verifyWebhookMutation.isPending
+                                        ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                        : <ShieldCheck className="w-3.5 h-3.5" />}
+                                    Allow validation on the old URL
+                                </button>
+                                <span className="text-[11px] text-surface-500">
+                                    {zoom?.webhook_validation_open
+                                        ? 'Open now — hit Validate in Zoom.'
+                                        : 'Only needed if your Zoom app still points at the old shared URL.'}
+                                </span>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                <form onSubmit={submit} className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-xs font-semibold text-surface-500 mb-1">Account ID</label>
+                            <input className="input" value={form.account_id} onChange={(e) => set('account_id', e.target.value)} placeholder="Zoom Account ID" />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-semibold text-surface-500 mb-1">Client ID</label>
+                            <input className="input" value={form.client_id} onChange={(e) => set('client_id', e.target.value)} placeholder="Zoom Client ID" />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-semibold text-surface-500 mb-1">
+                                Client Secret {zoom?.has_client_secret && <span className="text-emerald-600 dark:text-emerald-400">· stored</span>}
+                            </label>
+                            <input
+                                type="password" className="input" value={form.client_secret}
+                                onChange={(e) => set('client_secret', e.target.value)}
+                                placeholder={zoom?.has_client_secret ? 'Leave blank to keep current' : 'Zoom Client Secret'}
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-semibold text-surface-500 mb-1">
+                                Webhook Secret Token {zoom?.has_webhook_secret_token && <span className="text-emerald-600 dark:text-emerald-400">· stored</span>}
+                            </label>
+                            <input
+                                type="password" className="input" value={form.webhook_secret_token}
+                                onChange={(e) => set('webhook_secret_token', e.target.value)}
+                                placeholder={zoom?.has_webhook_secret_token ? 'Leave blank to keep current' : 'From Event Subscriptions'}
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-semibold text-surface-500 mb-1">Host email (optional)</label>
+                            <input className="input" value={form.host_email} onChange={(e) => set('host_email', e.target.value)} placeholder="Defaults to the account owner" />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-semibold text-surface-500 mb-1">Mark present at (% of class attended)</label>
+                            <input
+                                type="number" min="1" max="100" className="input"
+                                value={form.attendance_threshold_percent}
+                                onChange={(e) => set('attendance_threshold_percent', Number(e.target.value))}
+                            />
+                        </div>
+                    </div>
+
+                    <div className="space-y-2">
+                        {[
+                            {
+                                key: 'use_registration',
+                                label: 'Give each student a personal join link',
+                                hint: 'Registers enrolled students with Zoom so attendance maps exactly to a student. Requires a licensed (paid) Zoom plan.',
+                            },
+                            {
+                                key: 'pull_reports',
+                                label: 'Pull the attendance report after each class',
+                                hint: 'Uses Zoom’s participant report for exact durations. Requires a Pro plan and the report:read:admin scope.',
+                            },
+                            {
+                                key: 'is_active',
+                                label: 'Use Zoom for live classes',
+                                hint: 'When on, scheduling a Zoom class creates the meeting on your Zoom account automatically.',
+                            },
+                        ].map((row) => (
+                            <label key={row.key} className="flex items-start justify-between gap-4 p-3 rounded-xl bg-surface-50 dark:bg-surface-800/60 cursor-pointer">
+                                <div>
+                                    <p className="text-sm font-semibold text-surface-800 dark:text-surface-100">{row.label}</p>
+                                    <p className="text-xs text-surface-500 mt-0.5">{row.hint}</p>
+                                </div>
+                                <input
+                                    type="checkbox" className="mt-1 w-4 h-4 shrink-0"
+                                    checked={Boolean(form[row.key])}
+                                    onChange={(e) => set(row.key, e.target.checked)}
+                                />
+                            </label>
+                        ))}
+                    </div>
+
+                    {basicPlan && (
+                        <p className="text-xs text-amber-600 dark:text-amber-400">
+                            This Zoom account is on the Basic (free) plan. Meetings will still be created, but
+                            personal join links and attendance reports need a licensed plan.
+                        </p>
+                    )}
+                    {zoom?.last_error && (
+                        <p className="text-xs text-red-600 dark:text-red-400">Last error from Zoom: {zoom.last_error}</p>
+                    )}
+                    {zoom?.last_verified_at && !zoom?.last_error && (
+                        <p className="text-xs text-surface-400">
+                            Last verified {new Date(zoom.last_verified_at).toLocaleString()}
+                        </p>
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                        <button type="submit" disabled={saveMutation.isPending} className="btn-primary text-sm">
+                            {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => testMutation.mutate()}
+                            disabled={testMutation.isPending || !zoom?.is_configured}
+                            title={zoom?.is_configured ? 'Check the credentials against Zoom' : 'Save your credentials first'}
+                            className="btn-secondary text-sm"
+                        >
+                            {testMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />} Test connection
+                        </button>
+                        {zoom && (
+                            <button
+                                type="button"
+                                onClick={() => disconnectMutation.mutate()}
+                                disabled={disconnectMutation.isPending}
+                                className="btn-secondary text-sm text-red-600 dark:text-red-400 ml-auto"
+                            >
+                                <Trash2 className="w-4 h-4" /> Disconnect
+                            </button>
+                        )}
+                    </div>
+                </form>
+            </div>
         </div>
     )
 }
