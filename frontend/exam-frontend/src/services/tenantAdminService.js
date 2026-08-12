@@ -2,6 +2,31 @@ import api from './api'
 
 export const tenantAdminService = {
     // Student Management
+    createStudent: async (payload) => {
+        const response = await api.post('/auth/tenant-students/', payload)
+        return response.data
+    },
+
+    assignCourses: async (studentId, courseIds, sendEmail = true) => {
+        const response = await api.post(`/auth/tenant-students/${studentId}/assign-courses/`, {
+            course_ids: courseIds,
+            send_email: sendEmail,
+        })
+        return response.data
+    },
+
+    removeCourse: async (studentId, courseId) => {
+        const response = await api.post(`/auth/tenant-students/${studentId}/remove-course/`, {
+            course_id: courseId,
+        })
+        return response.data
+    },
+
+    resetStudentPassword: async (studentId) => {
+        const response = await api.post(`/auth/tenant-students/${studentId}/reset-password/`)
+        return response.data
+    },
+
     getStudents: async (params = {}) => {
         // Pull the full institution roster (high page_size) so search, filters
         // and CSV export operate over every student, not just the first page.

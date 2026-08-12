@@ -114,8 +114,12 @@ def send_branded_email(tenant, to, subject, heading, body_html,
         logger.exception('Failed to render branded email template')
         return False
 
-    # Derive a readable plain-text alternative from the HTML fragment.
-    text_parts = [heading or subject, '', strip_tags(re.sub(r'<br\s*/?>', '\n', body_html))]
+    # Derive a readable plain-text alternative from the HTML fragment. Block
+    # boundaries must become newlines first, otherwise strip_tags runs adjacent
+    # paragraphs together into one unreadable line.
+    text_source = re.sub(r'<br\s*/?>', '\n', body_html or '')
+    text_source = re.sub(r'</(p|div|h[1-6]|li|tr)>', '\n\n', text_source, flags=re.I)
+    text_parts = [heading or subject, '', strip_tags(text_source).strip()]
     if cta_url:
         text_parts += ['', f'{cta_text or "Open"}: {cta_url}']
     text_body = '\n'.join(p for p in text_parts if p is not None).strip()

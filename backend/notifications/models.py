@@ -21,12 +21,16 @@ class Notification(models.Model):
     TYPE_ENROLLMENT_REJECTED = 'enrollment_rejected'
     TYPE_ANNOUNCEMENT = 'announcement'
     TYPE_AI_ALLOWANCE = 'ai_allowance'
+    TYPE_ACCOUNT_CREATED = 'account_created'
+    TYPE_COURSE_ASSIGNED = 'course_assigned'
     TYPE_CHOICES = [
         (TYPE_ENROLLMENT_REQUEST, 'Enrollment request'),
         (TYPE_ENROLLMENT_APPROVED, 'Enrollment approved'),
         (TYPE_ENROLLMENT_REJECTED, 'Enrollment rejected'),
         (TYPE_ANNOUNCEMENT, 'Announcement'),
         (TYPE_AI_ALLOWANCE, 'AI allowance'),
+        (TYPE_ACCOUNT_CREATED, 'Account created'),
+        (TYPE_COURSE_ASSIGNED, 'Course assigned'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -124,6 +128,9 @@ class TenantEmailTemplate(models.Model):
         ('enrollment_request', 'New enrollment request (to admins)'),
         ('enrollment_approved', 'Enrollment approved (to student)'),
         ('enrollment_rejected', 'Enrollment declined (to student)'),
+        ('account_created', 'Account created by admin (to student)'),
+        ('course_assigned', 'Course assigned by admin (to student)'),
+        ('credentials_reset', 'Password reset by admin (to student)'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

@@ -15,11 +15,17 @@ from django.utils.html import escape
 TYPE_ENROLLMENT_REQUEST = 'enrollment_request'
 TYPE_ENROLLMENT_APPROVED = 'enrollment_approved'
 TYPE_ENROLLMENT_REJECTED = 'enrollment_rejected'
+TYPE_ACCOUNT_CREATED = 'account_created'
+TYPE_COURSE_ASSIGNED = 'course_assigned'
+TYPE_CREDENTIALS_RESET = 'credentials_reset'
 
 TEMPLATE_TYPES = [
     TYPE_ENROLLMENT_REQUEST,
     TYPE_ENROLLMENT_APPROVED,
     TYPE_ENROLLMENT_REJECTED,
+    TYPE_ACCOUNT_CREATED,
+    TYPE_COURSE_ASSIGNED,
+    TYPE_CREDENTIALS_RESET,
 ]
 
 # Human labels + the placeholders available to each template, surfaced to the
@@ -45,6 +51,27 @@ TEMPLATE_META = {
                        'declined. Leave the reason token in to include the '
                        'admin-supplied reason when present.',
         'placeholders': ['student_name', 'course_name', 'reason', 'tenant_name'],
+    },
+    TYPE_ACCOUNT_CREATED: {
+        'label': 'Account created by admin (to student)',
+        'description': 'Sent to a student when an admin creates their account. '
+                       'Keep the {email} and {password} tokens — they carry the '
+                       'sign-in credentials.',
+        'placeholders': [
+            'student_name', 'email', 'password', 'tenant_name', 'courses',
+        ],
+    },
+    TYPE_COURSE_ASSIGNED: {
+        'label': 'Course assigned by admin (to student)',
+        'description': 'Sent to a student when an admin enrolls them in a '
+                       'course from the admin dashboard.',
+        'placeholders': ['student_name', 'course_name', 'tenant_name'],
+    },
+    TYPE_CREDENTIALS_RESET: {
+        'label': 'Password reset by admin (to student)',
+        'description': 'Sent when an admin issues a new temporary password for '
+                       'a user. Keep the {password} token.',
+        'placeholders': ['student_name', 'email', 'password', 'tenant_name'],
     },
 }
 
@@ -78,6 +105,44 @@ DEFAULT_EMAIL_TEMPLATES = {
             '{reason}\n\n'
             'If you think this is a mistake, please reach out to your '
             'institute.'
+        ),
+    },
+    TYPE_ACCOUNT_CREATED: {
+        'subject': 'Your {tenant_name} account is ready',
+        'heading': 'Welcome aboard 👋',
+        'body': (
+            'Hi {student_name},\n\n'
+            'An account has been created for you on {tenant_name}. '
+            'Use the credentials below to sign in:\n\n'
+            'Email: {email}\n'
+            'Temporary password: {password}\n\n'
+            '{courses}\n\n'
+            'For your security, please change this password from your profile '
+            'right after you sign in. Do not share it with anyone.'
+        ),
+    },
+    TYPE_COURSE_ASSIGNED: {
+        'subject': "You've been enrolled in {course_name}",
+        'heading': 'New course added to your account',
+        'body': (
+            'Hi {student_name},\n\n'
+            'Your institute has enrolled you in {course_name}. '
+            'It is now available in your dashboard.\n\n'
+            'Sign in to explore the syllabus, study material and practice '
+            'tests for this course.'
+        ),
+    },
+    TYPE_CREDENTIALS_RESET: {
+        'subject': 'Your {tenant_name} password has been reset',
+        'heading': 'New password issued',
+        'body': (
+            'Hi {student_name},\n\n'
+            'An administrator has reset the password for your {tenant_name} '
+            'account. Use the new credentials below to sign in:\n\n'
+            'Email: {email}\n'
+            'Temporary password: {password}\n\n'
+            'Please change this password from your profile right after you '
+            'sign in. If you did not expect this, contact your institute.'
         ),
     },
 }
