@@ -21,13 +21,15 @@ from .serializers import (
     StudentProfileSerializer,
     CourseEnrollmentSerializer,
     AdminEnrollmentRequestSerializer,
+    AdminStudentCreateSerializer,
+    AdminAssignCourseSerializer,
     OnboardingSerializer,
     EmailOTPRequestSerializer,
     EmailOTPVerifySerializer,
     PasswordResetConfirmSerializer,
     PasswordChangeSerializer,
 )
-from .emails import create_and_send_otp, verify_otp, can_resend
+from .emails import create_and_send_otp, verify_otp, can_resend, generate_temp_password
 from exams.models import Course
 from core.permissions import IsTenantAdmin
 from core.views import TenantAwareViewSet, TenantAwareReadOnlyViewSet
@@ -456,6 +458,213 @@ class TenantStudentViewSet(TenantAwareViewSet):
             ).distinct()
 
         return qs
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return AdminStudentCreateSerializer
+        return super().get_serializer_class()
+
+    @staticmethod
+    def _assign_courses(profile, courses, admin_user, notify_student=True):
+        """Enrol ``profile`` in each course, approving immediately.
+
+        Existing enrollments are upgraded to approved (covers pending requests
+        and previously rejected ones). Returns the list of enrollments that were
+        newly granted access, so callers only email about real changes.
+        """
+        granted = []
+        for course in courses:
+            enrollment, created = CourseEnrollment.objects.get_or_create(
+                student=profile, course=course,
+                defaults={
+                    'status': 'approved',
+                    'is_active': True,
+                    'reviewed_at': timezone.now(),
+                    'reviewed_by': admin_user,
+                },
+            )
+            if created:
+                granted.append(enrollment)
+                continue
+            if enrollment.status != 'approved' or not enrollment.is_active:
+                enrollment.status = 'approved'
+                enrollment.is_active = True
+                enrollment.rejection_reason = ''
+                enrollment.reviewed_at = timezone.now()
+                enrollment.reviewed_by = admin_user
+                enrollment.save()
+                granted.append(enrollment)
+        if notify_student:
+            from notifications import services as notification_services
+            for enrollment in granted:
+                try:
+                    notification_services.on_course_assigned(enrollment)
+                except Exception:  # noqa: BLE001 - never fail the enrolment
+                    logger.exception('Failed to notify student of course assignment %s', enrollment.id)
+        return granted
+
+    def create(self, request, *args, **kwargs):
+        """Create a student (or faculty) account with a generated password.
+
+        The password is generated server-side, emailed to the user, and never
+        returned to the admin unless the email could not be delivered.
+        """
+        tenant = getattr(request, 'tenant', None)
+        if tenant is None:
+            return Response(
+                {'detail': 'A valid Tenant is required to perform this action.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = AdminStudentCreateSerializer(
+            data=request.data, context={'request': request, 'tenant': tenant},
+        )
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        role = data.get('role') or 'student'
+        quota_resource = 'students' if role == 'student' else None
+        if quota_resource and not tenant.can_add(quota_resource):
+            limit = tenant.quota_limits().get(quota_resource)
+            return Response(
+                {'detail': f'Student limit reached for your plan ({limit}). '
+                           'Upgrade your plan to add more students.',
+                 'code': 'quota_exceeded'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        courses = list(Course.objects.filter(id__in=data.get('course_ids') or [], tenant=tenant))
+        temp_password = generate_temp_password()
+
+        with transaction.atomic():
+            user = User.objects.create_user(
+                email=data['email'],
+                tenant=tenant,
+                password=temp_password,
+                first_name=data['first_name'],
+                last_name=data.get('last_name') or '',
+                phone=data.get('phone') or '',
+                role=role,
+                # Admin-provisioned accounts are trusted: skip the OTP wall so
+                # the student can sign in with the emailed credentials directly.
+                is_email_verified=True,
+                email_verified_at=timezone.now(),
+            )
+            # The post_save signal creates the profile.
+            profile = StudentProfile.objects.get(user=user)
+            profile_updates = serializer.profile_updates()
+            if profile_updates:
+                for field, value in profile_updates.items():
+                    setattr(profile, field, value)
+                profile.save(update_fields=list(profile_updates.keys()) + ['updated_at'])
+
+            # Courses are assigned inside the transaction, but the assignment
+            # email is suppressed — the welcome email already lists them.
+            self._assign_courses(profile, courses, request.user, notify_student=False)
+
+        email_sent = False
+        if data.get('send_email', True):
+            try:
+                from notifications import services as notification_services
+                email_sent = notification_services.on_student_account_created(
+                    user, temp_password, courses=courses,
+                )
+            except Exception:  # noqa: BLE001 - account creation must still succeed
+                logger.exception('Failed to send welcome email to %s', user.email)
+
+        profile.refresh_from_db()
+        payload = StudentProfileSerializer(profile).data
+        payload['email_sent'] = email_sent
+        # Surface the password only when the admin can't rely on the email.
+        if not email_sent:
+            payload['temporary_password'] = temp_password
+        return Response(payload, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='assign-courses')
+    def assign_courses(self, request, pk=None):
+        """Enrol an existing student in one or more courses and notify them."""
+        profile = self.get_object()
+        tenant = request.tenant
+        serializer = AdminAssignCourseSerializer(
+            data=request.data, context={'request': request, 'tenant': tenant},
+        )
+        serializer.is_valid(raise_exception=True)
+
+        courses = list(Course.objects.filter(
+            id__in=serializer.validated_data['course_ids'], tenant=tenant,
+        ))
+        send_email = serializer.validated_data.get('send_email', True)
+
+        with transaction.atomic():
+            granted = self._assign_courses(profile, courses, request.user, notify_student=False)
+
+        if send_email:
+            from notifications import services as notification_services
+            for enrollment in granted:
+                try:
+                    notification_services.on_course_assigned(enrollment)
+                except Exception:  # noqa: BLE001
+                    logger.exception('Failed to notify student of course assignment %s', enrollment.id)
+
+        profile.refresh_from_db()
+        return Response({
+            'assigned': [
+                {'course_id': str(e.course_id), 'course_name': e.course.name}
+                for e in granted
+            ],
+            'already_enrolled': [
+                str(c.id) for c in courses
+                if all(str(c.id) != str(e.course_id) for e in granted)
+            ],
+            'student': StudentProfileSerializer(profile).data,
+        })
+
+    @action(detail=True, methods=['post'], url_path='remove-course')
+    def remove_course(self, request, pk=None):
+        """Remove a student's enrollment in a course (no email is sent)."""
+        profile = self.get_object()
+        course_id = request.data.get('course_id')
+        if not course_id:
+            return Response({'course_id': ['This field is required.']},
+                            status=status.HTTP_400_BAD_REQUEST)
+        deleted, _ = CourseEnrollment.objects.filter(
+            student=profile, course_id=course_id, course__tenant=request.tenant,
+        ).delete()
+        if not deleted:
+            return Response({'detail': 'Enrollment not found.'},
+                            status=status.HTTP_404_NOT_FOUND)
+        profile.refresh_from_db()
+        return Response(StudentProfileSerializer(profile).data)
+
+    @action(detail=True, methods=['post'], url_path='reset-password')
+    def reset_password(self, request, pk=None):
+        """Issue a fresh temporary password and email it to the user."""
+        profile = self.get_object()
+        user = profile.user
+        # Resetting a peer admin's password would hand over their account, so
+        # admin accounts can only be reset by their own owner.
+        if user.role == 'admin' and user != request.user:
+            return Response(
+                {'detail': "You cannot reset another admin's password."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        temp_password = generate_temp_password()
+        user.set_password(temp_password)
+        user.save(update_fields=['password'])
+
+        email_sent = False
+        try:
+            from notifications import services as notification_services
+            email_sent = notification_services.on_credentials_reset(
+                user, temp_password,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception('Failed to email new password to %s', user.email)
+
+        payload = {'email_sent': email_sent}
+        if not email_sent:
+            payload['temporary_password'] = temp_password
+        return Response(payload)
 
     @action(detail=True, methods=['post'])
     def reset_progress(self, request, pk=None):

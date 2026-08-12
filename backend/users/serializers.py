@@ -265,6 +265,97 @@ class CourseEnrollmentSerializer(serializers.ModelSerializer):
         ]
 
 
+class AdminStudentCreateSerializer(serializers.Serializer):
+    """Validate the payload a tenant admin submits to create a student account.
+
+    The password is never supplied by the admin — it is generated server-side
+    and emailed to the student — so this serializer only accepts identity,
+    profile and course-assignment fields.
+    """
+    email = serializers.EmailField()
+    first_name = serializers.CharField(max_length=150)
+    last_name = serializers.CharField(max_length=150, required=False, allow_blank=True, default='')
+    phone = serializers.CharField(max_length=15, required=False, allow_blank=True, default='')
+    role = serializers.ChoiceField(
+        choices=['student', 'instructor'], required=False, default='student',
+    )
+    course_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, default=list,
+    )
+    send_email = serializers.BooleanField(required=False, default=True)
+
+    # Optional profile fields, mirroring StudentProfile.
+    grade = serializers.CharField(max_length=20, required=False, allow_blank=True, default='')
+    school = serializers.CharField(max_length=200, required=False, allow_blank=True, default='')
+    coaching = serializers.CharField(max_length=200, required=False, allow_blank=True, default='')
+    board = serializers.CharField(max_length=20, required=False, allow_blank=True, default='')
+    medium = serializers.CharField(max_length=20, required=False, allow_blank=True, default='')
+    city = serializers.CharField(max_length=100, required=False, allow_blank=True, default='')
+    state = serializers.CharField(max_length=100, required=False, allow_blank=True, default='')
+    parent_phone = serializers.CharField(max_length=15, required=False, allow_blank=True, default='')
+    target_year = serializers.IntegerField(required=False, allow_null=True, default=None)
+
+    PROFILE_FIELDS = [
+        'grade', 'school', 'coaching', 'board', 'medium', 'city', 'state',
+        'parent_phone', 'target_year',
+    ]
+
+    def validate_email(self, value):
+        value = value.strip().lower()
+        tenant = self.context.get('tenant')
+        qs = User.objects.filter(email__iexact=value)
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
+        if qs.exists():
+            raise serializers.ValidationError(
+                'A user with this email already exists in your institution.'
+            )
+        return value
+
+    def validate_course_ids(self, value):
+        """Restrict assignment to courses owned by the admin's own tenant."""
+        if not value:
+            return []
+        tenant = self.context.get('tenant')
+        from exams.models import Course
+        courses = list(Course.objects.filter(id__in=value, tenant=tenant))
+        found = {str(c.id) for c in courses}
+        missing = [str(v) for v in value if str(v) not in found]
+        if missing:
+            raise serializers.ValidationError(
+                f"Course(s) not found in this institution: {', '.join(missing)}"
+            )
+        return [c.id for c in courses]
+
+    def profile_updates(self):
+        """Non-blank profile field values from the validated payload."""
+        data = self.validated_data
+        updates = {}
+        for field in self.PROFILE_FIELDS:
+            value = data.get(field)
+            if value not in (None, ''):
+                updates[field] = value
+        return updates
+
+
+class AdminAssignCourseSerializer(serializers.Serializer):
+    """Validate an admin's request to enrol a student in one or more courses."""
+    course_ids = serializers.ListField(child=serializers.UUIDField(), allow_empty=False)
+    send_email = serializers.BooleanField(required=False, default=True)
+
+    def validate_course_ids(self, value):
+        tenant = self.context.get('tenant')
+        from exams.models import Course
+        courses = list(Course.objects.filter(id__in=value, tenant=tenant))
+        found = {str(c.id) for c in courses}
+        missing = [str(v) for v in value if str(v) not in found]
+        if missing:
+            raise serializers.ValidationError(
+                f"Course(s) not found in this institution: {', '.join(missing)}"
+            )
+        return [c.id for c in courses]
+
+
 class AdminEnrollmentRequestSerializer(serializers.ModelSerializer):
     """Serializer for tenant admins to review enrollment requests."""
     course_name = serializers.CharField(source='course.name', read_only=True)

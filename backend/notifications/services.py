@@ -16,6 +16,9 @@ from django.utils.html import escape
 
 from . import emails
 from .email_templates import (
+    TYPE_ACCOUNT_CREATED,
+    TYPE_COURSE_ASSIGNED,
+    TYPE_CREDENTIALS_RESET,
     TYPE_ENROLLMENT_APPROVED,
     TYPE_ENROLLMENT_REJECTED,
     TYPE_ENROLLMENT_REQUEST,
@@ -211,6 +214,138 @@ def on_enrollment_rejected(enrollment):
         )
     except Exception:  # noqa: BLE001
         logger.exception('on_enrollment_rejected failed for enrollment %s', getattr(enrollment, 'id', None))
+
+
+# ---------------------------------------------------------------------------
+# Admin-provisioned accounts & course assignment
+# ---------------------------------------------------------------------------
+def on_student_account_created(user, temp_password, courses=None):
+    """Admin created a student account → email the sign-in credentials.
+
+    ``temp_password`` is the freshly generated temporary password; it exists only
+    in memory at this point (the DB stores a hash), so this email is the only
+    delivery channel. Returns ``True`` when the email was dispatched.
+    """
+    tenant = user.tenant
+    course_names = [c.name for c in (courses or [])]
+    login_url = emails.tenant_link(tenant, '/login')
+
+    if course_names:
+        courses_line = 'You have been enrolled in: ' + ', '.join(course_names) + '.'
+    else:
+        courses_line = ''
+
+    try:
+        notify(
+            user, tenant=tenant, type=Notification.TYPE_ACCOUNT_CREATED,
+            title='Welcome to ' + (getattr(tenant, 'name', '') or 'DailyTaiyari'),
+            body='Your account was created by your institute. Update your '
+                 'password from your profile to keep your account secure.',
+            link='/profile',
+        )
+        subject, heading, body_html = render_email(
+            tenant, TYPE_ACCOUNT_CREATED,
+            {
+                'student_name': user.full_name or user.email,
+                'email': user.email,
+                'password': temp_password,
+                'tenant_name': getattr(tenant, 'name', '') or 'DailyTaiyari',
+                'courses': courses_line,
+            },
+        )
+        # Sent inline (never queued) so the temporary password does not sit in
+        # a broker payload.
+        sent = emails.send_branded_email(
+            tenant,
+            user.email,
+            subject=subject,
+            heading=heading,
+            body_html=body_html,
+            cta_text='Sign in',
+            cta_url=login_url,
+            preheader='Your account details and temporary password',
+        )
+        return bool(sent)
+    except Exception:  # noqa: BLE001
+        logger.exception('on_student_account_created failed for user %s', getattr(user, 'id', None))
+        return False
+
+
+def on_credentials_reset(user, temp_password):
+    """Admin issued a new temporary password → email it to the user.
+
+    Sent inline (never queued) so the password does not sit in a broker
+    payload. Returns ``True`` when the email was dispatched.
+    """
+    tenant = user.tenant
+    try:
+        subject, heading, body_html = render_email(
+            tenant, TYPE_CREDENTIALS_RESET,
+            {
+                'student_name': user.full_name or user.email,
+                'email': user.email,
+                'password': temp_password,
+                'tenant_name': getattr(tenant, 'name', '') or 'DailyTaiyari',
+            },
+        )
+        return bool(emails.send_branded_email(
+            tenant,
+            user.email,
+            subject=subject,
+            heading=heading,
+            body_html=body_html,
+            cta_text='Sign in',
+            cta_url=emails.tenant_link(tenant, '/login'),
+            preheader='Your new temporary password',
+        ))
+    except Exception:  # noqa: BLE001
+        logger.exception('on_credentials_reset failed for user %s', getattr(user, 'id', None))
+        return False
+
+
+def on_course_assigned(enrollment):
+    """Admin enrolled a student in a course → notify + email the student.
+
+    Returns ``True`` when the email was dispatched.
+    """
+    sent = False
+    try:
+        student_user = enrollment.student.user
+        course = enrollment.course
+        tenant = course.tenant or student_user.tenant
+        dash_path = '/dashboard'
+
+        notify(
+            student_user, tenant=tenant, type=Notification.TYPE_COURSE_ASSIGNED,
+            title='New course added',
+            body=f'You have been enrolled in {course.name} by your institute.',
+            link=dash_path,
+            data={'enrollment_id': str(enrollment.id), 'course_id': str(course.id),
+                  'course_name': course.name},
+        )
+
+        subject, heading, body_html = render_email(
+            tenant, TYPE_COURSE_ASSIGNED,
+            {
+                'student_name': student_user.full_name or student_user.email,
+                'course_name': course.name,
+                'tenant_name': getattr(tenant, 'name', '') or '',
+            },
+        )
+        _dispatch_email(
+            tenant,
+            student_user.email,
+            subject=subject,
+            heading=heading,
+            body_html=body_html,
+            cta_text='Start learning',
+            cta_url=emails.tenant_link(tenant, dash_path),
+            preheader=f'You now have access to {course.name}',
+        )
+        sent = True
+    except Exception:  # noqa: BLE001
+        logger.exception('on_course_assigned failed for enrollment %s', getattr(enrollment, 'id', None))
+    return sent
 
 
 # ---------------------------------------------------------------------------

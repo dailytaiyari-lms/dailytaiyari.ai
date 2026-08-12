@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Bell, CheckCheck, GraduationCap, CheckCircle2, XCircle, Megaphone } from 'lucide-react'
+import { Bell, CheckCheck, GraduationCap, CheckCircle2, XCircle, Megaphone, BookOpen, UserPlus } from 'lucide-react'
 
 import { notificationService } from '../../services/notificationService'
 
@@ -11,6 +11,8 @@ export const NOTIFICATION_META = {
     enrollment_approved: { Icon: CheckCircle2, color: 'text-green-500', bg: 'bg-green-100 dark:bg-green-900/30' },
     enrollment_rejected: { Icon: XCircle, color: 'text-red-500', bg: 'bg-red-100 dark:bg-red-900/30' },
     announcement: { Icon: Megaphone, color: 'text-primary-500', bg: 'bg-primary-100 dark:bg-primary-900/30' },
+    course_assigned: { Icon: BookOpen, color: 'text-blue-500', bg: 'bg-blue-100 dark:bg-blue-900/30' },
+    account_created: { Icon: UserPlus, color: 'text-primary-500', bg: 'bg-primary-100 dark:bg-primary-900/30' },
 }
 
 export const timeAgo = (iso) => {

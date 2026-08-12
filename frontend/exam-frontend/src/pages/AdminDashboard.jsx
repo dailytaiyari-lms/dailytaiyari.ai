@@ -499,12 +499,376 @@ const StudentDetailModal = ({ student, onClose, onEdit }) => {
 }
 
 /* ---------------------------------------------------------------------------
+ * CourseMultiSelect — checkbox list of tenant courses
+ * ------------------------------------------------------------------------- */
+const CourseMultiSelect = ({ courses, selected, onToggle, disabledIds = [], emptyLabel = 'No courses available yet.' }) => {
+    if (!courses.length) {
+        return <p className="text-xs text-surface-400 italic">{emptyLabel}</p>
+    }
+    return (
+        <div className="max-h-52 overflow-y-auto rounded-xl border border-surface-200 dark:border-surface-700 divide-y divide-surface-100 dark:divide-surface-800">
+            {courses.map((course) => {
+                const id = String(course.id)
+                const isDisabled = disabledIds.map(String).includes(id)
+                return (
+                    <label
+                        key={id}
+                        className={`flex items-center gap-3 px-3 py-2.5 text-sm ${isDisabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-surface-50 dark:hover:bg-surface-800/50'}`}
+                    >
+                        <input
+                            type="checkbox"
+                            className="w-4 h-4 rounded accent-primary-600"
+                            checked={isDisabled || selected.includes(id)}
+                            disabled={isDisabled}
+                            onChange={() => onToggle(id)}
+                        />
+                        <span className="flex-1 truncate text-surface-700 dark:text-surface-200">{course.name}</span>
+                        {isDisabled && <span className="text-[10px] font-bold uppercase text-surface-400">Enrolled</span>}
+                    </label>
+                )
+            })}
+        </div>
+    )
+}
+
+/* ---------------------------------------------------------------------------
+ * CredentialsNotice — shown when the welcome email could not be delivered
+ * ------------------------------------------------------------------------- */
+const CredentialsNotice = ({ email, password }) => (
+    <div className="rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800 p-4 space-y-2">
+        <p className="text-xs font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400 flex items-center gap-2">
+            <KeyRound className="w-3.5 h-3.5" /> Email could not be sent
+        </p>
+        <p className="text-xs text-amber-700 dark:text-amber-300">
+            Share these credentials with the student manually — this password is shown only once.
+        </p>
+        <div className="text-sm font-mono bg-white dark:bg-surface-900 rounded-lg p-3 space-y-1 break-all">
+            <div><span className="text-surface-400">Email:</span> {email}</div>
+            <div><span className="text-surface-400">Password:</span> {password}</div>
+        </div>
+        <button
+            type="button"
+            onClick={() => {
+                navigator.clipboard?.writeText(`Email: ${email}\nPassword: ${password}`)
+                toast.success('Credentials copied')
+            }}
+            className="text-xs font-bold text-amber-700 dark:text-amber-400 hover:underline"
+        >
+            Copy credentials
+        </button>
+    </div>
+)
+
+/* ---------------------------------------------------------------------------
+ * CreateStudentModal — admin-provisioned account + course assignment
+ * ------------------------------------------------------------------------- */
+const CreateStudentModal = ({ courses, onClose }) => {
+    const queryClient = useQueryClient()
+    const [form, setForm] = useState({
+        first_name: '', last_name: '', email: '', phone: '', role: 'student',
+        grade: '', board: '', medium: 'english', school: '', coaching: '',
+        city: '', state: '', parent_phone: '', target_year: '',
+    })
+    const [courseIds, setCourseIds] = useState([])
+    const [sendEmail, setSendEmail] = useState(true)
+    const [credentials, setCredentials] = useState(null)
+
+    const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }))
+    const toggleCourse = (id) =>
+        setCourseIds((ids) => (ids.includes(id) ? ids.filter((c) => c !== id) : [...ids, id]))
+
+    const mutation = useMutation({
+        mutationFn: (payload) => tenantAdminService.createStudent(payload),
+        onSuccess: (data) => {
+            queryClient.invalidateQueries({ queryKey: ['tenantStudents'] })
+            if (data?.temporary_password) {
+                // Email failed — keep the modal open so the admin can copy the password.
+                setCredentials({ email: form.email.trim(), password: data.temporary_password })
+                toast.error('Account created, but the welcome email failed to send')
+                return
+            }
+            toast.success(sendEmail ? 'Account created — credentials emailed' : 'Account created')
+            onClose()
+        },
+        onError: (err) => {
+            const data = err?.response?.data
+            const msg = typeof data === 'string'
+                ? data
+                : data
+                    ? Object.entries(data).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`).join(' • ')
+                    : 'Failed to create account'
+            toast.error(msg)
+        },
+    })
+
+    const handleSubmit = (e) => {
+        e.preventDefault()
+        if (!form.first_name.trim()) return toast.error('First name is required')
+        if (!form.email.trim()) return toast.error('Email is required')
+        mutation.mutate({
+            email: form.email.trim(),
+            first_name: form.first_name.trim(),
+            last_name: form.last_name.trim(),
+            phone: form.phone.trim(),
+            role: form.role,
+            course_ids: courseIds,
+            send_email: sendEmail,
+            grade: form.grade,
+            board: form.board,
+            medium: form.medium,
+            school: form.school.trim(),
+            coaching: form.coaching.trim(),
+            city: form.city.trim(),
+            state: form.state.trim(),
+            parent_phone: form.parent_phone.trim(),
+            target_year: form.target_year === '' ? null : Number(form.target_year),
+        })
+    }
+
+    return (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-surface-900/60 backdrop-blur-sm">
+            <motion.form
+                onSubmit={handleSubmit}
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                className="bg-white dark:bg-surface-800 rounded-3xl w-full max-w-3xl max-h-[92vh] overflow-hidden shadow-2xl border border-surface-100 dark:border-surface-700 flex flex-col"
+            >
+                <div className="p-5 sm:p-6 border-b dark:border-surface-700 flex items-center justify-between bg-surface-50/50 dark:bg-surface-900/20">
+                    <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-11 h-11 rounded-2xl bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center text-primary-600 shrink-0">
+                            <UserPlus className="w-5 h-5" />
+                        </div>
+                        <div className="min-w-0">
+                            <h2 className="text-lg font-bold text-surface-900 dark:text-white truncate">Add Student</h2>
+                            <p className="text-xs text-surface-500 truncate">A password is generated automatically and emailed to them</p>
+                        </div>
+                    </div>
+                    <button type="button" onClick={onClose} className="p-2 hover:bg-surface-100 dark:hover:bg-surface-700 rounded-xl transition-colors shrink-0">
+                        <X className="w-5 h-5 text-surface-500" />
+                    </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-5 sm:p-8 space-y-8">
+                    {credentials && <CredentialsNotice email={credentials.email} password={credentials.password} />}
+
+                    <section className="space-y-4">
+                        <h3 className="text-xs font-black uppercase tracking-widest text-primary-600 dark:text-primary-400 flex items-center gap-2">
+                            <Users className="w-4 h-4" /> Account Details
+                        </h3>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <Field label="First Name *"><TextInput value={form.first_name} onChange={set('first_name')} placeholder="First name" required /></Field>
+                            <Field label="Last Name"><TextInput value={form.last_name} onChange={set('last_name')} placeholder="Last name" /></Field>
+                            <Field label="Email *" hint="Sign-in ID — credentials are sent here">
+                                <TextInput type="email" value={form.email} onChange={set('email')} placeholder="student@example.com" required />
+                            </Field>
+                            <Field label="Phone"><TextInput value={form.phone} onChange={set('phone')} placeholder="Phone number" /></Field>
+                            <Field label="Role" hint="Controls platform permissions">
+                                <SelectInput
+                                    options={[{ value: 'student', label: 'Student' }, { value: 'instructor', label: 'Faculty' }]}
+                                    value={form.role}
+                                    onChange={set('role')}
+                                />
+                            </Field>
+                            <Field label="Parent Contact"><TextInput value={form.parent_phone} onChange={set('parent_phone')} placeholder="Parent phone" /></Field>
+                        </div>
+                    </section>
+
+                    <section className="space-y-4">
+                        <h3 className="text-xs font-black uppercase tracking-widest text-primary-600 dark:text-primary-400 flex items-center gap-2">
+                            <BookOpen className="w-4 h-4" /> Course Enrollment
+                        </h3>
+                        <p className="text-xs text-surface-500">
+                            Selected courses are approved immediately and listed in the welcome email.
+                        </p>
+                        <CourseMultiSelect courses={courses} selected={courseIds} onToggle={toggleCourse} />
+                    </section>
+
+                    <section className="space-y-4">
+                        <h3 className="text-xs font-black uppercase tracking-widest text-primary-600 dark:text-primary-400 flex items-center gap-2">
+                            <School className="w-4 h-4" /> Academic Details <span className="text-surface-400 font-bold">(optional)</span>
+                        </h3>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <Field label="Grade / Class"><SelectInput options={GRADE_OPTIONS} value={form.grade} onChange={set('grade')} /></Field>
+                            <Field label="Board / University"><SelectInput options={BOARD_OPTIONS} value={form.board} onChange={set('board')} /></Field>
+                            <Field label="Target Year"><TextInput type="number" value={form.target_year} onChange={set('target_year')} placeholder="e.g. 2026" /></Field>
+                            <Field label="Study Medium"><SelectInput options={MEDIUM_OPTIONS} value={form.medium} onChange={set('medium')} /></Field>
+                            <Field label="School / Institute"><TextInput value={form.school} onChange={set('school')} placeholder="School name" /></Field>
+                            <Field label="Coaching Center"><TextInput value={form.coaching} onChange={set('coaching')} placeholder="Coaching name" /></Field>
+                            <Field label="City"><TextInput value={form.city} onChange={set('city')} placeholder="City" /></Field>
+                            <Field label="State"><TextInput value={form.state} onChange={set('state')} placeholder="State" /></Field>
+                        </div>
+                    </section>
+
+                    <label className="flex items-start gap-3 text-sm cursor-pointer">
+                        <input
+                            type="checkbox"
+                            checked={sendEmail}
+                            onChange={(e) => setSendEmail(e.target.checked)}
+                            className="w-4 h-4 mt-0.5 rounded accent-primary-600"
+                        />
+                        <span className="text-surface-600 dark:text-surface-300">
+                            Email the welcome message with sign-in credentials
+                            <span className="block text-xs text-surface-400">
+                                If unchecked, the generated password is shown to you once so you can share it yourself.
+                            </span>
+                        </span>
+                    </label>
+                </div>
+
+                <div className="p-4 sm:p-5 bg-surface-50 dark:bg-surface-900/20 border-t dark:border-surface-700 flex items-center justify-end gap-3">
+                    <button type="button" onClick={onClose} className="px-5 py-2.5 rounded-xl font-bold text-sm text-surface-600 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-700 transition-colors">
+                        {credentials ? 'Done' : 'Cancel'}
+                    </button>
+                    {!credentials && (
+                        <button
+                            type="submit"
+                            disabled={mutation.isPending}
+                            className="px-6 py-2.5 bg-primary-600 text-white rounded-xl font-bold text-sm hover:bg-primary-700 transition-colors flex items-center gap-2 disabled:opacity-60"
+                        >
+                            {mutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
+                            Create Account
+                        </button>
+                    )}
+                </div>
+            </motion.form>
+        </div>
+    )
+}
+
+/* ---------------------------------------------------------------------------
+ * AssignCoursesModal — enrol an existing student in more courses
+ * ------------------------------------------------------------------------- */
+const AssignCoursesModal = ({ student, courses, onClose }) => {
+    const queryClient = useQueryClient()
+    const [courseIds, setCourseIds] = useState([])
+    const [sendEmail, setSendEmail] = useState(true)
+
+    const enrolled = student.enrolled_courses || []
+    const enrolledIds = enrolled.map((c) => String(c.id))
+
+    const toggleCourse = (id) =>
+        setCourseIds((ids) => (ids.includes(id) ? ids.filter((c) => c !== id) : [...ids, id]))
+
+    const assignMutation = useMutation({
+        mutationFn: () => tenantAdminService.assignCourses(student.id, courseIds, sendEmail),
+        onSuccess: (data) => {
+            queryClient.invalidateQueries({ queryKey: ['tenantStudents'] })
+            const count = data?.assigned?.length || 0
+            toast.success(count
+                ? `Enrolled in ${count} course${count === 1 ? '' : 's'}${sendEmail ? ' — student notified' : ''}`
+                : 'Student was already enrolled in the selected courses')
+            onClose()
+        },
+        onError: (err) => toast.error(err?.response?.data?.detail || 'Failed to assign courses'),
+    })
+
+    const removeMutation = useMutation({
+        mutationFn: (courseId) => tenantAdminService.removeCourse(student.id, courseId),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['tenantStudents'] })
+            toast.success('Enrollment removed')
+            onClose()
+        },
+        onError: () => toast.error('Failed to remove enrollment'),
+    })
+
+    return (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-surface-900/60 backdrop-blur-sm">
+            <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                className="bg-white dark:bg-surface-800 rounded-3xl w-full max-w-xl max-h-[92vh] overflow-hidden shadow-2xl border border-surface-100 dark:border-surface-700 flex flex-col"
+            >
+                <div className="p-5 sm:p-6 border-b dark:border-surface-700 flex items-center justify-between bg-surface-50/50 dark:bg-surface-900/20">
+                    <div className="min-w-0">
+                        <h2 className="text-lg font-bold text-surface-900 dark:text-white truncate">Manage Courses</h2>
+                        <p className="text-xs text-surface-500 truncate">{student.user.full_name} · {student.user.email}</p>
+                    </div>
+                    <button onClick={onClose} className="p-2 hover:bg-surface-100 dark:hover:bg-surface-700 rounded-xl transition-colors shrink-0">
+                        <X className="w-5 h-5 text-surface-500" />
+                    </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-6">
+                    <section className="space-y-3">
+                        <h3 className="text-xs font-black uppercase tracking-widest text-surface-400">Currently Enrolled</h3>
+                        {enrolled.length === 0 ? (
+                            <p className="text-xs text-surface-400 italic">Not enrolled in any course yet.</p>
+                        ) : (
+                            <div className="flex flex-wrap gap-2">
+                                {enrolled.map((c) => (
+                                    <span key={c.id} className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg bg-surface-100 dark:bg-surface-800 text-xs">
+                                        {c.name}
+                                        <span className="text-[10px] uppercase font-bold text-surface-400">{c.status}</span>
+                                        <button
+                                            onClick={() => {
+                                                if (window.confirm(`Remove ${student.user.full_name} from ${c.name}?`)) {
+                                                    removeMutation.mutate(c.id)
+                                                }
+                                            }}
+                                            className="text-surface-400 hover:text-rose-500"
+                                            title="Remove enrollment"
+                                        >
+                                            <X className="w-3.5 h-3.5" />
+                                        </button>
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+                    </section>
+
+                    <section className="space-y-3">
+                        <h3 className="text-xs font-black uppercase tracking-widest text-primary-600 dark:text-primary-400">Assign New Courses</h3>
+                        <CourseMultiSelect
+                            courses={courses}
+                            selected={courseIds}
+                            onToggle={toggleCourse}
+                            disabledIds={enrolledIds}
+                        />
+                    </section>
+
+                    <label className="flex items-start gap-3 text-sm cursor-pointer">
+                        <input
+                            type="checkbox"
+                            checked={sendEmail}
+                            onChange={(e) => setSendEmail(e.target.checked)}
+                            className="w-4 h-4 mt-0.5 rounded accent-primary-600"
+                        />
+                        <span className="text-surface-600 dark:text-surface-300">Email the student about the new course(s)</span>
+                    </label>
+                </div>
+
+                <div className="p-4 sm:p-5 bg-surface-50 dark:bg-surface-900/20 border-t dark:border-surface-700 flex items-center justify-end gap-3">
+                    <button onClick={onClose} className="px-5 py-2.5 rounded-xl font-bold text-sm text-surface-600 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-700 transition-colors">
+                        Cancel
+                    </button>
+                    <button
+                        onClick={() => assignMutation.mutate()}
+                        disabled={assignMutation.isPending || courseIds.length === 0}
+                        className="px-6 py-2.5 bg-primary-600 text-white rounded-xl font-bold text-sm hover:bg-primary-700 transition-colors flex items-center gap-2 disabled:opacity-60"
+                    >
+                        {assignMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <BookOpen className="w-4 h-4" />}
+                        Enroll
+                    </button>
+                </div>
+            </motion.div>
+        </div>
+    )
+}
+
+/* ---------------------------------------------------------------------------
  * Row action buttons shared between desktop table & mobile cards
  * ------------------------------------------------------------------------- */
-const RowActions = ({ student, onView, onEdit, onReset }) => (
+const RowActions = ({ student, onView, onEdit, onReset, onCourses, onResetPassword }) => (
     <div className="flex items-center gap-1">
+        <button onClick={() => onCourses(student)} className="p-2 text-surface-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded-lg transition-all" title="Manage courses">
+            <BookOpen className="w-4 h-4" />
+        </button>
         <button onClick={() => onEdit(student)} className="p-2 text-surface-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded-lg transition-all" title="Edit record">
             <Pencil className="w-4 h-4" />
+        </button>
+        <button onClick={() => onResetPassword(student)} className="p-2 text-surface-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded-lg transition-all" title="Email a new password">
+            <KeyRound className="w-4 h-4" />
         </button>
         <button onClick={() => onView(student)} className="p-2 text-surface-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded-lg transition-all" title="View full profile">
             <ExternalLink className="w-4 h-4" />
@@ -527,6 +891,8 @@ const StudentManagement = () => {
     const [sortBy, setSortBy] = useState('name')
     const [selectedStudent, setSelectedStudent] = useState(null)
     const [editingStudent, setEditingStudent] = useState(null)
+    const [coursesStudent, setCoursesStudent] = useState(null)
+    const [showCreate, setShowCreate] = useState(false)
 
     const { data: students, isLoading } = useQuery({
         queryKey: ['tenantStudents'],
@@ -556,6 +922,25 @@ const StudentManagement = () => {
         },
         onError: (err) => toast.error(err?.response?.data?.error || 'Failed to update status'),
     })
+
+    const passwordMutation = useMutation({
+        mutationFn: (id) => tenantAdminService.resetStudentPassword(id),
+        onSuccess: (data) => {
+            if (data?.temporary_password) {
+                window.prompt('Email delivery failed — copy this temporary password:', data.temporary_password)
+                toast.error('Password reset, but the email could not be sent')
+                return
+            }
+            toast.success('New password emailed to the user')
+        },
+        onError: (err) => toast.error(err?.response?.data?.detail || 'Failed to reset password'),
+    })
+
+    const handleResetPassword = (student) => {
+        if (window.confirm(`Generate a new password for ${student.user.full_name} and email it to them?`)) {
+            passwordMutation.mutate(student.id)
+        }
+    }
 
     const studentList = Array.isArray(students) ? students : (students?.results || [])
 
@@ -657,6 +1042,9 @@ const StudentManagement = () => {
                             </button>
                         )}
                     </div>
+                    <button onClick={() => setShowCreate(true)} className="btn-primary justify-center whitespace-nowrap">
+                        <UserPlus className="w-4 h-4" /> Add Student
+                    </button>
                     <button onClick={exportCsv} className="btn-secondary justify-center whitespace-nowrap">
                         <Download className="w-4 h-4" /> Export CSV
                     </button>
@@ -773,7 +1161,7 @@ const StudentManagement = () => {
                                     </td>
                                     <td className="px-6 py-4">
                                         <div className="flex justify-end">
-                                            <RowActions student={student} onView={setSelectedStudent} onEdit={setEditingStudent} onReset={handleReset} />
+                                            <RowActions student={student} onView={setSelectedStudent} onEdit={setEditingStudent} onReset={handleReset} onCourses={setCoursesStudent} onResetPassword={handleResetPassword} />
                                         </div>
                                     </td>
                                 </tr>
@@ -817,7 +1205,7 @@ const StudentManagement = () => {
                             >
                                 {!student.user.is_suspended ? <><Shield className="w-3.5 h-3.5" /> Active</> : <><ShieldOff className="w-3.5 h-3.5" /> Suspended</>}
                             </button>
-                            <RowActions student={student} onView={setSelectedStudent} onEdit={setEditingStudent} onReset={handleReset} />
+                            <RowActions student={student} onView={setSelectedStudent} onEdit={setEditingStudent} onReset={handleReset} onCourses={setCoursesStudent} onResetPassword={handleResetPassword} />
                         </div>
                     </div>
                 ))}
@@ -838,6 +1226,22 @@ const StudentManagement = () => {
                     <StudentEditModal
                         student={editingStudent}
                         onClose={() => setEditingStudent(null)}
+                    />
+                )}
+                {coursesStudent && (
+                    <AssignCoursesModal
+                        student={
+                            // Keep the modal in sync with refetched roster data.
+                            studentList.find((s) => s.id === coursesStudent.id) || coursesStudent
+                        }
+                        courses={exams}
+                        onClose={() => setCoursesStudent(null)}
+                    />
+                )}
+                {showCreate && (
+                    <CreateStudentModal
+                        courses={exams}
+                        onClose={() => setShowCreate(false)}
                     />
                 )}
             </AnimatePresence>

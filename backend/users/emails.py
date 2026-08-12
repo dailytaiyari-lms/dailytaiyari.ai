@@ -23,6 +23,35 @@ def _generate_code(num_digits: int = 6) -> str:
     return str(secrets.randbelow(upper)).zfill(num_digits)
 
 
+# Ambiguous glyphs (0/O, 1/l/I) are excluded so a password read off an email
+# can be retyped without confusion. '&' is excluded too: it would render as
+# '&amp;' in the plain-text part of the HTML email.
+_PASSWORD_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
+_PASSWORD_SYMBOLS = '@#$%*'
+
+
+def generate_temp_password(length: int = 12) -> str:
+    """Return a readable, cryptographically-random temporary password.
+
+    Guarantees at least one uppercase, one lowercase, one digit and one symbol
+    so the value always satisfies common password policies.
+    """
+    length = max(length, 8)
+    required = [
+        secrets.choice('ABCDEFGHJKLMNPQRSTUVWXYZ'),
+        secrets.choice('abcdefghijkmnopqrstuvwxyz'),
+        secrets.choice('23456789'),
+        secrets.choice(_PASSWORD_SYMBOLS),
+    ]
+    rest = [secrets.choice(_PASSWORD_ALPHABET) for _ in range(length - len(required))]
+    chars = required + rest
+    # Fisher-Yates shuffle with a CSPRNG (random.shuffle is not crypto-safe).
+    for i in range(len(chars) - 1, 0, -1):
+        j = secrets.randbelow(i + 1)
+        chars[i], chars[j] = chars[j], chars[i]
+    return ''.join(chars)
+
+
 def can_resend(user, purpose: str = 'email_verification') -> bool:
     """Enforce a per-user cooldown between OTP sends."""
     latest = (
