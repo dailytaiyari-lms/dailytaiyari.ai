@@ -120,14 +120,14 @@ export default function MockTestBuilder() {
             {totalQuestions} questions · {Number(form.computed_total_marks || 0)} marks · {form.duration_minutes} min
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button onClick={() => setShowAi(true)}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-primary-600 to-purple-600 text-white font-medium text-sm shadow-sm hover:opacity-90">
-            <Sparkles className="w-4 h-4" /> Modify with AI
+            className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap px-4 py-2 rounded-xl bg-gradient-to-r from-primary-600 to-purple-600 text-white font-medium text-sm shadow-sm hover:opacity-90">
+            <Sparkles className="w-4 h-4 shrink-0" /> Modify with AI
           </button>
           <button onClick={() => navigate(`/admin/mock-tests/${testId}/submissions`)}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-surface-200 dark:border-surface-700 hover:bg-surface-50 dark:hover:bg-surface-800 font-medium text-sm">
-            <Inbox className="w-4 h-4" /> Submissions
+            className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap px-4 py-2 rounded-xl border border-surface-200 dark:border-surface-700 hover:bg-surface-50 dark:hover:bg-surface-800 font-medium text-sm">
+            <Inbox className="w-4 h-4 shrink-0" /> Submissions
           </button>
           <select value={form.status} onChange={(e) => { set('status')(e.target.value); saveMut.mutate({ status: e.target.value }) }}
             className={`${inputCls} w-auto`}>
@@ -136,7 +136,7 @@ export default function MockTestBuilder() {
             <option value="archived">Archived</option>
           </select>
           <button onClick={saveSettings} disabled={saveMut.isPending}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary-600 hover:bg-primary-700 text-white font-medium disabled:opacity-60">
+            className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap px-4 py-2 rounded-xl bg-primary-600 hover:bg-primary-700 text-white font-medium text-sm disabled:opacity-60">
             {saveMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save
           </button>
         </div>

@@ -244,9 +244,17 @@ def generate_modification(job):
             'Add a question by hand first, or generate a new paper.'
         )
 
+    options = job.options or {}
+    targets = [
+        entry for entry in (current.get('items') or [])
+        if str(entry.get('key')) in {str(value) for value in (options.get('target_keys') or [])}
+    ]
     user = prompts.modify_user_prompt(
         instruction=instruction,
         current_json=json.dumps(_for_prompt(current), ensure_ascii=False)[:60000],
+        intent=options.get('intent') or '',
+        targets=targets,
+        add_plan=options.get('add_blueprint') or [],
     )
     raw = _call(resolved, prompts.MODIFY_SYSTEM, user, meter, tenant, feature=FEATURE)
     draft = schema.normalize_mock(

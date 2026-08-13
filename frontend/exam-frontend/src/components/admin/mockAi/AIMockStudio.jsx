@@ -13,6 +13,7 @@ import { formatApiError } from '../builderShared'
 import BlueprintEditor from './BlueprintEditor'
 import ConfirmApplyMock from './ConfirmApplyMock'
 import MockDraftPreview, { collectItemKeys } from './MockDraftPreview'
+import ModifyPanel, { intentMeta } from './ModifyPanel'
 import {
     Field, KIND_LABEL, Pill, STATUS_LABEL, STATUS_PILL, formatCost, inputClass, summaryLine,
 } from './mockStudioParts'
@@ -79,7 +80,20 @@ const AIMockStudio = ({
     const [showHistory, setShowHistory] = useState(false)
     const resumedRef = useRef(false)
 
+    // Modify mode: an explicit scope beats hoping a sentence implies one.
+    const [intent, setIntent] = useState('improve')
+    const [targets, setTargets] = useState(() => new Set())
+    const [addBlueprint, setAddBlueprint] = useState(DEFAULT_BLUEPRINT)
+
     /* ------------------------------------------------------------- options */
+
+    // The paper being modified, rendered as a draft. This is the *only* thing a
+    // revision is grounded in, so it is loaded up front and shown to the admin.
+    const { data: snapshot, isLoading: loadingSnapshot } = useQuery({
+        queryKey: ['mockgen-snapshot', mockTestId],
+        queryFn: () => mockAiService.getMockSnapshot(mockTestId),
+        enabled: isModify,
+    })
 
     const { data: config, isLoading: loadingConfig } = useQuery({
         queryKey: ['mockgen-options'],
@@ -153,18 +167,35 @@ const AIMockStudio = ({
         run(() => mockAiService.getJob(candidate.id))
     }, [openJobs, job, isModify, run])
 
+    // Adding questions is fully described by the plan, so a sentence is optional
+    // there — every other intent needs the admin to say what they want.
+    const modifyInstruction = () => prompt.trim() || (
+        intent === 'add'
+            ? 'Add the questions in the plan above, matching the topics, style and level of the paper as it stands.'
+            : ''
+    )
+
     const startGeneration = () => run(() => mockAiService.generate({
         kind: isModify ? 'modify' : 'create',
-        prompt: prompt.trim(),
+        prompt: isModify ? modifyInstruction() : prompt.trim(),
         input_mode: usedVoice ? 'voice' : 'text',
         mock_test: mockTestId || null,
-        course: courseId || null,
+        course: isModify ? null : (courseId || null),
         provider,
         model,
         options: {
             ...options,
             sections,
-            ...(isModify ? {} : { blueprint }),
+            ...(isModify
+                ? {
+                    intent,
+                    // "Add" never rewrites, so unseen questions are kept rather
+                    // than replaced — a model that forgets one cannot delete it.
+                    apply_mode: intent === 'add' ? 'append' : options.apply_mode,
+                    target_keys: intent === 'add' ? [] : [...targets],
+                    add_blueprint: intent === 'add' ? addBlueprint : [],
+                }
+                : { blueprint }),
         },
     }))
 
@@ -222,7 +253,9 @@ const AIMockStudio = ({
         queryFn: () => mockAiService.listJobs({
             page_size: 20, ...(mockTestId ? { mock_test: mockTestId } : {}),
         }),
-        enabled: showHistory,
+        // Kept warm in modify mode so the button can say how much history exists —
+        // an admin revising a paper wants to see what the last run did.
+        enabled: showHistory || isModify,
     })
 
     const openHistoryJob = async (id) => {
@@ -258,10 +291,19 @@ const AIMockStudio = ({
 
     const canGenerate = useMemo(() => {
         if (!config?.is_ready || generating) return false
-        if (isModify) return prompt.trim().length > 3
+        if (isModify) {
+            if (intent === 'add') {
+                const total = addBlueprint.reduce((sum, row) => sum + Number(row.count || 0), 0)
+                return total > 0 && total <= maxPerRun
+            }
+            return prompt.trim().length > 3
+        }
         if (!totalRequested || totalRequested > maxPerRun) return false
         return prompt.trim().length > 3 || !!courseId || !!options.syllabus?.trim()
-    }, [config, generating, isModify, prompt, totalRequested, maxPerRun, courseId, options.syllabus])
+    }, [
+        config, generating, isModify, intent, addBlueprint, prompt, totalRequested,
+        maxPerRun, courseId, options.syllabus,
+    ])
 
     /* --------------------------------------------------------------- views */
 
@@ -303,9 +345,15 @@ const AIMockStudio = ({
                 <button
                     type="button"
                     onClick={() => setShowHistory(true)}
-                    className="flex items-center gap-1.5 rounded-lg border border-surface-200 px-3 py-2 text-sm text-surface-600 hover:bg-surface-50 dark:border-surface-700 dark:text-surface-300 dark:hover:bg-surface-700"
+                    className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-surface-200 px-3 py-2 text-sm font-medium text-surface-600 hover:bg-surface-50 dark:border-surface-700 dark:text-surface-300 dark:hover:bg-surface-700"
                 >
-                    <History className="h-4 w-4" /> History
+                    <History className="h-4 w-4" />
+                    {isModify ? 'Previous AI runs' : 'History'}
+                    {!!history.length && (
+                        <span className="rounded-full bg-surface-100 px-1.5 text-xs text-surface-500 dark:bg-surface-700">
+                            {history.length}
+                        </span>
+                    )}
                 </button>
             </div>
 
@@ -313,15 +361,24 @@ const AIMockStudio = ({
                 {/* ---------------------------------------------------- composer */}
                 <div className="card h-fit space-y-4 p-5">
                     {isModify ? (
-                        <div className="rounded-lg bg-surface-50 p-3 text-sm dark:bg-surface-800/60">
-                            <p className="font-medium text-surface-800 dark:text-surface-100">
-                                Modifying “{mockTestTitle || 'this paper'}”
-                            </p>
-                            <p className="mt-1 text-xs text-surface-500">
-                                The AI reads the whole paper first, so it can rewrite, replace or add
-                                questions — even if this test was written by hand.
-                            </p>
-                        </div>
+                        <ModifyPanel
+                            mockTestTitle={mockTestTitle}
+                            snapshot={snapshot}
+                            loadingSnapshot={loadingSnapshot}
+                            intent={intent}
+                            onIntentChange={setIntent}
+                            targets={targets}
+                            onToggleTarget={(key, checked) => setTargets((prev) => {
+                                const next = new Set(prev)
+                                if (checked) next.add(key)
+                                else next.delete(key)
+                                return next
+                            })}
+                            onClearTargets={() => setTargets(new Set())}
+                            addBlueprint={addBlueprint}
+                            onAddBlueprintChange={setAddBlueprint}
+                            maxPerRun={maxPerRun}
+                        />
                     ) : (
                         <Field label="Paper title" hint="Leave blank and the AI will name it.">
                             <input
@@ -334,7 +391,8 @@ const AIMockStudio = ({
                     )}
 
                     <Field
-                        label={isModify ? 'What should change?' : 'What should this paper cover?'}
+                        label={isModify ? 'Describe the change' : 'What should this paper cover?'}
+                        hint={isModify ? intentMeta(intent).blurb : undefined}
                     >
                         <div className="relative">
                             <textarea
@@ -342,7 +400,7 @@ const AIMockStudio = ({
                                 value={prompt}
                                 onChange={(e) => setPrompt(e.target.value)}
                                 placeholder={isModify
-                                    ? 'e.g. make section B harder, replace the two calculus questions with vectors, and add a coding question on recursion'
+                                    ? intentMeta(intent).placeholder
                                     : 'e.g. Class 12 Physics half-yearly: rotational motion, thermodynamics and waves. NCERT level, exam-style traps, one long numerical per topic.'}
                                 className={`${inputClass} resize-y pr-12`}
                             />
@@ -389,21 +447,23 @@ const AIMockStudio = ({
                         </>
                     )}
 
-                    <Field
-                        label="Ground it in a course"
-                        hint="Optional — the AI uses that course's syllabus as the source of truth."
-                    >
-                        <select
-                            className={inputClass}
-                            value={courseId}
-                            onChange={(e) => setCourseId(e.target.value)}
+                    {!isModify && (
+                        <Field
+                            label="Ground it in a course"
+                            hint="Optional — the AI uses that course's syllabus as the source of truth."
                         >
-                            <option value="">No course</option>
-                            {(config.courses || []).map((course) => (
-                                <option key={course.id} value={course.id}>{course.name}</option>
-                            ))}
-                        </select>
-                    </Field>
+                            <select
+                                className={inputClass}
+                                value={courseId}
+                                onChange={(e) => setCourseId(e.target.value)}
+                            >
+                                <option value="">No course</option>
+                                {(config.courses || []).map((course) => (
+                                    <option key={course.id} value={course.id}>{course.name}</option>
+                                ))}
+                            </select>
+                        </Field>
+                    )}
 
                     <Field label="Model">
                         <div className="grid grid-cols-2 gap-2">
@@ -451,19 +511,26 @@ const AIMockStudio = ({
                     {showAdvanced && (
                         <div className="space-y-3 rounded-lg bg-surface-50 p-3 dark:bg-surface-800/60">
                             {isModify ? (
-                                <Field
-                                    label="How to apply changes"
-                                    hint="Questions students have already answered are never deleted."
-                                >
-                                    <select
-                                        className={inputClass}
-                                        value={options.apply_mode}
-                                        onChange={(e) => setOptions((o) => ({ ...o, apply_mode: e.target.value }))}
+                                intent === 'add' ? (
+                                    <p className="text-xs text-surface-500">
+                                        Adding questions never rewrites or deletes what is already
+                                        in the paper.
+                                    </p>
+                                ) : (
+                                    <Field
+                                        label="How to apply changes"
+                                        hint="Questions students have already answered are never deleted."
                                     >
-                                        <option value="replace">Replace the paper with the revision</option>
-                                        <option value="append">Keep everything, add what is new</option>
-                                    </select>
-                                </Field>
+                                        <select
+                                            className={inputClass}
+                                            value={options.apply_mode}
+                                            onChange={(e) => setOptions((o) => ({ ...o, apply_mode: e.target.value }))}
+                                        >
+                                            <option value="replace">Replace the paper with the revision</option>
+                                            <option value="append">Keep everything, add what is new</option>
+                                        </select>
+                                    </Field>
+                                )
                             ) : (
                                 <>
                                     <Field label="Sections">
@@ -762,7 +829,7 @@ const AIMockStudio = ({
             <AnimatePresence>
                 {showHistory && (
                     <div
-                        className="fixed inset-0 z-50 flex justify-end bg-black/40"
+                        className="fixed inset-0 z-[70] flex justify-end bg-black/40"
                         onClick={() => setShowHistory(false)}
                     >
                         <motion.div

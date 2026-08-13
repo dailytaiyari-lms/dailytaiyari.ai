@@ -367,6 +367,67 @@ class ModifyWithAITests(_MockStudioTestCase):
         response = self.post(self.admin, '/jobs/', {'kind': 'modify', 'prompt': 'change it'})
         self.assertEqual(response.status_code, 400)
 
+    def test_modify_rejects_an_unknown_intent(self):
+        response = self.post(self.admin, '/jobs/', {
+            'kind': 'modify', 'mock_test': str(self.mock_test.id), 'prompt': 'change it',
+            'options': {'intent': 'delete-everything'},
+        })
+        self.assertEqual(response.status_code, 400)
+
+    def test_adding_questions_needs_a_plan(self):
+        response = self.post(self.admin, '/jobs/', {
+            'kind': 'modify', 'mock_test': str(self.mock_test.id), 'prompt': 'add a few',
+            'options': {'intent': 'add'},
+        })
+        self.assertEqual(response.status_code, 400)
+
+    def test_the_scope_the_admin_picked_reaches_the_prompt(self):
+        """Intent and the ticked questions become hard rules, not hints."""
+        seen = {}
+
+        def capture(resolved, messages, *args, **kwargs):
+            from chatbot.providers import Usage
+
+            seen['user'] = messages[-1]['content']
+            return self._revision_response(), Usage(10, 20, 30), 100
+
+        with self.stub_provider(), patch('coursegen.generation.complete', side_effect=capture):
+            response = self.post(self.admin, '/jobs/', {
+                'kind': 'modify', 'mock_test': str(self.mock_test.id),
+                'prompt': 'Swap this one out',
+                'options': {'intent': 'replace', 'target_keys': [str(self.item.id)]},
+            })
+
+        self.assertEqual(response.status_code, 201)
+        self.assertIn('INTENT — REPLACE QUESTIONS', seen['user'])
+        self.assertIn('CHANGE ONLY THESE QUESTIONS', seen['user'])
+        self.assertIn(str(self.item.id), seen['user'])
+        # The paper itself is the grounding — no course syllabus is ever pasted in.
+        self.assertIn('What is 2 + 2?', seen['user'])
+
+    def test_an_add_run_states_exactly_what_to_add(self):
+        seen = {}
+
+        def capture(resolved, messages, *args, **kwargs):
+            from chatbot.providers import Usage
+
+            seen['user'] = messages[-1]['content']
+            return self._revision_response(), Usage(10, 20, 30), 100
+
+        with self.stub_provider(), patch('coursegen.generation.complete', side_effect=capture):
+            response = self.post(self.admin, '/jobs/', {
+                'kind': 'modify', 'mock_test': str(self.mock_test.id),
+                'prompt': 'Add two more of the same flavour',
+                'options': {
+                    'intent': 'add',
+                    'add_blueprint': [{'item_type': 'mcq', 'count': 2, 'marks': 4}],
+                },
+            })
+
+        self.assertEqual(response.status_code, 201)
+        self.assertIn('INTENT — ADD NEW QUESTIONS', seen['user'])
+        self.assertIn('2 × mcq', seen['user'])
+
 
 class ScopingTests(_MockStudioTestCase):
     """Nothing leaks across tenants, and only admins may build papers."""

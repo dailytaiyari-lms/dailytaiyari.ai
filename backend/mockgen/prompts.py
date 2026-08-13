@@ -231,12 +231,87 @@ def mock_user_prompt(*, brief, options, syllabus_text='', batch=None, already_wr
     return '\n\n'.join(parts)
 
 
-def modify_user_prompt(*, instruction, current_json, brief=''):
-    """Revise an existing paper with the admin's instruction applied."""
+#: What each modify intent is allowed to do. The admin picks one in the studio,
+#: which is far more reliable than hoping a free-form sentence implies scope.
+INTENT_RULES = {
+    'improve': (
+        'INTENT — IMPROVE THE EXISTING QUESTIONS:\n'
+        '- Do NOT add a question and do NOT remove one. The paper must come back '
+        'with exactly the same number of items and the same keys.\n'
+        '- Sharpen wording, fix ambiguity, strengthen weak distractors, and make '
+        'every explanation complete.\n'
+        '- Keep each question testing the same concept at the same difficulty.'
+    ),
+    'add': (
+        'INTENT — ADD NEW QUESTIONS:\n'
+        '- Every existing question must come back UNCHANGED, with its original "key".\n'
+        '- Append the new questions after them, each with a new key (n1, n2, …).\n'
+        '- New questions must not duplicate or rephrase anything already in the paper, '
+        'and must match the style, level and marking of what is there.'
+    ),
+    'replace': (
+        'INTENT — REPLACE QUESTIONS:\n'
+        '- Replace only the questions named below (or in the instruction). A replaced '
+        'question keeps its original "key" so it is updated in place, not duplicated.\n'
+        '- Every other question comes back byte-identical.\n'
+        '- A replacement keeps the same marks, negative marks, section and item_type '
+        'unless the instruction says otherwise.'
+    ),
+    'difficulty': (
+        'INTENT — RETUNE DIFFICULTY:\n'
+        '- Keep the same number of questions, the same keys and the same concepts.\n'
+        '- Change only how demanding each question is, and update the explanation to match.'
+    ),
+}
+
+
+def _target_lines(targets):
+    """Name the questions the admin ticked, so scope is unambiguous."""
+    lines = []
+    for entry in targets or []:
+        if isinstance(entry, dict):
+            key = entry.get('key')
+            text = (entry.get('question_text') or '').strip()
+        else:
+            key, text = entry, ''
+        if not key:
+            continue
+        lines.append(f'- key "{key}"' + (f': {text[:160]}' if text else ''))
+    return lines
+
+
+def modify_user_prompt(
+    *, instruction, current_json, brief='', intent='', targets=None, add_plan=None,
+):
+    """Revise an existing paper with the admin's instruction applied.
+
+    ``intent`` narrows what the model is permitted to touch, ``targets`` names
+    the exact questions it may rewrite, and ``add_plan`` is a blueprint for the
+    questions to append. All three come from explicit choices in the studio,
+    which keeps a vague instruction from quietly rewriting a whole paper.
+    """
     parts = [
-        'THE PAPER AS IT STANDS:\n' + current_json,
-        f'WHAT THE ADMIN WANTS CHANGED:\n"""\n{instruction.strip()}\n"""',
+        'THE PAPER AS IT STANDS. This is the only source of truth — the revision '
+        'must stay on its topics, level and style:\n' + current_json,
     ]
+
+    rule = INTENT_RULES.get(intent)
+    if rule:
+        parts.append(rule)
+
+    target_lines = _target_lines(targets)
+    if target_lines:
+        parts.append(
+            'CHANGE ONLY THESE QUESTIONS. Everything else comes back exactly as it '
+            'is, with the same "key":\n' + '\n'.join(target_lines[:60])
+        )
+
+    plan = _blueprint_lines({'blueprint': add_plan or []})
+    if plan:
+        parts.append('ADD EXACTLY THESE NEW QUESTIONS, NO MORE AND NO LESS:\n' + '\n'.join(plan))
+
+    parts.append(f'WHAT THE ADMIN WANTS CHANGED:\n"""\n{instruction.strip()}\n"""')
+
     if brief:
         parts.append(f'ORIGINAL BRIEF FOR CONTEXT:\n"""\n{brief.strip()}\n"""')
     parts.append(

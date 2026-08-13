@@ -36,7 +36,7 @@ const ConfirmApplyMock = ({ job, selectedKeys, saving, onCancel, onConfirm }) =>
     ].filter(Boolean)
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
             <motion.div
                 initial={{ opacity: 0, scale: 0.96, y: 8 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}

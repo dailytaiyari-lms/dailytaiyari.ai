@@ -2,6 +2,7 @@
 from rest_framework import serializers
 
 from .models import MockTestGenerationJob
+from .prompts import INTENT_RULES
 from .schema import (
     ITEM_TYPES,
     MAX_ITEMS_PER_REQUEST,
@@ -9,6 +10,9 @@ from .schema import (
     draft_summary,
     normalize_mock,
 )
+
+#: Scopes a "Modify with AI" run: what the model may and may not touch.
+MODIFY_INTENTS = (*INTENT_RULES.keys(), 'custom')
 
 
 class MockJobSerializer(serializers.ModelSerializer):
@@ -114,6 +118,35 @@ class GenerateSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     {'prompt': 'Describe the change you want the AI to make.'}
                 )
+            intent = options.get('intent')
+            if intent is not None and intent not in MODIFY_INTENTS:
+                raise serializers.ValidationError(
+                    {'options': f'intent must be one of {", ".join(MODIFY_INTENTS)}.'}
+                )
+            add_blueprint = options.get('add_blueprint')
+            if intent == 'add' and not add_blueprint:
+                raise serializers.ValidationError({
+                    'options': 'Say how many questions of what kind to add.'
+                })
+            if add_blueprint:
+                entries = BlueprintEntrySerializer(data=add_blueprint, many=True)
+                entries.is_valid(raise_exception=True)
+                total = sum(entry['count'] for entry in entries.validated_data)
+                if total > MAX_ITEMS_PER_REQUEST:
+                    raise serializers.ValidationError({
+                        'options': (
+                            f'Add at most {MAX_ITEMS_PER_REQUEST} questions at a time '
+                            'so you can review them properly.'
+                        )
+                    })
+                options['add_blueprint'] = entries.validated_data
+            targets = options.get('target_keys')
+            if targets is not None:
+                if not isinstance(targets, list):
+                    raise serializers.ValidationError(
+                        {'options': 'target_keys must be a list of question keys.'}
+                    )
+                options['target_keys'] = [str(value) for value in targets][:60]
         else:
             blueprint = options.get('blueprint')
             if not blueprint:
