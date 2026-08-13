@@ -108,7 +108,7 @@ export default function MockTestBuilder() {
         <ArrowLeft className="w-4 h-4" /> All Mock Tests
       </button>
 
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-6">
         <div>
           <input
             value={form.title}
@@ -120,7 +120,7 @@ export default function MockTestBuilder() {
             {totalQuestions} questions · {Number(form.computed_total_marks || 0)} marks · {form.duration_minutes} min
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 lg:flex-none">
           <button onClick={() => setShowAi(true)}
             className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap px-4 py-2 rounded-xl bg-gradient-to-r from-primary-600 to-purple-600 text-white font-medium text-sm shadow-sm hover:opacity-90">
             <Sparkles className="w-4 h-4 shrink-0" /> Modify with AI
@@ -129,15 +129,17 @@ export default function MockTestBuilder() {
             className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap px-4 py-2 rounded-xl border border-surface-200 dark:border-surface-700 hover:bg-surface-50 dark:hover:bg-surface-800 font-medium text-sm">
             <Inbox className="w-4 h-4 shrink-0" /> Submissions
           </button>
+          {/* Width is set here rather than reusing `inputCls`, whose `w-full`
+              would stretch the select and push the row onto three lines. */}
           <select value={form.status} onChange={(e) => { set('status')(e.target.value); saveMut.mutate({ status: e.target.value }) }}
-            className={`${inputCls} w-auto`}>
+            className="w-32 shrink-0 px-3 py-2 rounded-xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/40">
             <option value="draft">Draft</option>
             <option value="published">Published</option>
             <option value="archived">Archived</option>
           </select>
           <button onClick={saveSettings} disabled={saveMut.isPending}
             className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap px-4 py-2 rounded-xl bg-primary-600 hover:bg-primary-700 text-white font-medium text-sm disabled:opacity-60">
-            {saveMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save
+            {saveMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4 shrink-0" />} Save
           </button>
         </div>
       </div>
