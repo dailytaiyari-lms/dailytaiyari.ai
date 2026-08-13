@@ -1,13 +1,16 @@
 import { useState, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import {
   ArrowLeft, Save, Plus, Trash2, GripVertical, Loader2, Settings2, Inbox,
   ListChecks, Calculator, FileText, Code2, CheckSquare, Library, X, Search,
+  Sparkles,
 } from 'lucide-react'
 import { mockTestBuilderService } from '../services/mockTestBuilderService'
 import RichMarkdownEditor from '../components/common/RichMarkdownEditor'
+import AIMockStudio from '../components/admin/mockAi/AIMockStudio'
+import MockAiJobBanners from '../components/admin/mockAi/MockAiJobBanners'
 
 const ITEM_TYPES = [
   { value: 'mcq', label: 'MCQ (single)', icon: ListChecks, color: 'text-blue-500' },
@@ -32,10 +35,23 @@ export default function MockTestBuilder() {
   const { testId } = useParams()
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [tab, setTab] = useState('settings')
   const [form, setForm] = useState(null)
   const [editingItem, setEditingItem] = useState(null)
   const [showBank, setShowBank] = useState(false)
+  // `?ai=1` lets the mock-test list deep-link straight back into a run that is
+  // still in progress, so a reviewable draft is never more than one click away.
+  const showAi = searchParams.get('ai') === '1'
+  const setShowAi = (open) => setSearchParams(
+    (params) => {
+      const next = new URLSearchParams(params)
+      if (open) next.set('ai', '1')
+      else next.delete('ai')
+      return next
+    },
+    { replace: true },
+  )
 
   const { data: test, isLoading } = useQuery({
     queryKey: ['admin-mock-test', testId],
@@ -105,6 +121,10 @@ export default function MockTestBuilder() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={() => setShowAi(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-primary-600 to-purple-600 text-white font-medium text-sm shadow-sm hover:opacity-90">
+            <Sparkles className="w-4 h-4" /> Modify with AI
+          </button>
           <button onClick={() => navigate(`/admin/mock-tests/${testId}/submissions`)}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-surface-200 dark:border-surface-700 hover:bg-surface-50 dark:hover:bg-surface-800 font-medium text-sm">
             <Inbox className="w-4 h-4" /> Submissions
@@ -121,6 +141,12 @@ export default function MockTestBuilder() {
           </button>
         </div>
       </div>
+
+      <MockAiJobBanners
+        mockTestId={testId}
+        className="mb-5"
+        onOpen={() => setShowAi(true)}
+      />
 
       <div className="flex gap-1 border-b border-surface-200 dark:border-surface-700 mb-6">
         {[['settings', 'Settings', Settings2], ['questions', `Questions (${totalQuestions})`, ListChecks]].map(([k, label, Icon]) => (
@@ -207,6 +233,39 @@ export default function MockTestBuilder() {
       )}
       {showBank && (
         <BankImport testId={testId} onClose={() => setShowBank(false)} />
+      )}
+
+      {showAi && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onClick={() => setShowAi(false)}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="h-full w-full max-w-6xl overflow-y-auto bg-surface-50 p-5 dark:bg-surface-900"
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h2 className="flex items-center gap-2 text-lg font-semibold text-surface-900 dark:text-white">
+                  <Sparkles className="h-5 w-5 text-primary-500" /> Modify with AI
+                </h2>
+                <p className="text-xs text-surface-500">
+                  The AI reads this paper first — it works even if you wrote it by hand.
+                </p>
+              </div>
+              <button onClick={() => setShowAi(false)}
+                className="rounded-lg p-2 text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <AIMockStudio
+              mockTestId={testId}
+              mockTestTitle={form.title}
+              onApplied={() => {
+                qc.invalidateQueries({ queryKey: ['admin-mock-test', testId] })
+                qc.invalidateQueries({ queryKey: ['admin-mock-items', testId] })
+                setShowAi(false)
+              }}
+            />
+          </div>
+        </div>
       )}
     </div>
   )

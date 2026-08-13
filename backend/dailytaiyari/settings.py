@@ -66,6 +66,7 @@ INSTALLED_APPS = [
     'gamification.apps.GamificationConfig',
     'chatbot.apps.ChatbotConfig',
     'coursegen.apps.CourseGenConfig',
+    'mockgen.apps.MockGenConfig',
     'community.apps.CommunityConfig',
     'assignments.apps.AssignmentsConfig',
     'coding.apps.CodingConfig',
@@ -430,6 +431,10 @@ NOTEBOOKS_GEN_ASYNC = config('NOTEBOOKS_GEN_ASYNC', default=True, cast=bool)
 # calls and routinely outlives an HTTP timeout, so it runs on the worker and the
 # studio polls the job. Falls back to inline generation if the broker is down.
 COURSEGEN_ASYNC = config('COURSEGEN_ASYNC', default=True, cast=bool)
+
+# And the AI Mock Test Builder, which writes a full-length paper in several
+# batched LLM calls. Same contract: queue it, poll the job, fall back to inline.
+MOCKGEN_ASYNC = config('MOCKGEN_ASYNC', default=True, cast=bool)
 
 # Celery (broker + result backend on Redis). Result backend stores the task
 # state so the poll endpoint can distinguish queued/running/done.

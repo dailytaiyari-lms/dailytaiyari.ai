@@ -35,6 +35,7 @@ urlpatterns = [
     path('api/v1/tenant-admin/', include('core.admin_urls')),
     path('api/v1/tenant-admin/ai/', include('chatbot.admin_urls')),
     path('api/v1/tenant-admin/course-ai/', include('coursegen.urls')),
+    path('api/v1/tenant-admin/mock-ai/', include('mockgen.urls')),
     path('api/v1/auth/', include('users.urls')),
     path('api/v1/courses/', include('exams.urls')),
     path('api/v1/content/', include('content.urls')),
