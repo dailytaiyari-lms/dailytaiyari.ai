@@ -347,8 +347,7 @@ def extract_json(text):
 
     logger.warning('coursegen: unparseable model response (%d chars)', len(text))
     raise GenerationError(
-        'The model did not return valid JSON. Try again, or pick a stronger '
-        'model for course generation.'
+        'The model did not return valid JSON. Try again, or pick a stronger model.'
     )
 
 
@@ -370,8 +369,12 @@ class _Meter:
         self.elapsed_ms += elapsed_ms
 
 
-def _call(resolved, system, user, meter, tenant):
-    """One completion, metered into ``AIUsageRecord`` like every other AI call."""
+def _call(resolved, system, user, meter, tenant, *, feature=AIUsageRecord.FEATURE_COURSEGEN):
+    """One completion, metered into ``AIUsageRecord`` like every other AI call.
+
+    ``feature`` attributes the spend to the tool that made the call, so a
+    platform owner can tell an expensive paper generation from a course one.
+    """
     messages = [
         {'role': 'system', 'content': system},
         {'role': 'user', 'content': user},
@@ -384,7 +387,7 @@ def _call(resolved, system, user, meter, tenant):
             tenant=tenant, student=None, session=None, resolved=resolved,
             usage=Usage(), response_time_ms=int((time.time() - started) * 1000),
             was_successful=False, error_message=str(exc),
-            feature=AIUsageRecord.FEATURE_COURSEGEN,
+            feature=feature,
         )
         raise GenerationError(str(exc)) from exc
 
@@ -398,7 +401,7 @@ def _call(resolved, system, user, meter, tenant):
     resolver.record_usage(
         tenant=tenant, student=None, session=None, resolved=resolved,
         usage=usage, response_time_ms=elapsed, was_successful=True,
-        feature=AIUsageRecord.FEATURE_COURSEGEN,
+        feature=feature,
     )
     return content
 

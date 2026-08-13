@@ -5,9 +5,10 @@ import toast from 'react-hot-toast'
 import {
   Plus, ClipboardList, Clock, Users, Trash2, Pencil, Search,
   CheckCircle2, FileEdit, Archive, Loader2, ArrowLeft, ClipboardCheck,
-  Inbox,
+  Inbox, Sparkles,
 } from 'lucide-react'
 import { mockTestBuilderService } from '../services/mockTestBuilderService'
+import MockAiJobBanners from '../components/admin/mockAi/MockAiJobBanners'
 
 const STATUS_BADGE = {
   draft: { label: 'Draft', cls: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300', icon: FileEdit },
@@ -78,6 +79,12 @@ export default function MockTestManager() {
             <ClipboardCheck className="w-4 h-4" /> Grading
           </button>
           <button
+            onClick={() => navigate('/admin/mock-tests/ai')}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-primary-600 to-purple-600 text-white font-medium shadow-sm hover:opacity-90"
+          >
+            <Sparkles className="w-4 h-4" /> Generate with AI
+          </button>
+          <button
             onClick={() => createMut.mutate()}
             disabled={createMut.isPending}
             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-700 text-white font-medium shadow-sm disabled:opacity-60"
@@ -87,6 +94,17 @@ export default function MockTestManager() {
           </button>
         </div>
       </div>
+
+      {/* Generation runs on the server, so an in-flight or reviewable run shows
+          up here every time the admin comes back to this screen. */}
+      <MockAiJobBanners
+        className="mb-5"
+        onOpen={(job) => navigate(
+          job.mock_test
+            ? `/admin/mock-tests/${job.mock_test}?ai=1`
+            : '/admin/mock-tests/ai',
+        )}
+      />
 
       <div className="flex flex-col sm:flex-row gap-3 mb-5">
         <div className="relative flex-1">

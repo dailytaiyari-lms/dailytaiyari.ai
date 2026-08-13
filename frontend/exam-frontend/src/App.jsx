@@ -66,6 +66,7 @@ import NotebookGrading from './pages/NotebookGrading'
 import NotebookSubmissionReview from './pages/NotebookSubmissionReview'
 import MockTestManager from './pages/MockTestManager'
 import MockTestBuilder from './pages/MockTestBuilder'
+import AIMockStudioPage from './pages/AIMockStudioPage'
 import RichMockAttempt from './pages/RichMockAttempt'
 import MockTestGrading from './pages/MockTestGrading'
 import MockTestSubmissions from './pages/MockTestSubmissions'
@@ -310,6 +311,7 @@ function App() {
 
           {/* Mock Tests (admin) */}
           <Route path="/admin/mock-tests" element={<MockTestManager />} />
+          <Route path="/admin/mock-tests/ai" element={<AIMockStudioPage />} />
           <Route path="/admin/mock-tests/grading" element={<MockTestGrading />} />
           <Route path="/admin/mock-tests/:testId/submissions" element={<MockTestSubmissions />} />
           <Route path="/admin/mock-tests/:testId/submissions/:attemptId" element={<MockTestSubmissionReview />} />
