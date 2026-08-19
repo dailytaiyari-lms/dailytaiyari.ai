@@ -447,6 +447,26 @@ CELERY_TASK_TIME_LIMIT = 180
 CELERY_TASK_SOFT_TIME_LIMIT = 150
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 
+# Periodic jobs (run by the celery-beat service; schedules are code-defined,
+# so a beat restart simply re-reads them). All of these are recompute-from-
+# events and idempotent — a missed or doubled run changes nothing.
+from celery.schedules import crontab  # noqa: E402
+
+CELERY_BEAT_SCHEDULE = {
+    'intelligence-item-stats': {
+        'task': 'intelligence.recompute_item_stats',
+        'schedule': crontab(hour=2, minute=0),
+    },
+    'intelligence-learner-state-refresh': {
+        'task': 'intelligence.refresh_learner_state',
+        'schedule': crontab(hour=3, minute=0),
+    },
+    'intelligence-tagging-sweep': {
+        'task': 'intelligence.tagging_sweep',
+        'schedule': crontab(hour=4, minute=0, day_of_week='sun'),
+    },
+}
+
 # Caching. Prefer a shared Redis cache when REDIS_URL is configured (needed once
 # there are multiple web workers/hosts); otherwise fall back to per-process
 # LocMem so the app still runs without Redis.

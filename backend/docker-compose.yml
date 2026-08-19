@@ -152,6 +152,24 @@ services:
       redis:
         condition: service_healthy
 
+  # Celery beat — the scheduler for periodic intelligence jobs (nightly item
+  # stats + learner-state refresh, weekly tagging sweep). Runs no task itself;
+  # it only enqueues onto the existing workers. Schedules live in settings.py
+  # (CELERY_BEAT_SCHEDULE), so the schedule file in /tmp is disposable.
+  celery-beat:
+    build: .
+    restart: unless-stopped
+    entrypoint: []
+    command: celery -A dailytaiyari beat --loglevel=info --schedule=/tmp/celerybeat-schedule
+    volumes:
+      - .:/app
+    environment: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   # Sandboxed notebook grading runner. Runs untrusted student notebook code.
   # SECURITY: never publish ports (internal docker network only); reachable only
   # from `web`/`celery-nbworker` at http://nbrunner:2100. Unlike Piston it needs

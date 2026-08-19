@@ -15,6 +15,75 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Learner state + item stats (default queue — cheap, statistical)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@shared_task(name='intelligence.update_learner_state', max_retries=0)
+def update_learner_state_for_attempt(kind, attempt_id):
+    """Recompute the concept states an attempt touched. Idempotent."""
+    from .services import state
+
+    try:
+        return state.update_for_attempt(kind, attempt_id)
+    except Exception:  # noqa: BLE001 — the nightly refresh catches up
+        logger.exception('intelligence.update_learner_state failed for %s %s', kind, attempt_id)
+        return 0
+
+
+@shared_task(name='intelligence.refresh_learner_state', time_limit=1800)
+def refresh_learner_state():
+    """Nightly: re-decay stale states and catch up on any missed enqueues.
+
+    Two sweeps:
+    - states not recomputed in 24h get fresh retention/mastery decay;
+    - attempts finalized in the last 48h whose enqueue may have been lost
+      (broker blip) are re-processed — a no-op when nothing was missed.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from .models import LearnerConceptState
+    from .services import state
+
+    refreshed = 0
+    cutoff = timezone.now() - timedelta(hours=24)
+    stale = (
+        LearnerConceptState.objects.filter(computed_at__lt=cutoff, effective_evidence__gt=0)
+        .select_related('student__user', 'concept')[:5000]
+    )
+    for row in stale:
+        state.recompute_state(row.student, row.concept)
+        refreshed += 1
+
+    caught_up = 0
+    recent = timezone.now() - timedelta(hours=48)
+    from .models import LearningEvent
+
+    pairs = (
+        LearningEvent.objects.filter(created_at__gte=recent)
+        .values_list('attempt_kind', 'attempt_id').distinct()
+    )
+    for kind, attempt_id in pairs:
+        if kind in ('quiz', 'mock') and attempt_id:
+            caught_up += state.update_for_attempt(kind, attempt_id)
+
+    logger.info('intelligence.refresh_learner_state: %d refreshed, %d catch-up concepts',
+                refreshed, caught_up)
+    return refreshed
+
+
+@shared_task(name='intelligence.recompute_item_stats', time_limit=1800)
+def recompute_item_stats():
+    """Nightly: rebuild empirical item statistics from the event log."""
+    from .services import itemstats
+
+    count = itemstats.recompute_all()
+    logger.info('intelligence.recompute_item_stats: %d item(s)', count)
+    return count
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # LLM tagging (queue: aigen)
 # ─────────────────────────────────────────────────────────────────────────────
 
