@@ -38,6 +38,8 @@ import MockTest from './pages/MockTest'
 import MockTestAttempt from './pages/MockTestAttempt'
 import MockTestReview from './pages/MockTestReview'
 import Analytics from './pages/Analytics'
+import Practice from './pages/Practice'
+import PracticeSession from './pages/PracticeSession'
 import Leaderboard from './pages/Leaderboard'
 import XPHistory from './pages/XPHistory'
 import Profile from './pages/Profile'
@@ -272,6 +274,8 @@ function App() {
           <Route path="/mock-test/:testId" element={<LoginGate><FeatureRoute feature="mock_tests"><MockTestAttempt /></FeatureRoute></LoginGate>} />
           <Route path="/mock-test/review/:attemptId" element={<LoginGate><FeatureRoute feature="mock_tests"><MockTestReview /></FeatureRoute></LoginGate>} />
           <Route path="/pyp" element={<LoginGate><FeatureRoute feature="pyq"><PreviousYearPapers /></FeatureRoute></LoginGate>} />
+          <Route path="/practice" element={<LoginGate><FeatureRoute feature="practice"><Practice /></FeatureRoute></LoginGate>} />
+          <Route path="/practice/:setId" element={<LoginGate><FeatureRoute feature="practice"><PracticeSession /></FeatureRoute></LoginGate>} />
           <Route path="/analytics" element={<LoginGate><FeatureRoute feature="analytics"><Analytics /></FeatureRoute></LoginGate>} />
           <Route path="/leaderboard" element={<LoginGate><FeatureRoute feature="leaderboard"><Leaderboard /></FeatureRoute></LoginGate>} />
           <Route path="/profile" element={<LoginGate><Profile /></LoginGate>} />
