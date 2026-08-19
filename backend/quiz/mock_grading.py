@@ -252,6 +252,44 @@ def pending_manual_count(attempt):
     return attempt.item_answers.filter(needs_manual_grading=True).count()
 
 
+def award_completion_xp(attempt):
+    """Award the mock-completion XP for a fully graded attempt, exactly once.
+
+    Shared by the submit path (auto-graded attempts), the admin's
+    finalize-attempt action and the AI grading task, so XP can never double
+    up whichever of them finishes the grading. Re-attempts earn nothing.
+    Returns the XP awarded (0 when nothing was due).
+    """
+    from core.utils import calculate_xp_for_quiz
+    from gamification.models import XPTransaction
+    from gamification.services import GamificationService
+
+    if attempt.xp_earned:
+        return 0
+    if XPTransaction.objects.filter(
+        student=attempt.student, transaction_type='mock_complete',
+        reference_id=attempt.id,
+    ).exists():
+        return 0
+    already_completed = type(attempt).objects.filter(
+        student=attempt.student, mock_test=attempt.mock_test,
+        status__in=['completed', 'timed_out'],
+    ).exclude(id=attempt.id).exists()
+    if already_completed:
+        return 0
+
+    xp = calculate_xp_for_quiz(
+        float(attempt.percentage), attempt.total_questions, is_daily_challenge=False,
+    ) * 2
+    attempt.xp_earned = xp
+    attempt.save(update_fields=['xp_earned'])
+    GamificationService.award_xp(
+        attempt.student, xp, 'mock_complete',
+        f'Completed mock test: {attempt.mock_test.title}', str(attempt.id),
+    )
+    return xp
+
+
 # ---------------------------------------------------------------------------
 # Student review (Phase 6)
 # ---------------------------------------------------------------------------

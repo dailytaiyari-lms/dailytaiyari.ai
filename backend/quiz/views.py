@@ -1113,22 +1113,8 @@ class MockTestViewSet(TenantAwareReadOnlyViewSet):
         attempt.time_taken_seconds = min(elapsed, cap) if cap else elapsed
         attempt.save()
 
-        awarded_xp = 0
-        if not pending_manual:
-            already = MockTestAttempt.objects.filter(
-                student=student, mock_test=mock_test,
-                status__in=['completed', 'timed_out'],
-            ).exclude(id=attempt.id).exists()
-            if not already:
-                awarded_xp = calculate_xp_for_quiz(
-                    attempt.percentage, attempt.total_questions, is_daily_challenge=False
-                ) * 2
-                attempt.xp_earned = awarded_xp
-                attempt.save(update_fields=['xp_earned'])
-                GamificationService.award_xp(
-                    student, awarded_xp, 'mock_complete',
-                    f'Completed mock test: {mock_test.title}', str(attempt.id),
-                )
+        from .mock_grading import award_completion_xp
+        awarded_xp = award_completion_xp(attempt) if not pending_manual else 0
 
         mock_test.total_attempts += 1
         if attempt.marks_obtained > mock_test.highest_score:
@@ -1142,6 +1128,12 @@ class MockTestViewSet(TenantAwareReadOnlyViewSet):
 
         # Record learning events for the intelligence layer (fail-safe)
         intelligence_api.record_attempt_events(attempt)
+
+        # AI grading of pending subjective answers (opt-in per tenant; no-op
+        # otherwise). Runs async — the attempt stays pending_manual meanwhile.
+        if pending_manual:
+            from intelligence import hooks as intelligence_hooks
+            intelligence_hooks.maybe_enqueue_ai_grading(attempt)
 
         results_visible = (
             mock_test.result_visibility == 'immediate' and not pending_manual

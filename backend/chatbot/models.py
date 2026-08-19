@@ -599,10 +599,11 @@ class AISettings(TimeStampedModel):
     # Appended to the built-in system prompt — tone, syllabus notes, language.
     custom_instructions = models.TextField(blank=True, default='')
 
-    # Cheap-model routing for high-volume mechanical work (item tagging).
-    # Empty = use the tenant's default model. Resolved the same way as any
-    # other model choice, so platform allocations still apply.
+    # Cheap-model routing for high-volume mechanical work. Empty = use the
+    # tenant's default model. Resolved the same way as any other model choice,
+    # so platform allocations still apply.
     tagging_model = models.CharField(max_length=200, blank=True, default='')
+    grading_model = models.CharField(max_length=200, blank=True, default='')
 
     class Meta:
         verbose_name = 'AI Settings'

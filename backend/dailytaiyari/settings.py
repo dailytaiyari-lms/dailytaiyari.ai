@@ -465,6 +465,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'intelligence.tagging_sweep',
         'schedule': crontab(hour=4, minute=0, day_of_week='sun'),
     },
+    'intelligence-grading-sweep': {
+        'task': 'intelligence.grading_sweep',
+        'schedule': crontab(minute='*/15'),
+    },
 }
 
 # Caching. Prefer a shared Redis cache when REDIS_URL is configured (needed once

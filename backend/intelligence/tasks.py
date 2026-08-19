@@ -84,6 +84,70 @@ def recompute_item_stats():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# AI subjective grading (queue: aigen)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@shared_task(
+    name='intelligence.grade_subjective', bind=True, max_retries=0,
+    queue='aigen', soft_time_limit=1500, time_limit=1560,
+)
+def grade_subjective_answers(self, attempt_id):
+    """AI-grade the pending subjective answers of one mock attempt."""
+    from quiz.models import MockTestAttempt
+
+    from .services import grading
+
+    attempt = (
+        MockTestAttempt.objects.filter(id=attempt_id)
+        .select_related('student__user', 'mock_test').first()
+    )
+    if attempt is None:
+        logger.warning('intelligence.grade_subjective: attempt %s not found', attempt_id)
+        return None
+    counts = grading.grade_attempt(attempt)
+    logger.info('intelligence.grade_subjective %s: %s', attempt_id, counts)
+    return counts
+
+
+@shared_task(name='intelligence.grading_sweep', queue='aigen', time_limit=300)
+def grading_sweep():
+    """Every 15 min: re-enqueue attempts whose AI grading never ran/finished.
+
+    Covers worker crashes and enqueue failures. Only attempts from tenants
+    with ai_grading enabled, finalized in the last 7 days, that still have
+    a pending subjective answer the AI has not looked at.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from quiz.models import MockTestAttempt
+
+    from .hooks import _feature_enabled
+
+    recent = timezone.now() - timedelta(days=7)
+    attempts = (
+        MockTestAttempt.objects.filter(
+            grading_status='pending_manual',
+            completed_at__gte=recent,
+            item_answers__needs_manual_grading=True,
+            item_answers__ai_confidence__isnull=True,
+            item_answers__item__item_type='subjective',
+        )
+        .select_related('student__user__tenant')
+        .distinct()[:200]
+    )
+    queued = 0
+    for attempt in attempts:
+        if _feature_enabled(attempt.student.user.tenant, 'ai_grading'):
+            grade_subjective_answers.delay(str(attempt.id))
+            queued += 1
+    if queued:
+        logger.info('intelligence.grading_sweep: %d attempt(s) queued', queued)
+    return queued
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # LLM tagging (queue: aigen)
 # ─────────────────────────────────────────────────────────────────────────────
 
