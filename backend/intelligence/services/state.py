@@ -30,6 +30,9 @@ STABILITY_GROWTH = 0.6       # spacing-effect gain per successful spaced recall
 STABILITY_GROWTH_CAP = 2.0   # max Δ/S credited per recall
 TRANSFER_WINDOW_DAYS = 90
 TRANSFER_MIN_N = 5
+# Practice answers are formative (explanations shown mid-set, warm-ups below
+# ability), so they count as weaker evidence than exam answers.
+PRACTICE_WEIGHT = 0.6
 TRANSFER_GAP_FLAG = 0.25
 RETENTION_FLAG = 0.7
 CONFIDENCE_MEDIUM = 3.0
@@ -121,10 +124,13 @@ def observations_for(student, concept):
             item_key = ('m', event.mock_item_id)
         else:
             continue  # item deleted — no link weight to attribute
+        source_weight = (
+            PRACTICE_WEIGHT if event.source_type == LearningEvent.SOURCE_PRACTICE_ANSWER else 1.0
+        )
         observations.append(_Observation(
             occurred_at=event.occurred_at,
             score=max(0.0, min(1.0, event.score_fraction)),
-            link_weight=weights.get(item_key, 1.0),
+            link_weight=weights.get(item_key, 1.0) * source_weight,
             is_multi=multi_by_links.get(item_key, False) or _cognitive_multi(event),
             item_ref=str(item_key[1]),
             selected=_selected_indices(event) if event.score_fraction < 0.5 else [],

@@ -30,6 +30,7 @@ from analytics.services import AnalyticsService
 from gamification.services import GamificationService
 from core.views import TenantAwareViewSet, TenantAwareReadOnlyViewSet
 from intelligence import api as intelligence_api
+from intelligence import hooks as intelligence_hooks
 
 
 class QuizSubmitThrottle(UserRateThrottle):
@@ -483,6 +484,7 @@ class QuizViewSet(TenantAwareReadOnlyViewSet):
 
         # Record learning events for the intelligence layer (fail-safe)
         intelligence_api.record_attempt_events(attempt)
+        intelligence_hooks.on_attempt_graded(attempt, course=quiz.course)
         
         # Build badge context for accurate badge awarding
         badge_context = {
@@ -870,6 +872,7 @@ class MockTestViewSet(TenantAwareReadOnlyViewSet):
 
         # Record learning events for the intelligence layer (fail-safe)
         intelligence_api.record_attempt_events(attempt)
+        intelligence_hooks.on_attempt_graded(attempt, course=mock_test.course)
 
         # Build badge context for accurate badge awarding
         badge_context = {
@@ -1128,11 +1131,13 @@ class MockTestViewSet(TenantAwareReadOnlyViewSet):
 
         # Record learning events for the intelligence layer (fail-safe)
         intelligence_api.record_attempt_events(attempt)
+        intelligence_hooks.on_attempt_graded(
+            attempt, course=mock_test.course or mock_test.courses.first(),
+        )
 
         # AI grading of pending subjective answers (opt-in per tenant; no-op
         # otherwise). Runs async — the attempt stays pending_manual meanwhile.
         if pending_manual:
-            from intelligence import hooks as intelligence_hooks
             intelligence_hooks.maybe_enqueue_ai_grading(attempt)
 
         results_visible = (

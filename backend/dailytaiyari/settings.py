@@ -446,6 +446,19 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_TASK_TIME_LIMIT = 180
 CELERY_TASK_SOFT_TIME_LIMIT = 150
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+# Enqueues happen inside student-facing request paths (fail-safe wrapped).
+# Cap connection retries so a dead broker costs milliseconds, not minutes.
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    'max_retries': 2, 'interval_start': 0, 'interval_step': 0.2, 'interval_max': 0.5,
+}
+
+# Under the test runner there is no broker: run tasks inline so enqueues in
+# request paths neither stall nor get lost.
+import sys  # noqa: E402
+
+if 'test' in sys.argv:
+    CELERY_TASK_ALWAYS_EAGER = True
+    CELERY_TASK_EAGER_PROPAGATES = False
 
 # Periodic jobs (run by the celery-beat service; schedules are code-defined,
 # so a beat restart simply re-reads them). All of these are recompute-from-

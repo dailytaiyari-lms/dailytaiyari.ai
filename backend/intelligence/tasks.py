@@ -84,6 +84,40 @@ def recompute_item_stats():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Practice recommendations (default queue — pure tag algebra)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@shared_task(name='intelligence.recompute_recommendations', max_retries=0)
+def recompute_recommendations(student_id, course_id=None):
+    """Refresh a student's suggested practice sets (one course or all)."""
+    from exams.models import Course
+    from users.models import CourseEnrollment, StudentProfile
+
+    from . import recommendation
+
+    student = StudentProfile.objects.filter(id=student_id).select_related('user').first()
+    if student is None:
+        return 0
+    if course_id:
+        courses = list(Course.objects.filter(id=course_id))
+    else:
+        courses = list(Course.objects.filter(
+            id__in=CourseEnrollment.objects.filter(
+                student=student, status='approved',
+            ).values_list('course_id', flat=True),
+            status='active',
+        ))
+    built = 0
+    for course in courses:
+        try:
+            built += len(recommendation.refresh_recommendations(student, course))
+        except Exception:
+            logger.exception('intelligence.recompute_recommendations failed for %s/%s',
+                             student_id, course.id)
+    return built
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # AI subjective grading (queue: aigen)
 # ─────────────────────────────────────────────────────────────────────────────
 
