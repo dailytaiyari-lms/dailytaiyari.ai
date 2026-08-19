@@ -19,6 +19,7 @@ import {
   Bell,
   Sparkles,
   Wand2,
+  Brain,
 } from 'lucide-react'
 
 // Admin navigation sections. `tab` items drive the in-page section shown by
@@ -35,6 +36,7 @@ export const ADMIN_NAV_ITEMS = [
   { tab: 'ai-studio', label: 'AI Course Studio', icon: Wand2 },
   { tab: 'landing', label: 'Landing Page', icon: LayoutTemplate },
   { path: '/admin/mock-tests', label: 'Mock Tests', icon: ClipboardList },
+  { path: '/admin/insights', label: 'Learning Insights', icon: Brain, feature: 'practice' },
   { path: '/admin/jobs', label: 'Jobs', icon: Briefcase },
   { tab: 'ai', label: 'AI Features', icon: Sparkles },
   { tab: 'settings', label: 'Settings', icon: SlidersHorizontal },
@@ -47,6 +49,7 @@ const AdminSidebar = () => {
   const { profile } = useAuthStore()
   const { closeMobileMenu } = useAppStore()
   const tenant = useTenantStore((s) => s.tenant)
+  const isFeatureEnabled = useTenantStore((s) => s.isFeatureEnabled)
 
   const activeTab = searchParams.get('tab') || 'overview'
   const onAdminDashboard = location.pathname === '/admin-dashboard'
@@ -109,7 +112,9 @@ const AdminSidebar = () => {
 
       {/* Navigation */}
       <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-        {ADMIN_NAV_ITEMS.map((item) => {
+        {ADMIN_NAV_ITEMS.filter(
+          (item) => !item.feature || isFeatureEnabled(item.feature)
+        ).map((item) => {
           const IconComponent = item.icon
 
           // Route-based item (e.g. Mock Tests) — navigate to a separate page.

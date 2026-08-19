@@ -40,6 +40,9 @@ import MockTestReview from './pages/MockTestReview'
 import Analytics from './pages/Analytics'
 import Practice from './pages/Practice'
 import PracticeSession from './pages/PracticeSession'
+import InsightsHome from './pages/InsightsHome'
+import AssessmentReport from './pages/AssessmentReport'
+import StudentDiagnosis from './pages/StudentDiagnosis'
 import Leaderboard from './pages/Leaderboard'
 import XPHistory from './pages/XPHistory'
 import Profile from './pages/Profile'
@@ -276,6 +279,10 @@ function App() {
           <Route path="/pyp" element={<LoginGate><FeatureRoute feature="pyq"><PreviousYearPapers /></FeatureRoute></LoginGate>} />
           <Route path="/practice" element={<LoginGate><FeatureRoute feature="practice"><Practice /></FeatureRoute></LoginGate>} />
           <Route path="/practice/:setId" element={<LoginGate><FeatureRoute feature="practice"><PracticeSession /></FeatureRoute></LoginGate>} />
+          {/* Learning insights (teacher-visible: admins + instructors) */}
+          <Route path="/admin/insights" element={<LoginGate><EditorRoute><InsightsHome /></EditorRoute></LoginGate>} />
+          <Route path="/admin/insights/assessments/:kind/:assessmentId" element={<LoginGate><EditorRoute><AssessmentReport /></EditorRoute></LoginGate>} />
+          <Route path="/admin/insights/students/:studentId" element={<LoginGate><EditorRoute><StudentDiagnosis /></EditorRoute></LoginGate>} />
           <Route path="/analytics" element={<LoginGate><FeatureRoute feature="analytics"><Analytics /></FeatureRoute></LoginGate>} />
           <Route path="/leaderboard" element={<LoginGate><FeatureRoute feature="leaderboard"><Leaderboard /></FeatureRoute></LoginGate>} />
           <Route path="/profile" element={<LoginGate><Profile /></LoginGate>} />
