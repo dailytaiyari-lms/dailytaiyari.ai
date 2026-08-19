@@ -148,6 +148,10 @@ def _gap_description(job):
                      'when they must be combined. EVERY question must genuinely '
                      'require combining the listed concepts (cognitive_type '
                      '"multi_concept").')
+    elif kind == 'starter':
+        lines.append('GAP: this course has too few practice questions overall. '
+                     'Write a balanced first-look set across the syllabus '
+                     'context above, mostly easy and medium.')
     lines.append(f'DIFFICULTY: {_difficulty_for(kind, slots)}')
     lines.append(f'COUNT: {(job.options or {}).get("count", ITEMS_PER_JOB)}')
     return '\n'.join(lines)

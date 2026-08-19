@@ -1371,30 +1371,56 @@ class MockTestViewSet(TenantAwareReadOnlyViewSet):
         grader's context; the attempt drops back to pending_manual so the
         existing grading flow picks it up.
         """
+        import uuid as uuid_module
+
+        from django.db import transaction
+
         attempt = MockTestAttempt.objects.filter(
             id=attempt_id, student=request.user.profile,
         ).first()
         if not attempt:
             return Response({'error': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            answer_id = uuid_module.UUID(str(request.data.get('answer_id')))
+        except (TypeError, ValueError):
+            return Response({'error': 'A valid answer_id is required.'},
+                            status=status.HTTP_400_BAD_REQUEST)
         answer = attempt.item_answers.filter(
-            id=request.data.get('answer_id'), item__item_type='subjective',
+            id=answer_id, item__item_type='subjective',
         ).first()
         if not answer:
             return Response({'error': 'Answer not found.'}, status=status.HTTP_404_NOT_FOUND)
+        # ai_graded implies the answer is not already pending; disputed answers
+        # have ai_graded=False, so this also enforces once-per-answer.
         if not answer.ai_graded:
             return Response(
                 {'error': 'Only AI-graded answers can be sent for re-checking.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if answer.needs_manual_grading:
-            return Response({'error': 'This answer is already being re-checked.'},
-                            status=status.HTTP_400_BAD_REQUEST)
-        answer.needs_manual_grading = True
-        answer.ai_graded = False
-        answer.save(update_fields=['needs_manual_grading', 'ai_graded', 'updated_at'])
-        if attempt.grading_status == 'graded':
+
+        # Withdraw the disputed marks until a human decides; the AI suggestion
+        # stays on ai_suggested_marks/ai_feedback for the grader's context.
+        # Note the deliberate tradeoff: the attempt returns to pending_manual
+        # (that is what the admin grading queue lists), which also withholds
+        # the result view until the re-check — same semantics as any other
+        # pending-manual attempt.
+        from .mock_grading import recompute_attempt
+
+        with transaction.atomic():
+            answer.needs_manual_grading = True
+            answer.ai_graded = False
+            answer.marks_obtained = 0
+            answer.is_correct = False
+            answer.save(update_fields=[
+                'needs_manual_grading', 'ai_graded', 'marks_obtained', 'is_correct',
+                'updated_at',
+            ])
+            recompute_attempt(attempt)
             attempt.grading_status = 'pending_manual'
-            attempt.save(update_fields=['grading_status', 'updated_at'])
+            attempt.save(update_fields=[
+                'marks_obtained', 'attempted_questions', 'correct_answers',
+                'wrong_answers', 'percentage', 'grading_status', 'updated_at',
+            ])
         return Response({'status': 'requested'})
 
     @action(detail=False, methods=['get'], url_path='attempts/(?P<attempt_id>[^/.]+)/review')

@@ -206,8 +206,14 @@ def grade_attempt(attempt):
     tenant = attempt.student.user.tenant
     counts = {'accepted': 0, 'escalated': 0, 'skipped': 0}
 
+    # ai_confidence__isnull=True: the AI grades each answer at most once.
+    # Escalated answers and student-disputed answers keep their ai_* fields
+    # and must wait for a human — a sweep re-run must never overturn them.
     pending = list(
-        attempt.item_answers.filter(needs_manual_grading=True, item__item_type='subjective')
+        attempt.item_answers.filter(
+            needs_manual_grading=True, item__item_type='subjective',
+            ai_confidence__isnull=True,
+        )
         .select_related('item')
     )
     if not pending:

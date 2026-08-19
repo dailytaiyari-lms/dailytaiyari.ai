@@ -157,19 +157,25 @@ def _recently_seen_question_ids(student):
     return seen
 
 
-def candidate_questions(student, course, concept, *, cognitive_types=None):
-    """Auto-gradable, healthy, unseen questions linked to the concept."""
+def candidate_questions(course, seen_ids, *, concept=None, cognitive_types=None):
+    """Auto-gradable, healthy, unseen questions — the one place pool-health
+    policy lives. ``concept=None`` is the cold-start pool: any tagged question
+    in the course."""
     from quiz.models import Question
 
-    queryset = (
-        Question.objects.filter(
-            status='published',
-            courses=course,
-            question_type__in=['mcq', 'mcq_multi', 'numerical'],
-            concept_links__concept=concept,
-            concept_links__weight__gte=0.5,
+    queryset = Question.objects.filter(
+        status='published',
+        courses=course,
+        question_type__in=['mcq', 'mcq_multi', 'numerical'],
+    )
+    if concept is not None:
+        queryset = queryset.filter(
+            concept_links__concept=concept, concept_links__weight__gte=0.5,
         )
-        .exclude(id__in=_recently_seen_question_ids(student))
+    else:
+        queryset = queryset.filter(concept_links__isnull=False)
+    queryset = (
+        queryset
         # Empirically bad items never reach a student: negative discrimination
         # or an extreme p-value at credible volume.
         .exclude(item_stats__discrimination__lt=0)
@@ -177,26 +183,11 @@ def candidate_questions(student, course, concept, *, cognitive_types=None):
         .exclude(generated_item__retired_at__isnull=False)
         .distinct()
     )
+    if seen_ids:
+        queryset = queryset.exclude(id__in=seen_ids)
     if cognitive_types:
         queryset = queryset.filter(cognitive_type__in=cognitive_types)
     return list(queryset[:SET_SIZE * 6])
-
-
-def starter_candidates(student, course):
-    """Cold-start pool: any healthy, tagged question in the course."""
-    from quiz.models import Question
-
-    return list(
-        Question.objects.filter(
-            status='published',
-            courses=course,
-            question_type__in=['mcq', 'mcq_multi', 'numerical'],
-            concept_links__isnull=False,
-        )
-        .exclude(id__in=_recently_seen_question_ids(student))
-        .exclude(generated_item__retired_at__isnull=False)
-        .distinct()[:SET_SIZE * 6]
-    )
 
 
 def _target_band(state):
@@ -305,19 +296,8 @@ def refresh_recommendations(student, course):
     ).update(status='expired')
 
     deficits = extract_deficits(student, course)
-    if not deficits and not LearnerConceptState.objects.filter(
-        student=student, concept__subject__course=course,
-        evidence_count__gte=MIN_OBSERVATIONS,
-    ).exists():
-        # Cold start: no real diagnosis is possible yet, so offer a starter
-        # set over the course's tagged pool instead of a fake diagnosis.
-        deficits = [{
-            'kind': 'starter',
-            'signature': f'starter:course={course.id}',
-            'concept': None,
-            'severity': 0.0,
-            'slots': {'course': course.name},
-        }]
+    if not deficits and _is_cold_start(student, course):
+        deficits = [_starter_deficit(course)]
     wanted_signatures = {d['signature'] for d in deficits}
 
     active = PracticeSet.objects.filter(
@@ -331,6 +311,7 @@ def refresh_recommendations(student, course):
     existing_signatures = set(active.values_list('deficit_signature', flat=True))
     slots_left = max(0, config.max_active_sets - active.count())
 
+    seen_ids = _recently_seen_question_ids(student)
     built = []
     for deficit in deficits:
         if slots_left <= 0:
@@ -340,33 +321,69 @@ def refresh_recommendations(student, course):
 
         if deficit['kind'] == 'starter':
             state = None
-            candidates = starter_candidates(student, course)
-            target_band = 'medium'  # a mixed first look, warm-ups included
+            candidates = candidate_questions(course, seen_ids)
         else:
             state = LearnerConceptState.objects.filter(
                 student=student, concept=deficit['concept'],
             ).first()
             candidates = candidate_questions(
-                student, course, deficit['concept'],
+                course, seen_ids, concept=deficit['concept'],
                 cognitive_types=_cognitive_types_for(deficit),
             )
             if deficit['kind'] == 'transfer_gap' and len(candidates) < MIN_SET_SIZE:
                 # Not enough genuinely multi-concept items — fall back to any.
-                candidates = candidate_questions(student, course, deficit['concept'])
-            target_band = _target_band(state)
+                candidates = candidate_questions(
+                    course, seen_ids, concept=deficit['concept'],
+                )
 
-        if deficit['concept'] is not None and len(candidates) < SET_SIZE * POOL_HEADROOM:
+        if len(candidates) < SET_SIZE * POOL_HEADROOM:
+            # Thin pool: ask for novel questions (also for starter pools — a
+            # freshly launched course must be able to bootstrap itself).
             _maybe_request_generation(course, deficit, config, have=len(candidates))
         if len(candidates) < MIN_SET_SIZE:
             continue  # hold the deficit until generation lands
 
-        ladder = _pick_ladder(candidates, target_band)
+        ladder = _pick_ladder(candidates, _target_band(state))
         if len(ladder) < MIN_SET_SIZE:
             continue
         built.append(_build_set(student, course, deficit, ladder))
         slots_left -= 1
 
     return built
+
+
+def _starter_deficit(course):
+    """The synthetic non-diagnosis used when no diagnosis is possible yet.
+
+    Kept next to nothing: same dict contract as extract_deficits entries.
+    """
+    return {
+        'kind': 'starter',
+        'signature': f'starter:course={course.id}',
+        'concept': None,
+        'severity': 0.0,
+        'slots': {'course': course.name},
+    }
+
+
+def _is_cold_start(student, course):
+    """True when no diagnosis is possible AND no recent starter set exists.
+
+    Mirrors extract_deficits' evidence filter (including concept status), and
+    refuses to deal starter set after starter set: one per SET_TTL_DAYS,
+    whatever became of the previous one.
+    """
+    has_evidence = LearnerConceptState.objects.filter(
+        student=student, concept__subject__course=course,
+        concept__status='active', evidence_count__gte=MIN_OBSERVATIONS,
+    ).exists()
+    if has_evidence:
+        return False
+    recent_starter = PracticeSet.objects.filter(
+        student=student, course=course, deficit_kind='starter',
+        created_at__gte=timezone.now() - timedelta(days=SET_TTL_DAYS),
+    ).exclude(status='expired').exists()
+    return not recent_starter
 
 
 def _maybe_request_generation(course, deficit, config, *, have):

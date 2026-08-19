@@ -179,11 +179,20 @@ def submit_set(practice_set):
 
     _emit_events(practice_set)
 
-    # Refresh the states this set targeted, synchronously — the student is
-    # looking at the "what changed" screen right now.
+    # Refresh every concept this set actually touched, synchronously — the
+    # student is looking at the "what changed" screen right now. Derived from
+    # the answered questions' links (not just target_concepts) so starter
+    # sets, which target no concept, still seed learner state.
+    from intelligence.models import ConceptLink
     from intelligence.services import state as state_service
 
-    for concept in practice_set.target_concepts.all():
+    touched = {
+        link.concept
+        for link in ConceptLink.objects.filter(
+            question_id__in=answered.values_list('question_id', flat=True),
+        ).select_related('concept')
+    } | set(practice_set.target_concepts.all())
+    for concept in touched:
         state_service.recompute_state(practice_set.student, concept)
 
     after = _mastery_snapshot(practice_set)

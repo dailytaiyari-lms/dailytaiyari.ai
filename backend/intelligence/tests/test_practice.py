@@ -138,6 +138,23 @@ class RecommendationTests(PracticeTestCase):
         # Not duplicated on the next refresh.
         self.assertEqual(recommendation.refresh_recommendations(self.student, self.course), [])
 
+    def test_completed_starter_set_does_not_deal_another_immediately(self):
+        for n in range(24):
+            self.make_question(n, difficulty='easy' if n < 8 else 'medium')
+        starter = recommendation.refresh_recommendations(self.student, self.course)[0]
+        item = starter.items.select_related('question').first()
+        practice_service.answer_item(starter, str(item.id), selected_options=[0])
+        practice_service.submit_set(starter)
+        # Completing the starter seeds state from the answered question's
+        # concept, and the 14-day starter cooldown blocks a second deal.
+        self.assertEqual(
+            [s.deficit_kind for s in
+             recommendation.refresh_recommendations(self.student, self.course)],
+            [],
+        )
+        state = LearnerConceptState.objects.get(student=self.student, concept=self.concept)
+        self.assertEqual(state.evidence_count, 1)
+
     def test_disabled_course_config_builds_nothing(self):
         self.make_low_mastery_state()
         for n in range(12):
