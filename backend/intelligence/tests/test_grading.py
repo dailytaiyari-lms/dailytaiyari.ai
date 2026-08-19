@@ -161,6 +161,40 @@ class GradingTests(TestCase):
         answer.refresh_from_db()
         self.assertTrue(answer.needs_manual_grading)
 
+    def test_student_can_dispute_an_ai_grade(self):
+        from rest_framework.test import APIClient
+        from rest_framework_simplejwt.tokens import RefreshToken
+
+        attempt, answer = self.make_attempt()
+        with self.stub_provider(), self.stub_llm([SPEC_JSON, grade_json(4.0, 0.9)]):
+            grading.grade_attempt(attempt)
+        answer.refresh_from_db()
+        self.assertTrue(answer.ai_graded)
+
+        client = APIClient()
+        token = RefreshToken.for_user(self.user).access_token
+        client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+        response = client.post(
+            f'/api/v1/quiz/mock-tests/attempts/{attempt.id}/request-regrade/',
+            {'answer_id': str(answer.id)}, format='json',
+            HTTP_X_TENANT_ID=str(self.tenant.id),
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        answer.refresh_from_db()
+        attempt.refresh_from_db()
+        self.assertTrue(answer.needs_manual_grading)   # back in the human queue
+        self.assertFalse(answer.ai_graded)
+        self.assertTrue(answer.ai_feedback)            # AI context kept for the grader
+        self.assertEqual(attempt.grading_status, 'pending_manual')
+
+        # Once per answer.
+        response = client.post(
+            f'/api/v1/quiz/mock-tests/attempts/{attempt.id}/request-regrade/',
+            {'answer_id': str(answer.id)}, format='json',
+            HTTP_X_TENANT_ID=str(self.tenant.id),
+        )
+        self.assertEqual(response.status_code, 400)
+
     def test_spec_recompiles_when_rubric_changes(self):
         attempt, _answer = self.make_attempt()
         with self.stub_provider(), self.stub_llm([SPEC_JSON, grade_json(4.0, 0.9)]):

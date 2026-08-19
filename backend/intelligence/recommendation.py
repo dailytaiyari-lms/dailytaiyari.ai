@@ -182,6 +182,23 @@ def candidate_questions(student, course, concept, *, cognitive_types=None):
     return list(queryset[:SET_SIZE * 6])
 
 
+def starter_candidates(student, course):
+    """Cold-start pool: any healthy, tagged question in the course."""
+    from quiz.models import Question
+
+    return list(
+        Question.objects.filter(
+            status='published',
+            courses=course,
+            question_type__in=['mcq', 'mcq_multi', 'numerical'],
+            concept_links__isnull=False,
+        )
+        .exclude(id__in=_recently_seen_question_ids(student))
+        .exclude(generated_item__retired_at__isnull=False)
+        .distinct()[:SET_SIZE * 6]
+    )
+
+
 def _target_band(state):
     if state is None or state.mastery < 0.35:
         return 'easy'
@@ -288,6 +305,19 @@ def refresh_recommendations(student, course):
     ).update(status='expired')
 
     deficits = extract_deficits(student, course)
+    if not deficits and not LearnerConceptState.objects.filter(
+        student=student, concept__subject__course=course,
+        evidence_count__gte=MIN_OBSERVATIONS,
+    ).exists():
+        # Cold start: no real diagnosis is possible yet, so offer a starter
+        # set over the course's tagged pool instead of a fake diagnosis.
+        deficits = [{
+            'kind': 'starter',
+            'signature': f'starter:course={course.id}',
+            'concept': None,
+            'severity': 0.0,
+            'slots': {'course': course.name},
+        }]
     wanted_signatures = {d['signature'] for d in deficits}
 
     active = PracticeSet.objects.filter(
@@ -308,23 +338,29 @@ def refresh_recommendations(student, course):
         if deficit['signature'] in existing_signatures:
             continue
 
-        state = LearnerConceptState.objects.filter(
-            student=student, concept=deficit['concept'],
-        ).first()
-        candidates = candidate_questions(
-            student, course, deficit['concept'],
-            cognitive_types=_cognitive_types_for(deficit),
-        )
-        if deficit['kind'] == 'transfer_gap' and len(candidates) < MIN_SET_SIZE:
-            # Not enough genuinely multi-concept items — fall back to any.
-            candidates = candidate_questions(student, course, deficit['concept'])
+        if deficit['kind'] == 'starter':
+            state = None
+            candidates = starter_candidates(student, course)
+            target_band = 'medium'  # a mixed first look, warm-ups included
+        else:
+            state = LearnerConceptState.objects.filter(
+                student=student, concept=deficit['concept'],
+            ).first()
+            candidates = candidate_questions(
+                student, course, deficit['concept'],
+                cognitive_types=_cognitive_types_for(deficit),
+            )
+            if deficit['kind'] == 'transfer_gap' and len(candidates) < MIN_SET_SIZE:
+                # Not enough genuinely multi-concept items — fall back to any.
+                candidates = candidate_questions(student, course, deficit['concept'])
+            target_band = _target_band(state)
 
-        if len(candidates) < SET_SIZE * POOL_HEADROOM:
+        if deficit['concept'] is not None and len(candidates) < SET_SIZE * POOL_HEADROOM:
             _maybe_request_generation(course, deficit, config, have=len(candidates))
         if len(candidates) < MIN_SET_SIZE:
             continue  # hold the deficit until generation lands
 
-        ladder = _pick_ladder(candidates, _target_band(state))
+        ladder = _pick_ladder(candidates, target_band)
         if len(ladder) < MIN_SET_SIZE:
             continue
         built.append(_build_set(student, course, deficit, ladder))

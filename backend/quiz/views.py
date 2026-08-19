@@ -1362,6 +1362,41 @@ class MockTestViewSet(TenantAwareReadOnlyViewSet):
             return Response({'error': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         return Response(result)
 
+    @action(detail=False, methods=['post'],
+            url_path='attempts/(?P<attempt_id>[^/.]+)/request-regrade')
+    def request_regrade(self, request, attempt_id=None):
+        """Dispute an AI-graded subjective answer: return it to the human queue.
+
+        Once per answer. The AI's suggestion and feedback are kept for the
+        grader's context; the attempt drops back to pending_manual so the
+        existing grading flow picks it up.
+        """
+        attempt = MockTestAttempt.objects.filter(
+            id=attempt_id, student=request.user.profile,
+        ).first()
+        if not attempt:
+            return Response({'error': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
+        answer = attempt.item_answers.filter(
+            id=request.data.get('answer_id'), item__item_type='subjective',
+        ).first()
+        if not answer:
+            return Response({'error': 'Answer not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not answer.ai_graded:
+            return Response(
+                {'error': 'Only AI-graded answers can be sent for re-checking.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if answer.needs_manual_grading:
+            return Response({'error': 'This answer is already being re-checked.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        answer.needs_manual_grading = True
+        answer.ai_graded = False
+        answer.save(update_fields=['needs_manual_grading', 'ai_graded', 'updated_at'])
+        if attempt.grading_status == 'graded':
+            attempt.grading_status = 'pending_manual'
+            attempt.save(update_fields=['grading_status', 'updated_at'])
+        return Response({'status': 'requested'})
+
     @action(detail=False, methods=['get'], url_path='attempts/(?P<attempt_id>[^/.]+)/review')
     def rich_review(self, request, attempt_id=None):
         """Per-question review for the owning student, gated by result visibility."""

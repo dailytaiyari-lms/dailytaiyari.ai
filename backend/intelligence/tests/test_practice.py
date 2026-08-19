@@ -102,6 +102,8 @@ class RecommendationTests(PracticeTestCase):
         self.assertEqual(built, [])
 
     def test_evidence_floor_blocks_thin_diagnoses(self):
+        # Two observations must never produce a confident diagnosis — the
+        # student gets a neutral starter set instead of a "low mastery" story.
         LearnerConceptState.objects.create(
             tenant=self.tenant, student=self.student, concept=self.concept,
             mastery=0.1, evidence_count=2, effective_evidence=1.5,
@@ -109,7 +111,8 @@ class RecommendationTests(PracticeTestCase):
         )
         for n in range(12):
             self.make_question(n)
-        self.assertEqual(recommendation.refresh_recommendations(self.student, self.course), [])
+        built = recommendation.refresh_recommendations(self.student, self.course)
+        self.assertEqual([s.deficit_kind for s in built], ['starter'])
 
     def test_recently_seen_questions_are_excluded(self):
         self.make_low_mastery_state()
@@ -123,6 +126,17 @@ class RecommendationTests(PracticeTestCase):
         built = recommendation.refresh_recommendations(self.student, self.course)
         served = {item.question_id for item in built[0].items.all()}
         self.assertNotIn(seen.id, served)
+
+    def test_cold_start_builds_a_starter_set(self):
+        # No learner state at all — instead of a fake diagnosis, a starter set.
+        for n in range(12):
+            self.make_question(n, difficulty='easy' if n < 4 else 'medium')
+        built = recommendation.refresh_recommendations(self.student, self.course)
+        self.assertEqual(len(built), 1)
+        self.assertEqual(built[0].deficit_kind, 'starter')
+        self.assertIn(self.course.name, built[0].reason['text'])
+        # Not duplicated on the next refresh.
+        self.assertEqual(recommendation.refresh_recommendations(self.student, self.course), [])
 
     def test_disabled_course_config_builds_nothing(self):
         self.make_low_mastery_state()
