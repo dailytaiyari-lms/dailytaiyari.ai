@@ -182,6 +182,48 @@ def grading_sweep():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Practice question generation (queue: aigen)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@shared_task(
+    name='intelligence.practice_generation', bind=True, max_retries=0,
+    queue='aigen', soft_time_limit=1500, time_limit=1560,
+)
+def run_practice_generation(self, job_id):
+    """Generate novel practice questions for one diagnosed gap."""
+    from .models import PracticeGenerationJob
+    from .services import practice_generation
+
+    claimed = PracticeGenerationJob.objects.filter(
+        id=job_id, status=PracticeGenerationJob.STATUS_PENDING,
+    ).update(status=PracticeGenerationJob.STATUS_GENERATING)
+    if not claimed:
+        logger.info('intelligence.practice_generation: %s not runnable, skipping', job_id)
+        return None
+
+    job = (
+        PracticeGenerationJob.objects.filter(id=job_id)
+        .select_related('tenant', 'course').first()
+    )
+    if job is None:
+        return None
+    try:
+        practice_generation.run_job(job)
+    except practice_generation.GenerationError as exc:
+        PracticeGenerationJob.objects.filter(id=job_id).update(
+            status=PracticeGenerationJob.STATUS_FAILED, error=str(exc)[:1000],
+        )
+        logger.info('intelligence.practice_generation %s reported: %s', job_id, exc)
+    except Exception:  # noqa: BLE001 — never leave a job stuck 'generating'
+        logger.exception('intelligence.practice_generation failed for %s', job_id)
+        PracticeGenerationJob.objects.filter(id=job_id).update(
+            status=PracticeGenerationJob.STATUS_FAILED,
+            error='Generation failed unexpectedly.',
+        )
+    return str(job_id)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # LLM tagging (queue: aigen)
 # ─────────────────────────────────────────────────────────────────────────────
 
