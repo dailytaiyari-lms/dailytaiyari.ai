@@ -217,7 +217,12 @@ class Topic(OrderedModel):
     
     # Study time estimate
     estimated_study_hours = models.DecimalField(max_digits=4, decimal_places=1, default=1.0)
-    
+
+    # Learning objectives, e.g. ["Solve one-step linear equations", ...].
+    # Populated by the AI course builder (which already generates them) and
+    # editable by admins.
+    objectives = models.JSONField(default=list, blank=True)
+
     # Statistics
     total_questions = models.PositiveIntegerField(default=0)
     total_content = models.PositiveIntegerField(default=0)

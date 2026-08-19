@@ -70,8 +70,31 @@ class Question(TimeStampedModel):
     source = models.CharField(max_length=200, blank=True)  # e.g., "NEET 2023"
     year = models.PositiveIntegerField(null=True, blank=True)
     
-    # Tags for filtering
+    # Tags for filtering (legacy concept storage — the intelligence app's
+    # ConceptLink is the canonical item↔concept mapping)
     tags = models.JSONField(default=list, blank=True)
+
+    # Intelligence metadata (see intelligence app; '' = untagged)
+    COGNITIVE_TYPES = [
+        ('recall', 'Recall'),
+        ('application', 'Application'),
+        ('multi_concept', 'Multi-concept / transfer'),
+    ]
+    cognitive_type = models.CharField(
+        max_length=30, choices=COGNITIVE_TYPES, blank=True, default='',
+    )
+    # sha256 over the semantic content; a mismatch after an edit marks the
+    # item 'stale' so the tagging sweep re-tags it.
+    content_hash = models.CharField(max_length=64, blank=True, default='')
+    TAGGING_STATUS_CHOICES = [
+        ('', 'Untagged'),
+        ('tagged', 'Tagged'),
+        ('stale', 'Stale'),
+    ]
+    tagging_status = models.CharField(
+        max_length=10, choices=TAGGING_STATUS_CHOICES, blank=True, default='',
+    )
+    tagged_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         verbose_name = 'Question'
@@ -365,10 +388,36 @@ class MockTestItem(OrderedModel):
     # [{"stdin": str, "expected_output": str, "points": int, "is_sample": bool, "explanation": str}]
     coding_test_cases = models.JSONField(default=list, blank=True)
 
+    # Curriculum anchoring + intelligence metadata. Unlike bank Questions these
+    # are optional: hand-typed items start untagged and the tagging sweep
+    # fills them in. Concepts live in intelligence.ConceptLink.
+    topic = models.ForeignKey(
+        Topic, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='mock_items',
+    )
+    subject = models.ForeignKey(
+        Subject, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='mock_items',
+    )
+    difficulty = models.CharField(
+        max_length=20, choices=Question.DIFFICULTY_CHOICES, default='medium',
+    )
+    cognitive_type = models.CharField(
+        max_length=30, choices=Question.COGNITIVE_TYPES, blank=True, default='',
+    )
+    content_hash = models.CharField(max_length=64, blank=True, default='')
+    tagging_status = models.CharField(
+        max_length=10, choices=Question.TAGGING_STATUS_CHOICES, blank=True, default='',
+    )
+    tagged_at = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         ordering = ['section', 'order']
         verbose_name = 'Mock Test Item'
         verbose_name_plural = 'Mock Test Items'
+        indexes = [
+            models.Index(fields=['topic', 'difficulty']),
+        ]
 
     def __str__(self):
         return f'{self.get_item_type_display()} item ({self.mock_test_id})'

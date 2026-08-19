@@ -266,9 +266,10 @@ class StudyTimerView(APIView):
             date=today,
             defaults={
                 'goal_seconds': student.daily_study_goal_minutes * 60,
+                'tenant': student.user.tenant,
             }
         )
-        
+
         return Response({
             'date': str(session.date),
             'total_seconds_today': session.total_seconds_today,
@@ -293,9 +294,10 @@ class StudyTimerView(APIView):
             date=today,
             defaults={
                 'goal_seconds': student.daily_study_goal_minutes * 60,
+                'tenant': student.user.tenant,
             }
         )
-        
+
         session.is_active = True
         session.session_started_at = timezone.now()
         session.last_heartbeat = timezone.now()

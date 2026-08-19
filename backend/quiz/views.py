@@ -29,6 +29,7 @@ from core.utils import calculate_xp_for_quiz
 from analytics.services import AnalyticsService
 from gamification.services import GamificationService
 from core.views import TenantAwareViewSet, TenantAwareReadOnlyViewSet
+from intelligence import api as intelligence_api
 
 
 class QuizSubmitThrottle(UserRateThrottle):
@@ -476,9 +477,12 @@ class QuizViewSet(TenantAwareReadOnlyViewSet):
         # Also update profile study time
         student.total_study_time_minutes += study_minutes
         student.save(update_fields=['total_study_time_minutes'])
-        
+
         # Update topic mastery
         AnalyticsService.update_topic_mastery_from_attempt(attempt)
+
+        # Record learning events for the intelligence layer (fail-safe)
+        intelligence_api.record_attempt_events(attempt)
         
         # Build badge context for accurate badge awarding
         badge_context = {
@@ -863,7 +867,10 @@ class MockTestViewSet(TenantAwareReadOnlyViewSet):
         
         # Update topic mastery and subject performance
         AnalyticsService.update_mock_test_analytics(attempt)
-        
+
+        # Record learning events for the intelligence layer (fail-safe)
+        intelligence_api.record_attempt_events(attempt)
+
         # Build badge context for accurate badge awarding
         badge_context = {
             'perfect_quiz': attempt.percentage == 100,
@@ -1127,6 +1134,14 @@ class MockTestViewSet(TenantAwareReadOnlyViewSet):
         if attempt.marks_obtained > mock_test.highest_score:
             mock_test.highest_score = attempt.marks_obtained
         mock_test.save(update_fields=['total_attempts', 'highest_score'])
+
+        # One explicit analytics update per finalization (signals were removed
+        # because they fired on every save of a completed attempt). Also covers
+        # timed-out attempts, which the old signal skipped.
+        AnalyticsService.update_mock_test_analytics(attempt)
+
+        # Record learning events for the intelligence layer (fail-safe)
+        intelligence_api.record_attempt_events(attempt)
 
         results_visible = (
             mock_test.result_visibility == 'immediate' and not pending_manual

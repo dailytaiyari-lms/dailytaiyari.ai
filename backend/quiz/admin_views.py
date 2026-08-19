@@ -380,6 +380,11 @@ class AdminMockTestViewSet(viewsets.ModelViewSet):
             'marks_obtained', 'attempted_questions', 'correct_answers',
             'wrong_answers', 'percentage', 'updated_at',
         ])
+
+        # Superseding learning event for the intelligence layer (fail-safe)
+        from intelligence import api as intelligence_api
+        intelligence_api.record_regrade_event(ans)
+
         return Response({
             'answer_id': str(ans.id),
             'marks_obtained': float(ans.marks_obtained),
@@ -409,6 +414,11 @@ class AdminMockTestViewSet(viewsets.ModelViewSet):
             'marks_obtained', 'attempted_questions', 'correct_answers',
             'wrong_answers', 'percentage', 'grading_status', 'updated_at',
         ])
+
+        # Safety-net event emission (idempotent — no-op if submit already
+        # recorded these answers and grade_answer recorded the regrades).
+        from intelligence import api as intelligence_api
+        intelligence_api.record_attempt_events(attempt)
 
         # Award XP once (deferred from submit for manual-grading attempts).
         awarded = 0
