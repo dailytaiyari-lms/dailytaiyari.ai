@@ -28,7 +28,14 @@ class Tenant(models.Model):
         'leaderboard': 'Leaderboard',
         'ai': 'AI Learning & Doubt Solver',
         'jobs': 'Job Portal',
+        'practice': 'Smart Practice',
+        'ai_grading': 'AI Subjective Grading',
     }
+
+    # Features that roll out per tenant: a missing key means DISABLED (unlike
+    # the classic features above, which default to enabled). Once a feature
+    # has been switched on for everyone, move it out of this set.
+    OPT_IN_FEATURES = {'practice', 'ai_grading'}
 
     # Canonical list of selectable colour themes. Keys are stable identifiers the
     # frontend maps to a full colour palette; values are the human-readable
@@ -230,7 +237,8 @@ class Tenant(models.Model):
             if key in locks:
                 result[key] = bool(locks[key])
             else:
-                result[key] = bool(stored.get(key, True))
+                default = key not in self.OPT_IN_FEATURES
+                result[key] = bool(stored.get(key, default))
         return result
 
     def get_feature_locks(self):

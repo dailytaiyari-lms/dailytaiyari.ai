@@ -379,6 +379,245 @@ class ItemStats(TimeStampedModel):
         return f'stats for {target} (n={self.attempts_count})'
 
 
+class CoursePracticeConfig(TimeStampedModel):
+    """Per-course knobs for the practice loop (teacher-visible control)."""
+
+    course = models.OneToOneField(
+        'exams.Course', on_delete=models.CASCADE, related_name='practice_config',
+    )
+    practice_enabled = models.BooleanField(default=True)
+    generation_enabled = models.BooleanField(default=True)
+    max_active_sets = models.PositiveIntegerField(default=3)
+    # How many completed sets per day may earn XP (anti-farming).
+    daily_xp_set_cap = models.PositiveIntegerField(default=3)
+
+    class Meta:
+        verbose_name = 'Course Practice Config'
+        verbose_name_plural = 'Course Practice Configs'
+
+    def __str__(self):
+        return f'practice config — {self.course_id}'
+
+
+class PracticeSet(TimeStampedModel):
+    """One recommended practice set: a diagnosed deficit plus the items chosen
+    to remediate it. Single-attempt by design — wanting more practice deals a
+    fresh set; re-drilling the same eight items teaches answer memorization."""
+
+    STATUS_CHOICES = [
+        ('suggested', 'Suggested'),
+        ('in_progress', 'In progress'),
+        ('completed', 'Completed'),
+        ('dismissed', 'Dismissed'),
+        ('expired', 'Expired'),
+    ]
+
+    DEFICIT_CHOICES = [
+        ('low_mastery', 'Low mastery'),
+        ('retention', 'Fading retention'),
+        ('misconception', 'Repeated misconception'),
+        ('cognitive_gap', 'Recall-application gap'),
+        ('transfer_gap', 'Weak cross-concept transfer'),
+        ('starter', 'Starter set (cold start)'),
+    ]
+
+    student = models.ForeignKey(
+        'users.StudentProfile', on_delete=models.CASCADE, related_name='practice_sets',
+    )
+    course = models.ForeignKey(
+        'exams.Course', on_delete=models.CASCADE, null=True, blank=True,
+        related_name='practice_sets',
+    )
+    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default='suggested')
+    deficit_kind = models.CharField(max_length=20, choices=DEFICIT_CHOICES)
+    # Canonical signature of the diagnosed gap, e.g. "mastery:c=<id>:band=easy"
+    # — used to avoid re-suggesting/regenerating the same gap repeatedly.
+    deficit_signature = models.CharField(max_length=200, db_index=True)
+    # Snapshot of why this set exists: {template_key, slots{...}, text}.
+    # Rendered at assembly time so the story stays stable as state moves on.
+    reason = models.JSONField(default=dict, blank=True)
+    target_concepts = models.ManyToManyField(Concept, blank=True, related_name='practice_sets')
+
+    item_count = models.PositiveIntegerField(default=0)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    score_correct = models.PositiveIntegerField(default=0)
+    score_total = models.PositiveIntegerField(default=0)
+    xp_awarded = models.PositiveIntegerField(default=0)
+    expires_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'Practice Set'
+        verbose_name_plural = 'Practice Sets'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['student', 'status']),
+        ]
+
+    def __str__(self):
+        return f'{self.deficit_kind} set for {self.student_id} ({self.status})'
+
+
+class PracticeSetItem(TimeStampedModel):
+    """One question inside a practice set, with the answer recorded inline."""
+
+    ROLE_CHOICES = [
+        ('core', 'Core (at target difficulty)'),
+        ('ladder_easy', 'Warm-up (one band easier)'),
+        ('ladder_stretch', 'Stretch (one band harder)'),
+        ('retention_interleave', 'Retention interleave'),
+    ]
+
+    practice_set = models.ForeignKey(PracticeSet, on_delete=models.CASCADE, related_name='items')
+    # PROTECT: a served question must outlive bank cleanups while sets reference it.
+    question = models.ForeignKey(
+        'quiz.Question', on_delete=models.PROTECT, related_name='practice_set_items',
+    )
+    role = models.CharField(max_length=25, choices=ROLE_CHOICES, default='core')
+    order = models.PositiveIntegerField(default=0)
+
+    # Inline answer (auto-gradable types only in v1: mcq / mcq_multi / numerical).
+    selected_options = models.JSONField(default=list, blank=True)
+    numerical_answer = models.DecimalField(max_digits=20, decimal_places=10, null=True, blank=True)
+    is_correct = models.BooleanField(null=True, blank=True)  # null until answered
+    answered_at = models.DateTimeField(null=True, blank=True)
+    time_taken_seconds = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        verbose_name = 'Practice Set Item'
+        verbose_name_plural = 'Practice Set Items'
+        ordering = ['order']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['practice_set', 'question'], name='uniq_practice_set_question',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.practice_set_id} #{self.order}'
+
+
+class PracticeGenerationJob(TimeStampedModel):
+    """One request to generate remediation questions for a diagnosed deficit.
+
+    Same job-row pipeline as mockgen (pending → generating → preview →
+    applied / failed), but with ``auto_apply``: the task applies a passing
+    draft immediately — the reviewable seam stays so an approval gate is one
+    flag away, with no schema change.
+    """
+
+    STATUS_PENDING = 'pending'
+    STATUS_GENERATING = 'generating'
+    STATUS_PREVIEW = 'preview'
+    STATUS_APPLIED = 'applied'
+    STATUS_FAILED = 'failed'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_GENERATING, 'Generating'),
+        (STATUS_PREVIEW, 'Awaiting review'),
+        (STATUS_APPLIED, 'Applied'),
+        (STATUS_FAILED, 'Failed'),
+    ]
+
+    course = models.ForeignKey(
+        'exams.Course', on_delete=models.CASCADE, related_name='practice_generation_jobs',
+    )
+    deficit_kind = models.CharField(max_length=20, choices=PracticeSet.DEFICIT_CHOICES)
+    deficit_signature = models.CharField(max_length=200, db_index=True)
+    target_concepts = models.ManyToManyField(
+        Concept, blank=True, related_name='practice_generation_jobs',
+    )
+    # Generation spec: difficulty band, cognitive type, count, misconception note…
+    options = models.JSONField(default=dict, blank=True)
+
+    auto_apply = models.BooleanField(default=True)
+    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    draft = models.JSONField(default=dict, blank=True)
+    error = models.TextField(blank=True, default='')
+
+    provider = models.CharField(max_length=32, blank=True, default='')
+    model = models.CharField(max_length=200, blank=True, default='')
+    total_tokens = models.PositiveIntegerField(default=0)
+    estimated_cost_usd = models.DecimalField(max_digits=10, decimal_places=6, default=0)
+    generation_ms = models.PositiveIntegerField(default=0)
+
+    applied_at = models.DateTimeField(null=True, blank=True)
+    applied_summary = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        verbose_name = 'Practice Generation Job'
+        verbose_name_plural = 'Practice Generation Jobs'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['tenant', 'status']),
+            models.Index(fields=['deficit_signature', 'created_at']),
+        ]
+
+    def __str__(self):
+        return f'{self.deficit_kind} generation ({self.status})'
+
+
+class GeneratedItem(TimeStampedModel):
+    """Provenance sidecar for an AI-generated practice question.
+
+    The question itself is a real ``quiz.Question`` (uniform pool: matching,
+    reuse across students and admin edit/archive all come free); this row
+    records why it exists and how it is performing, and is the future review
+    surface's data source.
+    """
+
+    question = models.OneToOneField(
+        'quiz.Question', on_delete=models.CASCADE, related_name='generated_item',
+    )
+    job = models.ForeignKey(
+        PracticeGenerationJob, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='generated_items',
+    )
+    deficit_kind = models.CharField(max_length=20, choices=PracticeSet.DEFICIT_CHOICES)
+    deficit_signature = models.CharField(max_length=200, db_index=True)
+    # The specific mistake a distractor was built to embody, when targeting one.
+    target_misconception = models.CharField(max_length=300, blank=True, default='')
+
+    times_served = models.PositiveIntegerField(default=0)
+    times_answered = models.PositiveIntegerField(default=0)
+    retired_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'Generated Practice Item'
+        verbose_name_plural = 'Generated Practice Items'
+
+    def __str__(self):
+        return f'generated item {self.question_id} ({self.deficit_kind})'
+
+
+class SubjectiveEvalSpec(TimeStampedModel):
+    """Compiled grading spec for one subjective item.
+
+    The expensive interpretation (rubric + model answer → structured criteria)
+    happens once per item and is amortized across every student's answer;
+    per-answer grading runs a cheap model against this spec. Recompiled when
+    the content hash no longer matches (rubric edited).
+    """
+
+    item = models.OneToOneField(
+        'quiz.MockTestItem', on_delete=models.CASCADE, related_name='eval_spec',
+    )
+    content_hash = models.CharField(max_length=64)
+    # {criteria: [{key, description, points, evidence_hints}], key_facts: [],
+    #  common_errors: [], max_points}
+    spec = models.JSONField(default=dict)
+    provider = models.CharField(max_length=32, blank=True, default='')
+    model = models.CharField(max_length=200, blank=True, default='')
+    total_tokens = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        verbose_name = 'Subjective Eval Spec'
+        verbose_name_plural = 'Subjective Eval Specs'
+
+    def __str__(self):
+        return f'eval spec for item {self.item_id}'
+
+
 class AITaggingResult(TimeStampedModel):
     """Cache of one item's LLM tag payload, keyed by content + versions.
 

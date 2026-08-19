@@ -612,6 +612,15 @@ class MockTestAnswer(TimeStampedModel):
     )
     graded_at = models.DateTimeField(null=True, blank=True)
 
+    # AI grading (subjective items). When the AI's confidence clears the
+    # threshold the grade is accepted outright; otherwise these fields prefill
+    # the manual grading queue so a human grades by accept/adjust.
+    ai_graded = models.BooleanField(default=False)
+    ai_confidence = models.DecimalField(max_digits=4, decimal_places=3, null=True, blank=True)
+    ai_suggested_marks = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
+    ai_feedback = models.TextField(blank=True, default='')
+    ai_flags = models.JSONField(default=list, blank=True)
+
     # Meta
     time_taken_seconds = models.PositiveIntegerField(default=0)
     is_marked_for_review = models.BooleanField(default=False)
