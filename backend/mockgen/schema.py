@@ -171,6 +171,16 @@ def normalize_item(raw, index=0, *, used_keys=None, section_count=1, negative_ma
     marks = _number(raw.get('marks'), 1, 0, 1000)
     negative = _number(raw.get('negative_marks'), 0, 0, 1000) if negative_marking else 0
 
+    # Concepts: prefer the list form; fall back to the legacy single string.
+    concepts = []
+    raw_concepts = raw.get('concepts')
+    if not isinstance(raw_concepts, list):
+        raw_concepts = [raw.get('concept') or raw.get('topic')]
+    for entry in raw_concepts[:4]:
+        label = _text(entry, 200)
+        if label and label.casefold() not in {c.casefold() for c in concepts}:
+            concepts.append(label)
+
     item = {
         'key': _key(raw.get('key'), index, used_keys),
         'item_type': item_type,
@@ -180,7 +190,11 @@ def normalize_item(raw, index=0, *, used_keys=None, section_count=1, negative_ma
         'marks': marks,
         'negative_marks': negative,
         'difficulty': _choice(raw.get('difficulty'), {'easy', 'medium', 'hard'}, 'medium'),
-        'concept': _text(raw.get('concept') or raw.get('topic'), 200),
+        'concept': concepts[0] if concepts else '',
+        'concepts': concepts,
+        'cognitive_type': _choice(
+            raw.get('cognitive_type'), {'recall', 'application', 'multi_concept'}, 'application',
+        ),
         'options': [],
         'order': index,
         'include': True,

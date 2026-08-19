@@ -21,9 +21,54 @@ from django.utils import timezone
 from quiz.admin_views import recompute_mock_total
 from quiz.models import MockTest, MockTestAnswer, MockTestItem
 
+from intelligence.services.itemtags import set_item_tags
+
 from .models import MockTestGenerationJob
 
 logger = logging.getLogger(__name__)
+
+
+def _syllabus_anchor(job):
+    """Best-effort (subject, topic) for concept tagging at apply time.
+
+    Concepts are namespaced per subject. When the job can't be pinned to a
+    single subject (multi-subject course, no topic narrowing), tagging is left
+    to the sweep, which infers the topic per item.
+    """
+    from exams.models import Topic
+
+    topic_ids = (job.options or {}).get('topic_ids') or []
+    if topic_ids:
+        topics = list(Topic.objects.filter(id__in=topic_ids).select_related('subject')[:50])
+        subjects = {topic.subject_id for topic in topics}
+        if len(subjects) == 1 and topics:
+            return topics[0].subject, topics[0] if len(topics) == 1 else None
+    if job.course_id:
+        subjects = list(job.course.subjects.all()[:2])
+        if len(subjects) == 1:
+            return subjects[0], None
+    return None, None
+
+
+def _tag_row(row, draft_item, subject, topic):
+    """Persist the generator's own concept/difficulty/cognitive tags on a row."""
+    if subject is None:
+        return
+    try:
+        set_item_tags(
+            row,
+            concept_labels=draft_item.get('concepts') or ([draft_item['concept']] if draft_item.get('concept') else []),
+            subject=subject,
+            topic=topic,
+            source='generator',
+            difficulty=draft_item.get('difficulty'),
+            cognitive_type=draft_item.get('cognitive_type'),
+            overwrite_difficulty=True,
+        )
+    except Exception:
+        # Tagging must never fail an apply the admin just confirmed; the
+        # weekly sweep re-tags anything left untagged.
+        logger.exception('mockgen: failed to tag item %s at apply', row.id)
 
 
 class ApplyError(Exception):
@@ -67,6 +112,7 @@ def _decimal(value, default='0'):
 def _item_fields(item, *, section_offset=0):
     """Map one draft question onto :class:`quiz.models.MockTestItem` columns."""
     item_type = item.get('item_type') or 'mcq'
+    difficulty = item.get('difficulty')
     fields = {
         'item_type': item_type,
         'section': int(item.get('section') or 0) + section_offset,
@@ -75,6 +121,7 @@ def _item_fields(item, *, section_offset=0):
         'explanation': item.get('explanation') or '',
         'marks': _decimal(item.get('marks'), '1'),
         'negative_marks': _decimal(item.get('negative_marks')),
+        'difficulty': difficulty if difficulty in ('easy', 'medium', 'hard') else 'medium',
         # Reset every type-specific column, so an item whose type changed during
         # a refine can never keep a stale answer from its previous shape.
         'options': [],
@@ -205,7 +252,7 @@ def _apply_new_paper(job, items, *, publish):
 
         mock_test.courses.set(Course.objects.filter(id__in=course_ids, tenant=tenant))
 
-    created = _write_items(mock_test, items, tenant=tenant, start_order=0)
+    created = _write_items(mock_test, items, tenant=tenant, start_order=0, job=job)
     recompute_mock_total(mock_test)
 
     job.mock_test = mock_test
@@ -241,6 +288,7 @@ def _apply_modification(job, items, *, publish, options):
     )
     answered_ids = {str(value) for value in answered_ids}
 
+    anchor_subject, anchor_topic = _syllabus_anchor(job)
     created = updated = 0
     seen = set()
     order = 0
@@ -255,11 +303,13 @@ def _apply_modification(job, items, *, publish, options):
             target.order = order
             target.save()
             updated += 1
+            row = target
         else:
-            MockTestItem.objects.create(
+            row = MockTestItem.objects.create(
                 mock_test=mock_test, tenant=tenant, order=order, **fields
             )
             created += 1
+        _tag_row(row, item, anchor_subject, anchor_topic)
         order += 1
 
     removed = 0
@@ -301,12 +351,14 @@ def _apply_modification(job, items, *, publish, options):
     }
 
 
-def _write_items(mock_test, items, *, tenant, start_order=0):
+def _write_items(mock_test, items, *, tenant, start_order=0, job=None):
+    anchor_subject, anchor_topic = _syllabus_anchor(job) if job else (None, None)
     for index, item in enumerate(items):
-        MockTestItem.objects.create(
+        row = MockTestItem.objects.create(
             mock_test=mock_test, tenant=tenant, order=start_order + index,
             **_item_fields(item),
         )
+        _tag_row(row, item, anchor_subject, anchor_topic)
     return len(items)
 
 
@@ -332,8 +384,18 @@ def draft_from_mock_test(mock_test):
             })
 
     items = []
-    rows = MockTestItem.objects.filter(mock_test=mock_test).order_by('section', 'order')
+    rows = (
+        MockTestItem.objects.filter(mock_test=mock_test)
+        .prefetch_related('concept_links__concept')
+        .order_by('section', 'order')
+    )
     for order, row in enumerate(rows):
+        # Real metadata round-trips into the draft, so "Modify with AI" sees
+        # (and preserves) what each question tests.
+        links = sorted(
+            row.concept_links.all(), key=lambda link: (not link.is_primary, -link.weight),
+        )
+        concepts = [link.concept.name for link in links][:4]
         item = {
             'key': str(row.id),
             'item_type': row.item_type,
@@ -342,8 +404,10 @@ def draft_from_mock_test(mock_test):
             'explanation': row.explanation or '',
             'marks': float(row.marks),
             'negative_marks': float(row.negative_marks),
-            'difficulty': 'medium',
-            'concept': '',
+            'difficulty': row.difficulty or 'medium',
+            'concept': concepts[0] if concepts else '',
+            'concepts': concepts,
+            'cognitive_type': row.cognitive_type or 'application',
             'options': [],
             'order': order,
             'include': True,

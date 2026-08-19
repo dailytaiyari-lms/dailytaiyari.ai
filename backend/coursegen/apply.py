@@ -31,6 +31,25 @@ from .notehtml import blocks_to_plain_text, render_blocks
 logger = logging.getLogger(__name__)
 
 
+def _tag_question(question, question_data, topic):
+    """Concept-link a generated bank question (fail-safe — never fails apply)."""
+    from intelligence.services.itemtags import set_item_tags
+
+    label = question_data.get('concept')
+    try:
+        set_item_tags(
+            question,
+            concept_labels=[label] if label else [],
+            subject=topic.subject,
+            topic=topic,
+            source='generator',
+            difficulty=question_data.get('difficulty'),
+            overwrite_difficulty=True,
+        )
+    except Exception:
+        logger.exception('coursegen: failed to tag question %s at apply', question.id)
+
+
 class ApplyError(Exception):
     """The draft cannot be written (bad references, quota, nothing selected)."""
 
@@ -194,14 +213,25 @@ def apply_outline(job, *, selection=None):
                         'importance': topic_data.get('importance') or 'medium',
                         'estimated_study_hours': topic_data.get('estimated_study_hours') or 1.0,
                         'order': topic_data.get('order', topic_index),
+                        'objectives': topic_data.get('objectives') or [],
                     },
                 )
                 if topic_created:
                     created['topics'] += 1
-                elif not topic.description and topic_data.get('summary'):
-                    topic.description = topic_data['summary']
-                    topic.save(update_fields=['description'])
-                    created['topics_updated'] += 1
+                else:
+                    updates = []
+                    if not topic.description and topic_data.get('summary'):
+                        topic.description = topic_data['summary']
+                        updates.append('description')
+                    # Objectives were generated and validated but historically
+                    # dropped on apply — persist them (without clobbering any
+                    # an admin has already curated).
+                    if not topic.objectives and topic_data.get('objectives'):
+                        topic.objectives = topic_data['objectives']
+                        updates.append('objectives')
+                    if updates:
+                        topic.save(update_fields=updates)
+                        created['topics_updated'] += 1
 
                 ChapterTopic.objects.get_or_create(
                     chapter=chapter,
@@ -430,6 +460,7 @@ def _apply_quiz(tenant, course, topic, quiz_data, status, summary, mode='replace
                 is_correct=(option_index == correct),
                 order=option_index,
             )
+        _tag_question(question, question_data, topic)
         QuizQuestion.objects.create(tenant=tenant, quiz=quiz, question=question, order=index)
         summary['questions_created'] += 1
         total_marks += 1

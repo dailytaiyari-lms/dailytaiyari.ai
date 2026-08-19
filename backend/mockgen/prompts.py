@@ -27,7 +27,15 @@ Every question is one object in "items". The keys depend on "item_type":
   {"key": "q1", "item_type": "mcq", "section": 0, "question_text": "...",
    "options": [{"text": "...", "is_correct": true}, {"text": "...", "is_correct": false}],
    "explanation": "Why the right answer is right AND why the others are wrong.",
-   "marks": 4, "negative_marks": 1, "difficulty": "easy|medium|hard", "concept": "short label"}
+   "marks": 4, "negative_marks": 1, "difficulty": "easy|medium|hard",
+   "concepts": ["primary concept", "secondary concept (only if genuinely tested)"],
+   "cognitive_type": "recall|application|multi_concept"}
+
+  "concepts" lists 1-4 short concept names the question actually tests, most
+  central first — reuse the syllabus topic names where they fit. Use
+  "cognitive_type": "recall" for remembering a fact/definition, "application"
+  for applying one concept, and "multi_concept" when solving genuinely requires
+  combining two or more concepts (then list each in "concepts").
 
   MCQ multi (two or more correct options):
   {"key": "q2", "item_type": "mcq_multi", ... same keys, several options with "is_correct": true}

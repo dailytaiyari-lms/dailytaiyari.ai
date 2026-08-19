@@ -33,6 +33,17 @@ def record_regrade_event(item_answer):
     _enqueue_state_update(item_answer.attempt)
 
 
+def mark_item_stale_if_changed(item):
+    """After a manual edit, flag a tagged item for re-tagging when its
+    semantic content changed. Fail-safe; returns True when flipped."""
+    try:
+        from intelligence.services.itemtags import mark_stale_if_changed
+        return mark_stale_if_changed(item)
+    except Exception:
+        logger.exception('intelligence: stale check failed for item %s', item.pk)
+        return False
+
+
 def _enqueue_state_update(attempt):
     try:
         from quiz.models import QuizAttempt
