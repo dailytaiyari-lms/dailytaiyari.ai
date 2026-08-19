@@ -173,6 +173,21 @@ class LearningEventTests(IntelligenceTestCase):
         self.assertAlmostEqual(event.score_fraction, 0.6)  # 3 of 5 marks
 
 
+class BackfillCommandTests(IntelligenceTestCase):
+    def test_backfill_is_idempotent_and_scans_both_attempt_kinds(self):
+        from django.core.management import call_command
+
+        attempt = self.make_completed_quiz_attempt(n_correct=1, n_wrong=1)
+        # Events already recorded live for this attempt — backfill must not duplicate.
+        event_service.record_attempt_events(attempt)
+        self.assertEqual(LearningEvent.objects.count(), 2)
+
+        call_command('backfill_learning_events', verbosity=0)
+        self.assertEqual(LearningEvent.objects.count(), 2)
+        call_command('backfill_learning_events', tenant=str(self.tenant.id), verbosity=0)
+        self.assertEqual(LearningEvent.objects.count(), 2)
+
+
 class AnalyticsSingleFireTests(IntelligenceTestCase):
     """Regression tests for the removed post_save analytics signals."""
 
