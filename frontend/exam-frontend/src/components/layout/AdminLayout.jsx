@@ -3,6 +3,7 @@ import { Outlet, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Menu, Moon, Sun, ArrowLeftRight, LogOut, User } from 'lucide-react'
 import AdminSidebar from './AdminSidebar'
+import BirthdayCelebration from '../common/BirthdayCelebration'
 import { useAppStore } from '../../context/appStore'
 import { useAuthStore } from '../../context/authStore'
 
@@ -128,6 +129,9 @@ const AdminLayout = () => {
           </motion.div>
         </main>
       </div>
+
+      {/* Birthday celebration takeover (only when there is one to show) */}
+      <BirthdayCelebration />
 
       {/* Mobile Menu Overlay */}
       <AnimatePresence>

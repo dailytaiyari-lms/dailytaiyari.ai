@@ -38,3 +38,35 @@ def deliver_announcement_task(self, announcement_id):
         return None
     services.deliver_announcement(announcement)
     return str(announcement_id)
+
+
+@shared_task(name='notifications.send_birthday_greetings', bind=True)
+def send_birthday_greetings_task(self):
+    """Daily birthday sweep across every active tenant.
+
+    Registered for deployments that add a beat scheduler; the management command
+    and the request-time trigger cover everyone else.
+    """
+    from . import birthdays
+
+    summaries = birthdays.run_sweep()
+    total = sum(len(s.get('greeted') or []) for s in summaries)
+    logger.info('send_birthday_greetings_task: greeted %s user(s)', total)
+    return total
+
+
+@shared_task(name='notifications.run_tenant_birthday_sweep', bind=True)
+def run_tenant_birthday_sweep_task(self, tenant_id, run_date=None):
+    """One tenant's birthday sweep, enqueued by the request-time trigger."""
+    from datetime import date
+
+    from core.models import Tenant
+    from . import birthdays
+
+    tenant = Tenant.objects.filter(id=tenant_id).first()
+    if not tenant:
+        logger.warning('run_tenant_birthday_sweep_task: tenant %s not found', tenant_id)
+        return 0
+    today = date.fromisoformat(run_date) if run_date else None
+    summary = birthdays.run_for_tenant(tenant, today)
+    return len(summary.get('greeted') or [])

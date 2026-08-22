@@ -406,12 +406,15 @@ const Profile = () => {
           <div>
             <label className="block text-sm font-medium text-surface-500 mb-1">Date of Birth</label>
             {isEditing && activeSection === 'personal' ? (
-              <input
-                type="date"
-                value={formData.date_of_birth}
-                onChange={(e) => setFormData({ ...formData, date_of_birth: e.target.value })}
-                className="input"
-              />
+              <>
+                <input
+                  type="date"
+                  value={formData.date_of_birth}
+                  onChange={(e) => setFormData({ ...formData, date_of_birth: e.target.value })}
+                  className="input"
+                />
+                <p className="mt-1.5 text-xs text-surface-500">🎂 Add it and we'll have a surprise waiting for you on the day.</p>
+              </>
             ) : (
               <p className="text-base py-2">
                 {formData.date_of_birth

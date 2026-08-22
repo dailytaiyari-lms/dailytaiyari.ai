@@ -7,6 +7,7 @@ import MobileNav from './MobileNav'
 import PromoBanner from './PromoBanner'
 import AnnouncementBanner from './AnnouncementBanner'
 import StudyTimer from '../common/StudyTimer'
+import BirthdayCelebration from '../common/BirthdayCelebration'
 import { useAppStore } from '../../context/appStore'
 import { useAuthStore } from '../../context/authStore'
 
@@ -66,6 +67,9 @@ const MainLayout = () => {
 
       {/* Study Timer Widget */}
       <StudyTimer />
+
+      {/* Birthday celebration takeover (only when there is one to show) */}
+      <BirthdayCelebration />
 
       {/* Mobile Menu Overlay */}
       <AnimatePresence>
