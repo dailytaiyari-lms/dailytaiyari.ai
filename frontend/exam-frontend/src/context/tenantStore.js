@@ -18,6 +18,22 @@ export const FEATURE_KEYS = [
     'jobs',
 ];
 
+// Platform default display names. A tenant admin may override any of these from
+// Settings → Features; the override lands in `tenant.feature_labels` and is what
+// students see. Keep in sync with backend Tenant.FEATURE_CHOICES.
+export const DEFAULT_FEATURE_LABELS = {
+    courses: 'Courses',
+    study: 'Study Material',
+    quiz: 'Practice Quiz',
+    mock_tests: 'Mock Tests',
+    pyq: 'Previous Year Papers (PYQ)',
+    community: 'Community',
+    analytics: 'Analytics',
+    leaderboard: 'Leaderboard',
+    ai: 'AI Learning & Doubt Solver',
+    jobs: 'Job Portal',
+};
+
 // Swap the document <link rel="icon"> to the tenant's favicon at runtime so the
 // browser tab reflects the institution's branding.
 const applyFavicon = (url) => {
@@ -78,4 +94,19 @@ export const useTenantStore = create((set, get) => ({
         if (!features || !(key in features)) return true;
         return Boolean(features[key]);
     },
+
+    // Display name for a feature: the tenant's custom rename when set,
+    // otherwise `fallback` (a screen-specific default such as a short nav
+    // label) or the platform default name.
+    featureLabel: (key, fallback) => {
+        const custom = get().tenant?.feature_labels?.[key];
+        if (typeof custom === 'string' && custom.trim()) return custom.trim();
+        return fallback || DEFAULT_FEATURE_LABELS[key] || key;
+    },
 }));
+
+// Convenience hook for screens that need one feature's display name.
+// `fallback` lets a screen keep its own shorter wording (e.g. "Study" instead
+// of "Study Material") when the tenant hasn't renamed the feature.
+export const useFeatureLabel = (key, fallback) =>
+    useTenantStore((s) => s.featureLabel(key, fallback));

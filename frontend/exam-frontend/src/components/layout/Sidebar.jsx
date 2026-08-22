@@ -22,19 +22,22 @@ import {
 
 // Navigation items with professional icons.
 // `feature` (optional) gates the item behind a tenant feature toggle.
+// `renamable` marks the item as the primary entry point for that feature, so a
+// tenant admin's custom feature name replaces its label. Secondary items of the
+// same feature (e.g. Revision under Study) keep their own names.
 const navItems = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { path: '/courses', label: 'Courses', icon: GraduationCap, feature: 'courses' },
-  { path: '/study', label: 'Study', icon: BookOpen, feature: 'study' },
+  { path: '/courses', label: 'Courses', icon: GraduationCap, feature: 'courses', renamable: true },
+  { path: '/study', label: 'Study', icon: BookOpen, feature: 'study', renamable: true },
   { path: '/revision', label: 'Revision', icon: Bookmark, feature: 'study' },
-  { path: '/quiz', label: 'Practice Quiz', icon: PenTool, feature: 'quiz' },
-  { path: '/mock-test', label: 'Mock Tests', icon: ClipboardList, feature: 'mock_tests' },
-  { path: '/pyp', label: 'PYQ Papers', icon: FileText, feature: 'pyq' },
-  { path: '/community', label: 'Community', icon: Users, feature: 'community' },
-  { path: '/jobs', label: 'Careers', icon: Briefcase, feature: 'jobs' },
-  { path: '/analytics', label: 'Analytics', icon: BarChart3, feature: 'analytics' },
-  { path: '/leaderboard', label: 'Leaderboard', icon: Trophy, feature: 'leaderboard' },
-  { path: '/doubt-solver', label: 'AI Doubt Solver', icon: MessageSquareText, feature: 'ai' },
+  { path: '/quiz', label: 'Practice Quiz', icon: PenTool, feature: 'quiz', renamable: true },
+  { path: '/mock-test', label: 'Mock Tests', icon: ClipboardList, feature: 'mock_tests', renamable: true },
+  { path: '/pyp', label: 'PYQ Papers', icon: FileText, feature: 'pyq', renamable: true },
+  { path: '/community', label: 'Community', icon: Users, feature: 'community', renamable: true },
+  { path: '/jobs', label: 'Careers', icon: Briefcase, feature: 'jobs', renamable: true },
+  { path: '/analytics', label: 'Analytics', icon: BarChart3, feature: 'analytics', renamable: true },
+  { path: '/leaderboard', label: 'Leaderboard', icon: Trophy, feature: 'leaderboard', renamable: true },
+  { path: '/doubt-solver', label: 'AI Doubt Solver', icon: MessageSquareText, feature: 'ai', renamable: true },
   { path: '/ai-learning', label: 'AI Learning', icon: Sparkles, badge: 'XP', feature: 'ai' },
 ]
 
@@ -44,10 +47,15 @@ const Sidebar = () => {
   const { closeMobileMenu } = useAppStore()
   const tenant = useTenantStore((s) => s.tenant)
   const isFeatureEnabled = useTenantStore((s) => s.isFeatureEnabled)
+  const featureLabel = useTenantStore((s) => s.featureLabel)
 
-  const visibleNavItems = navItems.filter(
-    (item) => !item.feature || isFeatureEnabled(item.feature)
-  )
+  const visibleNavItems = navItems
+    .filter((item) => !item.feature || isFeatureEnabled(item.feature))
+    .map((item) => (
+      item.feature && item.renamable
+        ? { ...item, label: featureLabel(item.feature, item.label) }
+        : item
+    ))
 
   return (
     <div className="h-full bg-white dark:bg-surface-900 border-r border-surface-200 dark:border-surface-800 flex flex-col">

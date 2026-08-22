@@ -102,6 +102,7 @@ const CourseDetail = () => {
   const role = user?.role || profile?.user?.role
   const isAdmin = role === 'admin'
   const communityEnabled = useTenantStore((s) => s.isFeatureEnabled)('community')
+  const communityLabel = useTenantStore((s) => s.featureLabel)('community', 'Community')
 
   const [tab, setTab] = useState('overview')
   const [requesting, setRequesting] = useState(false)
@@ -255,7 +256,7 @@ const CourseDetail = () => {
     { key: 'overview', label: 'Overview' },
     { key: 'curriculum', label: 'Curriculum' },
     ...(instructors.length ? [{ key: 'instructors', label: 'Faculty' }] : []),
-    ...(communityEnabled ? [{ key: 'community', label: 'Community' }] : []),
+    ...(communityEnabled ? [{ key: 'community', label: communityLabel }] : []),
   ]
 
   const enrollMode = course.enroll_mode || 'request'
@@ -455,7 +456,7 @@ const CourseDetail = () => {
                 <section>
                   <div className="flex items-center justify-between gap-3 mb-3">
                     <h2 className="text-lg font-display font-bold flex items-center gap-2">
-                      <Users size={18} className="text-primary-500" /> Community
+                      <Users size={18} className="text-primary-500" /> {communityLabel}
                     </h2>
                     <button
                       onClick={() => setTab('community')}

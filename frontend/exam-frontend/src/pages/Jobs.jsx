@@ -7,6 +7,7 @@ import {
   ArrowRight, ClipboardList, Search, SlidersHorizontal, X,
 } from 'lucide-react'
 import { jobService } from '../services/jobService'
+import { useFeatureLabel } from '../context/tenantStore'
 import { useAuthStore } from '../context/authStore'
 import {
   stageMeta, formatSalary, formatExperience, categoryMeta,
@@ -128,6 +129,7 @@ const EMPTY_FILTERS = { category: [], job_type: [], work_mode: [], employment_ty
 
 const Jobs = () => {
   const navigate = useNavigate()
+  const jobsLabel = useFeatureLabel('jobs', 'Careers')
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
   const [tab, setTab] = useState('open')
   const [q, setQ] = useState('')
@@ -177,7 +179,7 @@ const Jobs = () => {
             <Briefcase className="w-6 h-6 text-white" />
           </div>
           <div>
-            <h1 className="text-2xl font-display font-bold text-white">Careers</h1>
+            <h1 className="text-2xl font-display font-bold text-white">{jobsLabel}</h1>
             <p className="text-white/80 text-sm">Explore jobs, internships & hackathons, and track your applications</p>
           </div>
         </div>

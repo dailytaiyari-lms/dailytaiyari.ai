@@ -2522,6 +2522,8 @@ const TenantSettings = () => {
     })
 
     const [features, setFeatures] = useState({})
+    const [renamingFeature, setRenamingFeature] = useState(null)
+    const [renameDraft, setRenameDraft] = useState('')
     const [name, setName] = useState('')
     const [tagline, setTagline] = useState('')
     const [authPanel, setAuthPanel] = useState({ heading: '', heading_highlight: '', subtitle: '', stats: [] })
@@ -2561,6 +2563,21 @@ const TenantSettings = () => {
             toast.success('Features updated')
         },
         onError: () => toast.error('Failed to update features'),
+    })
+
+    // Per-tenant renaming of features. Keys stay canonical; only the words
+    // students see change. Saving a blank name restores the default.
+    const featureLabelsMutation = useMutation({
+        mutationFn: (labels) => tenantAdminService.updateFeatureLabels(labels),
+        onSuccess: (data) => {
+            queryClient.setQueryData(['tenantSettings'], data)
+            fetchTenantConfig()
+            setRenamingFeature(null)
+            toast.success('Feature name updated')
+        },
+        onError: (error) => toast.error(
+            error?.response?.data?.feature_labels?.[0] || 'Failed to update feature name'
+        ),
     })
 
     const brandingMutation = useMutation({
@@ -2646,6 +2663,31 @@ const TenantSettings = () => {
         const next = { ...features, [key]: !features[key] }
         setFeatures(next)
         featuresMutation.mutate({ [key]: next[key] })
+    }
+
+    const startRename = (feature) => {
+        setRenamingFeature(feature.key)
+        setRenameDraft(feature.label || '')
+    }
+
+    const cancelRename = () => {
+        setRenamingFeature(null)
+        setRenameDraft('')
+    }
+
+    const saveRename = (feature) => {
+        const trimmed = renameDraft.trim()
+        if (trimmed === (feature.label || '')) {
+            cancelRename()
+            return
+        }
+        // Blank clears the override so the platform default name comes back.
+        featureLabelsMutation.mutate({ [feature.key]: trimmed })
+    }
+
+    const resetRename = (feature) => {
+        if (!feature.is_renamed) return
+        featureLabelsMutation.mutate({ [feature.key]: '' })
     }
 
     const saveBranding = () => {
@@ -3067,18 +3109,76 @@ const TenantSettings = () => {
                     <SlidersIcon className="w-5 h-5 text-primary-500" />
                     <h3 className="text-lg font-bold text-surface-900 dark:text-white">Features</h3>
                 </div>
-                <p className="text-sm text-surface-500">Show or hide modules for your students. Disabled features are removed from navigation and blocked entirely.</p>
+                <p className="text-sm text-surface-500">Show or hide modules for your students. Disabled features are removed from navigation and blocked entirely. Use the pencil to rename a module — the new name is used across your academy only.</p>
                 <div className="divide-y divide-surface-100 dark:divide-surface-800">
                     {availableFeatures.map((f) => {
                         const enabled = Boolean(features[f.key])
                         const locked = lockedFeatures.includes(f.key)
+                        const isRenaming = renamingFeature === f.key
                         return (
-                            <div key={f.key} className="flex items-center justify-between py-3">
-                                <div className="min-w-0">
-                                    <div className="flex items-center gap-1.5">
-                                        <span className="font-medium text-surface-800 dark:text-surface-200">{f.label}</span>
-                                        {locked && <LockIcon className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
-                                    </div>
+                            <div key={f.key} className="flex items-center justify-between gap-3 py-3">
+                                <div className="min-w-0 flex-1">
+                                    {isRenaming ? (
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                autoFocus
+                                                type="text"
+                                                value={renameDraft}
+                                                maxLength={40}
+                                                onChange={(e) => setRenameDraft(e.target.value)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') saveRename(f)
+                                                    if (e.key === 'Escape') cancelRename()
+                                                }}
+                                                placeholder={f.default_label}
+                                                className="input py-1.5 text-sm max-w-xs"
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => saveRename(f)}
+                                                disabled={featureLabelsMutation.isPending}
+                                                title="Save name"
+                                                className="p-1.5 rounded-lg text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 disabled:opacity-60"
+                                            >
+                                                <Check className="w-4 h-4" />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={cancelRename}
+                                                title="Cancel"
+                                                className="p-1.5 rounded-lg text-surface-500 hover:bg-surface-100 dark:hover:bg-surface-800"
+                                            >
+                                                <X className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="font-medium text-surface-800 dark:text-surface-200 truncate">{f.label}</span>
+                                            {locked && <LockIcon className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
+                                            <button
+                                                type="button"
+                                                onClick={() => startRename(f)}
+                                                title="Rename this module for your academy"
+                                                className="p-1 rounded text-surface-400 hover:text-primary-500 hover:bg-surface-100 dark:hover:bg-surface-800 shrink-0"
+                                            >
+                                                <Pencil className="w-3.5 h-3.5" />
+                                            </button>
+                                            {f.is_renamed && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => resetRename(f)}
+                                                    disabled={featureLabelsMutation.isPending}
+                                                    title={`Reset to default name (${f.default_label})`}
+                                                    className="p-1 rounded text-surface-400 hover:text-primary-500 hover:bg-surface-100 dark:hover:bg-surface-800 shrink-0 disabled:opacity-60"
+                                                >
+                                                    <RotateCcw className="w-3.5 h-3.5" />
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
+                                    {!isRenaming && f.is_renamed && (
+                                        <p className="text-xs text-surface-400 mt-0.5">Default: {f.default_label}</p>
+                                    )}
                                     {locked && (
                                         <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
                                             Managed by DailyTaiyari — contact the DailyTaiyari team to change this.

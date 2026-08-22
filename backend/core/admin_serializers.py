@@ -15,6 +15,7 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
     """
 
     features = serializers.JSONField(required=False)
+    feature_labels = serializers.JSONField(required=False)
     auth_panel = serializers.JSONField(required=False)
     logo = serializers.ImageField(required=False, allow_null=True)
     favicon = serializers.ImageField(required=False, allow_null=True)
@@ -23,7 +24,7 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
         model = Tenant
         fields = [
             'id', 'name', 'tagline', 'subdomain', 'logo', 'favicon', 'theme',
-            'show_name', 'features', 'auth_panel',
+            'show_name', 'features', 'feature_labels', 'auth_panel',
             'request_enrollment_free', 'request_enrollment_paid',
             'notification_email',
         ]
@@ -83,6 +84,31 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
                 'be changed here — please contact the DailyTaiyari team to '
                 'enable or disable: ' + ', '.join(blocked) + '.'
             )
+        return cleaned
+
+    def validate_feature_labels(self, value):
+        """Sanitise per-tenant feature renames.
+
+        Accepts ``{feature_key: label}``. Unknown keys are dropped, labels are
+        trimmed and length-capped, and a blank value means "reset this feature
+        back to the platform default name". Renaming is purely cosmetic, so
+        super-admin feature locks don't restrict it.
+        """
+        if not isinstance(value, dict):
+            raise serializers.ValidationError(
+                'feature_labels must be an object mapping feature keys to names.'
+            )
+        cleaned = {}
+        for key, label in value.items():
+            if key not in Tenant.FEATURE_CHOICES:
+                continue
+            if label is None:
+                label = ''
+            if not isinstance(label, str):
+                raise serializers.ValidationError(
+                    f'The name for "{key}" must be text.'
+                )
+            cleaned[key] = label.strip()[: Tenant.FEATURE_LABEL_MAX_LENGTH]
         return cleaned
 
     def validate_auth_panel(self, value):
@@ -154,8 +180,16 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
         data = super().to_representation(instance)
         data['features'] = instance.get_features()
         data['locked_features'] = instance.locked_feature_keys()
+        data['feature_labels'] = instance.get_feature_labels()
+        labels = data['feature_labels']
+        overrides = instance.get_feature_label_overrides()
         data['available_features'] = [
-            {'key': key, 'label': label}
+            {
+                'key': key,
+                'label': labels.get(key, label),
+                'default_label': label,
+                'is_renamed': key in overrides,
+            }
             for key, label in Tenant.FEATURE_CHOICES.items()
         ]
         data['available_themes'] = [
@@ -183,6 +217,14 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
         features = validated_data.pop('features', None)
         if features is not None:
             instance.features = {**(instance.features or {}), **features}
+        feature_labels = validated_data.pop('feature_labels', None)
+        if feature_labels is not None:
+            merged = {**(instance.feature_labels or {}), **feature_labels}
+            # A blank label resets the feature to its platform default name.
+            instance.feature_labels = {
+                k: v for k, v in merged.items()
+                if isinstance(v, str) and v.strip()
+            }
         auth_panel = validated_data.pop('auth_panel', None)
         if auth_panel is not None:
             instance.auth_panel = {**(instance.auth_panel or {}), **auth_panel}

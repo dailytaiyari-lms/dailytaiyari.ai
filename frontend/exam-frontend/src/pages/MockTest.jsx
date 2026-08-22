@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useQuery } from '@tanstack/react-query'
 import { quizService } from '../services/quizService'
 import { useAuthStore } from '../context/authStore'
+import { useFeatureLabel } from '../context/tenantStore'
 import Loading from '../components/common/Loading'
 import {
   Filter,
@@ -22,6 +23,7 @@ import {
 
 const MockTest = () => {
   const navigate = useNavigate()
+  const mockLabel = useFeatureLabel('mock_tests', 'Mock Tests')
   const { user, profile } = useAuthStore()
   const isAdmin = (user?.role || profile?.user?.role) === 'admin'
   const [showFilters, setShowFilters] = useState(false)
@@ -94,7 +96,7 @@ const MockTest = () => {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-display font-bold">Mock Tests</h1>
+          <h1 className="text-2xl font-display font-bold">{mockLabel}</h1>
           <p className="text-surface-500 mt-1">Practice with full-length exam simulations</p>
         </div>
         <div className="flex items-center gap-2">
@@ -104,7 +106,7 @@ const MockTest = () => {
               className="btn-secondary flex items-center gap-2"
             >
               <Settings2 size={18} />
-              Manage Mock Tests
+              Manage {mockLabel}
             </button>
           )}
           <button
@@ -129,7 +131,7 @@ const MockTest = () => {
             <ClipboardList size={28} />
           </div>
           <div>
-            <h3 className="font-semibold">About Mock Tests</h3>
+            <h3 className="font-semibold">About {mockLabel}</h3>
             <p className="text-sm text-surface-600 dark:text-surface-400 mt-1">
               Mock tests simulate the real exam environment with accurate timing, marking scheme,
               and question patterns. Complete analysis is provided after each attempt.

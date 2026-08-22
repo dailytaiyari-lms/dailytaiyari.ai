@@ -25,10 +25,15 @@ const MobileNav = () => {
   const location = useLocation()
   const { mobileMenuOpen, closeMobileMenu } = useAppStore()
   const isFeatureEnabled = useTenantStore((s) => s.isFeatureEnabled)
+  const featureLabel = useTenantStore((s) => s.featureLabel)
 
-  const visibleNavItems = navItems.filter(
-    (item) => !item.feature || isFeatureEnabled(item.feature)
-  )
+  const visibleNavItems = navItems
+    .filter((item) => !item.feature || isFeatureEnabled(item.feature))
+    .map((item) => (
+      item.feature
+        ? { ...item, label: featureLabel(item.feature, item.label) }
+        : item
+    ))
 
   return (
     <>
@@ -65,7 +70,7 @@ const MobileNav = () => {
                   }`}
               >
                 <span className="mb-0.5"><IconComponent size={20} /></span>
-                <span className="text-[10px] font-medium">{item.label}</span>
+                <span className="text-[10px] font-medium max-w-full truncate px-1">{item.label}</span>
                 {isActive && (
                   <motion.div
                     layoutId="mobileNavIndicator"

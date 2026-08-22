@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { useQuery } from '@tanstack/react-query'
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 import { analyticsService } from '../services/analyticsService'
+import { useFeatureLabel } from '../context/tenantStore'
 import ProgressRing from '../components/common/ProgressRing'
 import StatCard from '../components/common/StatCard'
 import Loading from '../components/common/Loading'
@@ -16,6 +17,7 @@ import {
 
 const Analytics = () => {
   const [timeRange, setTimeRange] = useState(7)
+  const analyticsLabel = useFeatureLabel('analytics', 'Performance Analytics')
 
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['dashboardStats'],
@@ -56,7 +58,7 @@ const Analytics = () => {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-display font-bold">Performance Analytics</h1>
+          <h1 className="text-2xl font-display font-bold">{analyticsLabel}</h1>
           <p className="text-surface-500 mt-1">Track your progress and identify areas to improve</p>
         </div>
 

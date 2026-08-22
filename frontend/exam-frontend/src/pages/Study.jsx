@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { useQuery } from '@tanstack/react-query'
 import { courseService } from '../services/courseService'
+import { useFeatureLabel } from '../context/tenantStore'
 import Loading from '../components/common/Loading'
 import CourseThumbnail from '../components/course/CourseThumbnail'
 import { GraduationCap, Clock, Compass, ArrowRight } from 'lucide-react'
@@ -9,6 +10,8 @@ import { stripHtml } from '../utils/html'
 
 const Study = () => {
   const navigate = useNavigate()
+  const studyLabel = useFeatureLabel('study', 'Study')
+  const coursesLabel = useFeatureLabel('courses', 'courses')
 
   const { data: studyData = { courses: [], pending: [] }, isLoading } = useQuery({
     queryKey: ['studyCourses'],
@@ -44,7 +47,7 @@ const Study = () => {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-display font-bold">Study</h1>
+          <h1 className="text-2xl font-display font-bold">{studyLabel}</h1>
           <p className="text-surface-500 mt-1">Your enrolled courses</p>
         </div>
         <button
@@ -53,7 +56,7 @@ const Study = () => {
           className="btn-secondary inline-flex items-center gap-2 text-sm"
         >
           <Compass size={18} />
-          Browse all courses
+          Browse all {coursesLabel.toLowerCase()}
         </button>
       </div>
 

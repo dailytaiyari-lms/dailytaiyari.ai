@@ -127,6 +127,12 @@ class Tenant(models.Model):
     # DailyTaiyari team" note. Missing keys are tenant-controlled as usual.
     feature_locks = models.JSONField(default=dict, blank=True)
 
+    # Per-tenant display-name overrides for features: {feature_key: label}.
+    # Feature *keys* stay canonical everywhere (toggles, routes, permissions);
+    # only the words shown to students/admins change. A missing or blank entry
+    # falls back to the platform default in ``FEATURE_CHOICES``.
+    feature_labels = models.JSONField(default=dict, blank=True)
+
     # ── Suspension (super-admin freeze) ────────────────────────────────────
     # A suspended tenant stays ``is_active`` (so its public config, and thus the
     # suspension notice, still loads) but every authenticated API call and login
@@ -241,6 +247,34 @@ class Tenant(models.Model):
     def locked_feature_keys(self):
         """List of feature keys currently locked by the super admin."""
         return list(self.get_feature_locks().keys())
+
+    # ── Feature naming ─────────────────────────────────────────────────────
+    #: Max length of a tenant's custom feature label (fits navigation UI).
+    FEATURE_LABEL_MAX_LENGTH = 40
+
+    def get_feature_label_overrides(self):
+        """Sanitized override map: only known keys with a non-empty label."""
+        overrides = self.feature_labels or {}
+        cleaned = {}
+        for key, label in overrides.items():
+            if key not in self.FEATURE_CHOICES:
+                continue
+            text = str(label or '').strip()[: self.FEATURE_LABEL_MAX_LENGTH]
+            if text and text != self.FEATURE_CHOICES[key]:
+                cleaned[key] = text
+        return cleaned
+
+    def get_feature_labels(self):
+        """Full effective label map: tenant override, else platform default."""
+        overrides = self.get_feature_label_overrides()
+        return {
+            key: overrides.get(key, default)
+            for key, default in self.FEATURE_CHOICES.items()
+        }
+
+    def feature_label(self, key):
+        """Effective label for a single feature key."""
+        return self.get_feature_labels().get(key, key)
 
     # ── Quotas & billing helpers (Phase 2) ─────────────────────────────────
     def usage_counts(self):
