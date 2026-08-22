@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { useQuery } from '@tanstack/react-query'
 import { gamificationService } from '../services/gamificationService'
+import { useFeatureLabel } from '../context/tenantStore'
 import { useAuthStore } from '../context/authStore'
 import LeaderboardRow from '../components/common/LeaderboardRow'
 import Loading from '../components/common/Loading'
@@ -30,6 +31,7 @@ const PodiumAvatar = ({ entry, className }) => (
 
 const Leaderboard = () => {
   const [period, setPeriod] = useState('daily')
+  const leaderboardLabel = useFeatureLabel('leaderboard', 'Leaderboard')
   const { profile } = useAuthStore()
 
   const { data: leaderboardData, isLoading } = useQuery({
@@ -58,7 +60,7 @@ const Leaderboard = () => {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-display font-bold flex items-center gap-2">
-            Leaderboard <Trophy className="text-warning-500" />
+            {leaderboardLabel} <Trophy className="text-warning-500" />
           </h1>
           <p className="text-surface-500 mt-1">Compete with other students</p>
         </div>

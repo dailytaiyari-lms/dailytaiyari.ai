@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '../context/authStore'
+import { useFeatureLabel } from '../context/tenantStore'
 import { analyticsService } from '../services/analyticsService'
 import { contentService } from '../services/contentService'
 import { quizService } from '../services/quizService'
@@ -127,6 +128,8 @@ const EnrolledCoursesSlider = ({ courses, navigate }) => {
 
 const Dashboard = () => {
   const navigate = useNavigate()
+  const studyLabel = useFeatureLabel('study', 'Study')
+  const mockLabel = useFeatureLabel('mock_tests', 'Mock Test')
   const { profile } = useAuthStore()
   const queryClient = useQueryClient()
   const selectedExamId = (typeof localStorage !== 'undefined' && localStorage.getItem('study:lastCourseId')) || ''
@@ -451,13 +454,13 @@ const Dashboard = () => {
             badge={dailyChallenge ? "NEW" : null}
           />
           <QuickActionButton
-            title="Resume Study"
+            title={`Resume ${studyLabel}`}
             subtitle={pendingItems[0]?.title || 'Start learning'}
             icon={<BookOpen className="text-primary-500" />}
             to="/study"
           />
           <QuickActionButton
-            title="Mock Test"
+            title={mockLabel}
             subtitle="Practice with full tests"
             icon={<FileText className="text-primary-500" />}
             to="/mock-test"

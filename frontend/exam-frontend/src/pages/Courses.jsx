@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { courseService } from '../services/courseService'
 import { contentBuilderService } from '../services/contentBuilderService'
 import { useAuthStore } from '../context/authStore'
+import { useFeatureLabel } from '../context/tenantStore'
 import Loading from '../components/common/Loading'
 import CourseThumbnail from '../components/course/CourseThumbnail'
 import { GraduationCap, CheckCircle2, Clock, ArrowRight, Settings2, Search, X, Award } from 'lucide-react'
@@ -72,6 +73,7 @@ const CoursePrice = ({ course }) => {
 
 const Courses = () => {
   const navigate = useNavigate()
+  const coursesLabel = useFeatureLabel('courses', 'Courses')
   const { user, profile, isAuthenticated } = useAuthStore()
   const role = user?.role || profile?.user?.role
   const isAdmin = role === 'admin'
@@ -149,7 +151,7 @@ const Courses = () => {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-display font-bold">Courses</h1>
+        <h1 className="text-2xl font-display font-bold">{coursesLabel}</h1>
         <p className="text-surface-500 mt-1">Explore all available courses and request enrollment</p>
       </div>
 

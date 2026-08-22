@@ -8,6 +8,7 @@ import {
   ChevronRight, X, Building2, MapPin, Flag, RotateCcw,
 } from 'lucide-react'
 import { jobAdminService } from '../services/jobService'
+import { useFeatureLabel } from '../context/tenantStore'
 import { courseService } from '../services/courseService'
 import { EMPLOYMENT_TYPES, WORK_MODES, CATEGORIES, categoryMeta } from '../components/jobs/jobShared'
 import RichMarkdownEditor from '../components/common/RichMarkdownEditor'
@@ -206,6 +207,7 @@ const JobFormModal = ({ initial, onClose, onSaved }) => {
 
 const JobManager = () => {
   const navigate = useNavigate()
+  const jobsLabel = useFeatureLabel('jobs', 'Jobs')
   const queryClient = useQueryClient()
   const [editing, setEditing] = useState(null) // job object or {} for new
   const [showForm, setShowForm] = useState(false)
@@ -237,7 +239,7 @@ const JobManager = () => {
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-display font-bold flex items-center gap-2">
-            <Briefcase className="w-6 h-6 text-primary-500" /> Jobs
+            <Briefcase className="w-6 h-6 text-primary-500" /> {jobsLabel}
           </h1>
           <p className="text-surface-500 text-sm mt-1">Create openings and manage your hiring pipeline.</p>
         </div>
