@@ -13,7 +13,6 @@ import {
   Sparkles,
   BadgePercent,
   Star,
-  ClipboardList,
   ChevronRight,
   TrendingUp,
   Clock,
@@ -124,22 +123,6 @@ const MockTest = () => {
         </div>
       </div>
 
-      {/* Info Banner */}
-      <div className="card p-5 bg-gradient-to-r from-accent-50 to-primary-50 dark:from-accent-900/20 dark:to-primary-900/20">
-        <div className="flex items-start gap-4">
-          <div className="w-12 h-12 rounded-xl bg-accent-100 dark:bg-accent-900/30 flex items-center justify-center text-accent-600">
-            <ClipboardList size={28} />
-          </div>
-          <div>
-            <h3 className="font-semibold">About {mockLabel}</h3>
-            <p className="text-sm text-surface-600 dark:text-surface-400 mt-1">
-              Mock tests simulate the real exam environment with accurate timing, marking scheme,
-              and question patterns. Complete analysis is provided after each attempt.
-            </p>
-          </div>
-        </div>
-      </div>
-
       {/* Filters Panel */}
       <AnimatePresence>
         {showFilters && (
@@ -159,7 +142,7 @@ const MockTest = () => {
                     type="text"
                     value={filters.search}
                     onChange={(e) => updateFilter('search', e.target.value)}
-                    placeholder="Search mock tests..."
+                    placeholder={`Search ${mockLabel.toLowerCase()}...`}
                     className="input pl-10 w-full"
                   />
                 </div>
@@ -335,7 +318,7 @@ const MockTest = () => {
 
       {/* Results Count */}
       <div className="text-sm text-surface-500">
-        {isLoading ? 'Loading...' : `${tests.length} mock tests found`}
+        {isLoading ? 'Loading...' : `${tests.length} found`}
       </div>
 
       {/* Mock Tests Grid */}
@@ -466,7 +449,7 @@ const MockTest = () => {
           <div className="flex justify-center mb-4 text-surface-300">
             <Search size={64} />
           </div>
-          <p className="text-surface-500">No mock tests found matching your filters</p>
+          <p className="text-surface-500">Nothing found matching your filters</p>
           <button onClick={clearFilters} className="btn-primary mt-4">
             Clear Filters
           </button>
