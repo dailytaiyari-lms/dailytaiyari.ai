@@ -110,6 +110,8 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
                 )
             cleaned[key] = label.strip()[: Tenant.FEATURE_LABEL_MAX_LENGTH]
         return cleaned
+
+    def validate_auth_panel(self, value):
         """Sanitise the login/register branding panel content.
 
         Accepts ``{heading, heading_highlight, subtitle, stats}``. Unknown keys
