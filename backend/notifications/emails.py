@@ -14,7 +14,7 @@ import re
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
-from django.utils.html import strip_tags
+from django.utils.html import escape, strip_tags
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +81,34 @@ def tenant_link(tenant, path):
 def _accent_for(tenant):
     theme = getattr(tenant, 'theme', None)
     return _THEME_ACCENTS.get(theme, _DEFAULT_ACCENT)
+
+
+def celebration_body_html(tenant, body_html, *, badge='🎂', banner_text=''):
+    """Wrap an email body in a festive, table-based celebration card.
+
+    Used by the birthday emails so they feel like a greeting card rather than a
+    transactional notice, while still rendering identically across Outlook /
+    Gmail (no flexbox, no background images, inline styles only). The accent
+    colour comes from the tenant theme so the card stays on brand.
+    """
+    accent = _accent_for(tenant)
+    banner = ''
+    if banner_text:
+        banner = (
+            '<p style="margin:12px 0 0; font-size:15px; font-weight:600; '
+            f'color:{accent}; letter-spacing:0.3px;">{escape(banner_text)}</p>'
+        )
+    return (
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        'style="margin:0 0 24px;">'
+        '<tr><td align="center" '
+        f'style="padding:28px 20px; border-radius:16px; background-color:#fff7ed; '
+        f'border:1px solid {accent}33;">'
+        f'<div style="font-size:52px; line-height:1;">{escape(badge)}</div>'
+        f'{banner}'
+        '</td></tr></table>'
+        f'{body_html or ""}'
+    )
 
 
 def send_branded_email(tenant, to, subject, heading, body_html,

@@ -15,6 +15,7 @@ import LandingBuilder from '../components/admin/LandingBuilder'
 import MarketingPromotions from '../components/admin/MarketingPromotions'
 import Announcements from '../components/admin/Announcements'
 import EmailSettings from '../components/admin/EmailSettings'
+import AdvancedSettings from '../components/admin/AdvancedSettings'
 import AIFeatures from '../components/admin/AIFeatures'
 import {
     Users,
@@ -2770,6 +2771,7 @@ const TenantSettings = () => {
                     { id: 'payments', label: 'Payments', icon: CreditCard },
                     { id: 'integrations', label: 'Integrations', icon: Video },
                     { id: 'email', label: 'Email & Notifications', icon: Mail },
+                    { id: 'advanced', label: 'Advanced', icon: Sparkles },
                 ].map((st) => {
                     const active = subTab === st.id
                     return (
@@ -2792,6 +2794,8 @@ const TenantSettings = () => {
                 <IntegrationSettings />
             ) : subTab === 'email' ? (
                 <EmailSettings settings={settings} />
+            ) : subTab === 'advanced' ? (
+                <AdvancedSettings settings={settings} />
             ) : (
             <div className="space-y-6">
             {/* Identity — name + tagline */}

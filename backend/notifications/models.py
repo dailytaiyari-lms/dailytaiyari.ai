@@ -23,6 +23,8 @@ class Notification(models.Model):
     TYPE_AI_ALLOWANCE = 'ai_allowance'
     TYPE_ACCOUNT_CREATED = 'account_created'
     TYPE_COURSE_ASSIGNED = 'course_assigned'
+    TYPE_BIRTHDAY = 'birthday'
+    TYPE_BIRTHDAY_DIGEST = 'birthday_digest'
     TYPE_CHOICES = [
         (TYPE_ENROLLMENT_REQUEST, 'Enrollment request'),
         (TYPE_ENROLLMENT_APPROVED, 'Enrollment approved'),
@@ -31,6 +33,8 @@ class Notification(models.Model):
         (TYPE_AI_ALLOWANCE, 'AI allowance'),
         (TYPE_ACCOUNT_CREATED, 'Account created'),
         (TYPE_COURSE_ASSIGNED, 'Course assigned'),
+        (TYPE_BIRTHDAY, 'Birthday greeting'),
+        (TYPE_BIRTHDAY_DIGEST, 'Birthday digest (to admins)'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -131,6 +135,9 @@ class TenantEmailTemplate(models.Model):
         ('account_created', 'Account created by admin (to student)'),
         ('course_assigned', 'Course assigned by admin (to student)'),
         ('credentials_reset', 'Password reset by admin (to student)'),
+        ('birthday_student', 'Birthday wish (to current student)'),
+        ('birthday_past_student', 'Birthday wish (to past student)'),
+        ('birthday_digest', "Today's birthdays (to admins)"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -151,3 +158,65 @@ class TenantEmailTemplate(models.Model):
 
     def __str__(self):
         return f'{self.get_type_display()} ({self.tenant_id})'
+
+
+class BirthdayGreetingLog(models.Model):
+    """One row per user per year a birthday greeting was delivered.
+
+    This is what makes the daily sweep idempotent: it can safely run many times
+    a day (cron *and* the lazy request-time trigger) without ever wishing the
+    same person twice. Keyed on ``year`` rather than a date so a 29 February
+    birthday greeted on 28 February in a non-leap year is still only greeted
+    once.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(
+        'core.Tenant', on_delete=models.CASCADE, related_name='birthday_greetings',
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name='birthday_greetings',
+    )
+    year = models.PositiveIntegerField()
+    # Snapshot of how the greeting was framed, useful for auditing the
+    # re-engagement funnel (current student vs. returning alumnus).
+    is_past_student = models.BooleanField(default=False)
+    emailed = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [('user', 'year')]
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['tenant', 'year'])]
+
+    def __str__(self):
+        return f'Birthday {self.year} → {self.user_id}'
+
+
+class BirthdayDispatchRun(models.Model):
+    """Marker that a tenant's birthday sweep already ran for a given date.
+
+    Claimed atomically (``get_or_create``) so the request-time trigger fires the
+    sweep exactly once per tenant per day even with concurrent web workers.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(
+        'core.Tenant', on_delete=models.CASCADE, related_name='birthday_runs',
+    )
+    run_date = models.DateField()
+    greeted_count = models.PositiveIntegerField(default=0)
+    attempts = models.PositiveIntegerField(default=0)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    # Stays null while a sweep is in flight or after it failed, so a later
+    # trigger can retry instead of the day being silently lost.
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [('tenant', 'run_date')]
+        ordering = ['-run_date']
+
+    def __str__(self):
+        return f'Birthday sweep {self.run_date} ({self.tenant_id})'

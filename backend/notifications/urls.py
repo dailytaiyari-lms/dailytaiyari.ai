@@ -3,6 +3,7 @@ from django.urls import path
 
 from .views import (
     AnnouncementListCreateView,
+    BirthdayCelebrationView,
     EmailTemplateDetailView,
     EmailTemplateListView,
     MarkAllReadView,
@@ -15,6 +16,7 @@ urlpatterns = [
     # --- Student/admin: their own notifications ---
     path('', NotificationListView.as_view(), name='notification-list'),
     path('unread-count/', UnreadCountView.as_view(), name='notification-unread-count'),
+    path('birthday/', BirthdayCelebrationView.as_view(), name='notification-birthday'),
     path('mark-all-read/', MarkAllReadView.as_view(), name='notification-mark-all-read'),
     path('<uuid:pk>/read/', MarkReadView.as_view(), name='notification-mark-read'),
 

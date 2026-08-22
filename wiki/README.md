@@ -12,6 +12,7 @@ Welcome to the DailyTaiyari developer documentation. This wiki covers the platfo
 | [Frontend Guide](./frontend-guide.md) | Tenant integration, API layer, and branding |
 | [Labs (Python Notebooks)](./notebooks-labs.md) | Gradeable notebooks: Pyodide kernel, sandboxed grading, AI generation |
 | [Live Classes & Zoom](./live-classes-zoom.md) | Zoom setup per tenant, meeting creation, attendance tracking & export |
+| [Birthday Greetings](./birthday-greetings.md) | Automated birthday celebrations, admin digests, and the Advanced settings switches |
 | [API Reference](./api-reference.md) | All API endpoints with request/response examples |
 | [Environment Variables](./environment-variables.md) | All configurable env vars for backend & frontend |
 | [Data Migration Guide](./data-migration.md) | How to migrate data between tenants or backfill |

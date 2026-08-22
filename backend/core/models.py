@@ -30,6 +30,45 @@ class Tenant(models.Model):
         'jobs': 'Job Portal',
     }
 
+    # Canonical list of "advanced" behaviour switches a tenant admin controls
+    # from Settings → Advanced. Unlike FEATURE_CHOICES (which show/hide whole
+    # product areas in the navigation), these tune how the platform behaves in
+    # the background — currently the automated birthday greetings. Each entry is
+    # {label, description, default}; a missing key falls back to its default so
+    # newly introduced switches take effect without a data migration.
+    ADVANCED_SETTING_CHOICES = {
+        'birthday_greetings': {
+            'label': 'Birthday greetings',
+            'description': 'Automatically wish students a happy birthday with a '
+                           'celebratory in-app message on their special day.',
+            'default': True,
+        },
+        'birthday_email_student': {
+            'label': 'Email the birthday wish to students',
+            'description': 'Also send the student a branded birthday email '
+                           'carrying your logo and institution name.',
+            'default': True,
+        },
+        'birthday_include_past_students': {
+            'label': 'Include past students',
+            'description': 'Wish former students too — a warm, natural moment to '
+                           'invite them back to your academy.',
+            'default': True,
+        },
+        'birthday_notify_admins': {
+            'label': "Notify admins in-app",
+            'description': "Give admins a daily in-app digest of today's "
+                           'birthdays so they can reach out personally.',
+            'default': True,
+        },
+        'birthday_email_admins': {
+            'label': 'Email the birthday digest to admins',
+            'description': "Send today's birthday list to your notification "
+                           'email address as well.',
+            'default': False,
+        },
+    }
+
     # Canonical list of selectable colour themes. Keys are stable identifiers the
     # frontend maps to a full colour palette; values are the human-readable
     # labels shown in the tenant-admin settings UI. Keep in sync with the
@@ -132,6 +171,11 @@ class Tenant(models.Model):
     # only the words shown to students/admins change. A missing or blank entry
     # falls back to the platform default in ``FEATURE_CHOICES``.
     feature_labels = models.JSONField(default=dict, blank=True)
+
+    # Per-tenant advanced behaviour switches: {setting_key: bool}. Missing keys
+    # fall back to the declared default in ``ADVANCED_SETTING_CHOICES``, so a new
+    # switch rolls out without touching existing rows.
+    advanced_settings = models.JSONField(default=dict, blank=True)
 
     # ── Suspension (super-admin freeze) ────────────────────────────────────
     # A suspended tenant stays ``is_active`` (so its public config, and thus the
@@ -275,6 +319,19 @@ class Tenant(models.Model):
     def feature_label(self, key):
         """Effective label for a single feature key."""
         return self.get_feature_labels().get(key, key)
+
+    # ── Advanced behaviour switches ────────────────────────────────────────
+    def get_advanced_settings(self):
+        """Full effective map of advanced switches, defaults filled in."""
+        stored = self.advanced_settings or {}
+        return {
+            key: bool(stored.get(key, spec['default']))
+            for key, spec in self.ADVANCED_SETTING_CHOICES.items()
+        }
+
+    def advanced_setting(self, key):
+        """Effective value of one advanced switch (False for unknown keys)."""
+        return self.get_advanced_settings().get(key, False)
 
     # ── Quotas & billing helpers (Phase 2) ─────────────────────────────────
     def usage_counts(self):
