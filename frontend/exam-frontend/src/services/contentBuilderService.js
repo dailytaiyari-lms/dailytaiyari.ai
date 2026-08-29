@@ -45,6 +45,8 @@ export const contentBuilderService = {
   createSubject: async (data) => (await api.post('/courses/admin/subjects/', data)).data,
   updateSubject: async (id, data) => (await api.patch(`/courses/admin/subjects/${id}/`, data)).data,
   deleteSubject: async (id) => api.delete(`/courses/admin/subjects/${id}/`),
+  reorderSubjects: async (ids) =>
+    (await api.post('/courses/admin/subjects/reorder/', { order: ids })).data,
 
   // ---- Chapters ----
   getChapters: async (subjectId) =>
@@ -52,6 +54,8 @@ export const contentBuilderService = {
   createChapter: async (data) => (await api.post('/courses/admin/chapters/', data)).data,
   updateChapter: async (id, data) => (await api.patch(`/courses/admin/chapters/${id}/`, data)).data,
   deleteChapter: async (id) => api.delete(`/courses/admin/chapters/${id}/`),
+  reorderChapters: async (ids) =>
+    (await api.post('/courses/admin/chapters/reorder/', { order: ids })).data,
 
   // ---- Topics ----
   getTopics: async ({ chapterId, subjectId }) =>
@@ -63,6 +67,13 @@ export const contentBuilderService = {
   createTopic: async (data) => (await api.post('/courses/admin/topics/', data)).data,
   updateTopic: async (id, data) => (await api.patch(`/courses/admin/topics/${id}/`, data)).data,
   deleteTopic: async (id) => api.delete(`/courses/admin/topics/${id}/`),
+  // Reordering inside a chapter resequences the ChapterTopic links, which is
+  // the sequence students actually follow.
+  reorderTopics: async (ids, chapterId) =>
+    (await api.post('/courses/admin/topics/reorder/', {
+      order: ids,
+      ...(chapterId ? { chapter: chapterId } : {}),
+    })).data,
 
   // ---- Content ----
   getContents: async (topicId) =>
