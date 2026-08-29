@@ -131,6 +131,41 @@ export const DragHandle = ({ className = '', size = 14, title = 'Drag to reorder
     </span>
 )
 
+/**
+ * Inline status shown next to a drag-sortable list: hints how to reorder, then
+ * confirms the save in place so the change never looks unsaved.
+ */
+export const ReorderStatus = ({ saving, saved, hint = 'Drag the grip handles to reorder', className = '' }) => {
+    if (saving) {
+        return (
+            <span className={`inline-flex items-center gap-1 text-[10px] font-medium text-primary-600 dark:text-primary-400 ${className}`}>
+                <Loader2 className="w-3 h-3 animate-spin" /> Saving order…
+            </span>
+        )
+    }
+    if (saved) {
+        return (
+            <span className={`inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400 ${className}`}>
+                <CheckCircle2 className="w-3 h-3" /> Order saved
+            </span>
+        )
+    }
+    return <span className={`text-[10px] text-surface-400 ${className}`}>{hint}</span>
+}
+
+/** Turn a flag on for a moment (used to flash "Order saved" after a drop). */
+export const useSavedFlash = (ms = 2200) => {
+    const [on, setOn] = useState(false)
+    const timer = useRef(null)
+    useEffect(() => () => clearTimeout(timer.current), [])
+    const flash = () => {
+        setOn(true)
+        clearTimeout(timer.current)
+        timer.current = setTimeout(() => setOn(false), ms)
+    }
+    return [on, flash]
+}
+
 /** Read a File/Blob into a base64 data URL. */
 export const fileToDataUrl = (file) =>
     new Promise((resolve, reject) => {

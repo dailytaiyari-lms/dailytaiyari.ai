@@ -17,7 +17,7 @@ import courseAiService from '../services/courseAiService'
 import { useAuthStore } from '../context/authStore'
 import {
     EntityModal, ConfirmDialog, RowActions, QuestionModal, formatApiError, QTYPE_LABEL,
-    useDragReorder, DragHandle,
+    useDragReorder, DragHandle, ReorderStatus, useSavedFlash,
 } from '../components/admin/builderShared'
 import TopicStudio from '../components/admin/aiStudio/TopicStudio'
 import PendingAiRows from '../components/admin/aiStudio/PendingAiRows'
@@ -273,13 +273,18 @@ const TopicList = ({ chapter, subjectId, subjectName, sel, onSelectTopic, openMo
         queryFn: () => svc.getTopics({ chapterId: chapter.id }),
     })
 
+    const [savedFlash, flashSaved] = useSavedFlash()
     const reorderMutation = useMutation({
         mutationFn: (ids) => svc.reorderTopics(ids, chapter.id),
         onError: (err) => {
             toast.error(formatApiError(err, 'Could not save the new topic order'))
             queryClient.invalidateQueries({ queryKey: ['cb-topics', chapter.id] })
         },
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['cb-topics', chapter.id] }),
+        onSuccess: () => {
+            toast.success('Topic order saved', { id: `reorder-topics-${chapter.id}` })
+            flashSaved()
+            queryClient.invalidateQueries({ queryKey: ['cb-topics', chapter.id] })
+        },
     })
 
     const { list, draggingId, rowProps, handleProps } = useDragReorder(topics, (ids) => reorderMutation.mutate(ids))
@@ -319,12 +324,17 @@ const TopicList = ({ chapter, subjectId, subjectName, sel, onSelectTopic, openMo
                     )
                 })
             )}
-            <button
-                onClick={() => openModal('topic', null, { subjectId, chapterId: chapter.id })}
-                className="ml-2 mt-0.5 text-[11px] font-semibold text-primary-600 hover:text-primary-700 inline-flex items-center gap-1"
-            >
-                <Plus className="w-3 h-3" /> Add topic
-            </button>
+            <div className="ml-2 mt-0.5 flex items-center gap-2">
+                <button
+                    onClick={() => openModal('topic', null, { subjectId, chapterId: chapter.id })}
+                    className="text-[11px] font-semibold text-primary-600 hover:text-primary-700 inline-flex items-center gap-1"
+                >
+                    <Plus className="w-3 h-3" /> Add topic
+                </button>
+                {(reorderMutation.isPending || savedFlash) && (
+                    <ReorderStatus saving={reorderMutation.isPending} saved={savedFlash} />
+                )}
+            </div>
         </div>
     )
 }
@@ -340,13 +350,18 @@ const ChapterList = ({ subject, sel, onSelectTopic, openModal, askDelete }) => {
         queryFn: () => svc.getChapters(subject.id),
     })
 
+    const [savedFlash, flashSaved] = useSavedFlash()
     const reorderMutation = useMutation({
         mutationFn: (ids) => svc.reorderChapters(ids),
         onError: (err) => {
             toast.error(formatApiError(err, 'Could not save the new chapter order'))
             queryClient.invalidateQueries({ queryKey: ['cb-chapters', subject.id] })
         },
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['cb-chapters', subject.id] }),
+        onSuccess: () => {
+            toast.success('Chapter order saved', { id: `reorder-chapters-${subject.id}` })
+            flashSaved()
+            queryClient.invalidateQueries({ queryKey: ['cb-chapters', subject.id] })
+        },
     })
 
     const { list, draggingId, rowProps, handleProps } = useDragReorder(chapters, (ids) => reorderMutation.mutate(ids))
@@ -388,12 +403,17 @@ const ChapterList = ({ subject, sel, onSelectTopic, openModal, askDelete }) => {
                     </div>
                 ))
             )}
-            <button
-                onClick={() => openModal('chapter', null, { subjectId: subject.id })}
-                className="ml-1 mt-0.5 text-[11px] font-semibold text-primary-600 hover:text-primary-700 inline-flex items-center gap-1"
-            >
-                <Plus className="w-3 h-3" /> Add chapter
-            </button>
+            <div className="ml-1 mt-0.5 flex items-center gap-2">
+                <button
+                    onClick={() => openModal('chapter', null, { subjectId: subject.id })}
+                    className="text-[11px] font-semibold text-primary-600 hover:text-primary-700 inline-flex items-center gap-1"
+                >
+                    <Plus className="w-3 h-3" /> Add chapter
+                </button>
+                {(reorderMutation.isPending || savedFlash) && (
+                    <ReorderStatus saving={reorderMutation.isPending} saved={savedFlash} />
+                )}
+            </div>
         </div>
     )
 }
@@ -409,13 +429,18 @@ const Navigator = ({ courseId, sel, onSelectTopic, openModal, askDelete }) => {
         queryFn: () => svc.getSubjects(courseId),
     })
 
+    const [savedFlash, flashSaved] = useSavedFlash()
     const reorderMutation = useMutation({
         mutationFn: (ids) => svc.reorderSubjects(ids),
         onError: (err) => {
             toast.error(formatApiError(err, 'Could not save the new subject order'))
             queryClient.invalidateQueries({ queryKey: ['cb-subjects', courseId] })
         },
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['cb-subjects', courseId] }),
+        onSuccess: () => {
+            toast.success('Subject order saved', { id: `reorder-subjects-${courseId}` })
+            flashSaved()
+            queryClient.invalidateQueries({ queryKey: ['cb-subjects', courseId] })
+        },
     })
 
     const { list, draggingId, rowProps, handleProps } = useDragReorder(subjects, (ids) => reorderMutation.mutate(ids))
@@ -438,7 +463,9 @@ const Navigator = ({ courseId, sel, onSelectTopic, openModal, askDelete }) => {
                 <EmptyHint icon={Layers} text="No subjects yet." sub="Start by adding a subject." />
             ) : (
                 <div className="space-y-0.5">
-                    <p className="px-1 pb-1 text-[10px] text-surface-400">Drag the grip handles to reorder.</p>
+                    <div className="px-1 pb-1">
+                        <ReorderStatus saving={reorderMutation.isPending} saved={savedFlash} />
+                    </div>
                     {list.map((sub) => (
                         <div key={sub.id} {...rowProps(sub.id)}>
                             <div className={`group flex items-center justify-between gap-1 px-1 py-2 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors ${draggingId === sub.id ? 'opacity-50 ring-1 ring-primary-300' : ''}`}>
