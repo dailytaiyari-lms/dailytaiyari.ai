@@ -17,6 +17,7 @@ import courseAiService from '../services/courseAiService'
 import { useAuthStore } from '../context/authStore'
 import {
     EntityModal, ConfirmDialog, RowActions, QuestionModal, formatApiError, QTYPE_LABEL,
+    useDragReorder, DragHandle,
 } from '../components/admin/builderShared'
 import TopicStudio from '../components/admin/aiStudio/TopicStudio'
 import PendingAiRows from '../components/admin/aiStudio/PendingAiRows'
@@ -266,27 +267,45 @@ const QuizSection = ({ topic, subjectId, openModal, askDelete }) => {
  * Topic list inside a chapter (in the left navigator)
  * ========================================================================= */
 const TopicList = ({ chapter, subjectId, subjectName, sel, onSelectTopic, openModal, askDelete }) => {
+    const queryClient = useQueryClient()
     const { data: topics = [], isLoading } = useQuery({
         queryKey: ['cb-topics', chapter.id],
         queryFn: () => svc.getTopics({ chapterId: chapter.id }),
     })
 
+    const reorderMutation = useMutation({
+        mutationFn: (ids) => svc.reorderTopics(ids, chapter.id),
+        onError: (err) => {
+            toast.error(formatApiError(err, 'Could not save the new topic order'))
+            queryClient.invalidateQueries({ queryKey: ['cb-topics', chapter.id] })
+        },
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['cb-topics', chapter.id] }),
+    })
+
+    const { list, draggingId, rowProps, handleProps } = useDragReorder(topics, (ids) => reorderMutation.mutate(ids))
+
     return (
         <div className="pl-4 py-1 space-y-0.5">
             {isLoading ? (
                 <div className="py-2 flex justify-center"><Loader2 className="w-3.5 h-3.5 animate-spin text-surface-400" /></div>
-            ) : topics.length === 0 ? (
+            ) : list.length === 0 ? (
                 <p className="text-[11px] text-surface-400 italic px-2 py-1">No topics yet</p>
             ) : (
-                topics.map((tp) => {
+                list.map((tp) => {
                     const active = sel.topicId === tp.id
                     return (
                         <div
                             key={tp.id}
-                            className={`group flex items-center justify-between gap-1 pl-2 pr-1 py-1.5 rounded-lg cursor-pointer transition-colors ${active ? 'bg-primary-50 dark:bg-primary-900/25 text-primary-700 dark:text-primary-300' : 'hover:bg-surface-100 dark:hover:bg-surface-800'}`}
+                            {...rowProps(tp.id)}
+                            className={`group flex items-center justify-between gap-1 pl-1 pr-1 py-1.5 rounded-lg cursor-pointer transition-colors ${draggingId === tp.id ? 'opacity-50 ring-1 ring-primary-300' : ''} ${active ? 'bg-primary-50 dark:bg-primary-900/25 text-primary-700 dark:text-primary-300' : 'hover:bg-surface-100 dark:hover:bg-surface-800'}`}
                             onClick={() => onSelectTopic(tp, subjectId, chapter.id, subjectName)}
                         >
-                            <span className="flex items-center gap-1.5 min-w-0 text-sm">
+                            <span className="flex items-center gap-1 min-w-0 text-sm">
+                                <DragHandle
+                                    {...handleProps(tp.id)}
+                                    size={12}
+                                    className="opacity-0 group-hover:opacity-100 transition-opacity"
+                                />
                                 <FileText className={`w-3.5 h-3.5 shrink-0 ${active ? 'text-primary-500' : 'text-surface-400'}`} />
                                 <span className="truncate">{tp.name}</span>
                             </span>
@@ -315,21 +334,38 @@ const TopicList = ({ chapter, subjectId, subjectName, sel, onSelectTopic, openMo
  * ========================================================================= */
 const ChapterList = ({ subject, sel, onSelectTopic, openModal, askDelete }) => {
     const [open, setOpen] = useState({})
+    const queryClient = useQueryClient()
     const { data: chapters = [], isLoading } = useQuery({
         queryKey: ['cb-chapters', subject.id],
         queryFn: () => svc.getChapters(subject.id),
     })
 
+    const reorderMutation = useMutation({
+        mutationFn: (ids) => svc.reorderChapters(ids),
+        onError: (err) => {
+            toast.error(formatApiError(err, 'Could not save the new chapter order'))
+            queryClient.invalidateQueries({ queryKey: ['cb-chapters', subject.id] })
+        },
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['cb-chapters', subject.id] }),
+    })
+
+    const { list, draggingId, rowProps, handleProps } = useDragReorder(chapters, (ids) => reorderMutation.mutate(ids))
+
     return (
         <div className="pl-4 py-1 space-y-0.5">
             {isLoading ? (
                 <div className="py-2 flex justify-center"><Loader2 className="w-3.5 h-3.5 animate-spin text-surface-400" /></div>
-            ) : chapters.length === 0 ? (
+            ) : list.length === 0 ? (
                 <p className="text-[11px] text-surface-400 italic px-2 py-1">No chapters yet</p>
             ) : (
-                chapters.map((ch) => (
-                    <div key={ch.id}>
-                        <div className="group flex items-center justify-between gap-1 pl-1 pr-1 py-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors">
+                list.map((ch) => (
+                    <div key={ch.id} {...rowProps(ch.id)}>
+                        <div className={`group flex items-center justify-between gap-1 pl-1 pr-1 py-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors ${draggingId === ch.id ? 'opacity-50 ring-1 ring-primary-300' : ''}`}>
+                            <DragHandle
+                                {...handleProps(ch.id)}
+                                size={12}
+                                className="opacity-0 group-hover:opacity-100 transition-opacity"
+                            />
                             <button onClick={() => setOpen((p) => ({ ...p, [ch.id]: !p[ch.id] }))} className="flex items-center gap-1.5 min-w-0 text-sm text-left flex-1">
                                 {open[ch.id] ? <ChevronDown className="w-3.5 h-3.5 text-surface-400 shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 text-surface-400 shrink-0" />}
                                 <Book className="w-3.5 h-3.5 text-surface-400 shrink-0" />
@@ -367,10 +403,22 @@ const ChapterList = ({ subject, sel, onSelectTopic, openModal, askDelete }) => {
  * ========================================================================= */
 const Navigator = ({ courseId, sel, onSelectTopic, openModal, askDelete }) => {
     const [open, setOpen] = useState({})
+    const queryClient = useQueryClient()
     const { data: subjects = [], isLoading } = useQuery({
         queryKey: ['cb-subjects', courseId],
         queryFn: () => svc.getSubjects(courseId),
     })
+
+    const reorderMutation = useMutation({
+        mutationFn: (ids) => svc.reorderSubjects(ids),
+        onError: (err) => {
+            toast.error(formatApiError(err, 'Could not save the new subject order'))
+            queryClient.invalidateQueries({ queryKey: ['cb-subjects', courseId] })
+        },
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['cb-subjects', courseId] }),
+    })
+
+    const { list, draggingId, rowProps, handleProps } = useDragReorder(subjects, (ids) => reorderMutation.mutate(ids))
 
     return (
         <div className="card p-3 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
@@ -386,13 +434,18 @@ const Navigator = ({ courseId, sel, onSelectTopic, openModal, askDelete }) => {
 
             {isLoading ? (
                 <div className="py-8 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-surface-400" /></div>
-            ) : subjects.length === 0 ? (
+            ) : list.length === 0 ? (
                 <EmptyHint icon={Layers} text="No subjects yet." sub="Start by adding a subject." />
             ) : (
                 <div className="space-y-0.5">
-                    {subjects.map((sub) => (
-                        <div key={sub.id}>
-                            <div className="group flex items-center justify-between gap-1 px-1 py-2 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors">
+                    <p className="px-1 pb-1 text-[10px] text-surface-400">Drag the grip handles to reorder.</p>
+                    {list.map((sub) => (
+                        <div key={sub.id} {...rowProps(sub.id)}>
+                            <div className={`group flex items-center justify-between gap-1 px-1 py-2 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors ${draggingId === sub.id ? 'opacity-50 ring-1 ring-primary-300' : ''}`}>
+                                <DragHandle
+                                    {...handleProps(sub.id)}
+                                    className="opacity-0 group-hover:opacity-100 transition-opacity"
+                                />
                                 <button onClick={() => setOpen((p) => ({ ...p, [sub.id]: !p[sub.id] }))} className="flex items-center gap-2 min-w-0 text-left flex-1">
                                     {open[sub.id] ? <ChevronDown className="w-4 h-4 text-surface-400 shrink-0" /> : <ChevronRight className="w-4 h-4 text-surface-400 shrink-0" />}
                                     <span className="w-6 h-6 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: `${sub.color || '#10B981'}22` }}>
