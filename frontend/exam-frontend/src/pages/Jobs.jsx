@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import {
-  Briefcase, MapPin, Building2, ExternalLink, Clock, GraduationCap, Code2,
+  Briefcase, MapPin, Building2, ExternalLink, Clock, GraduationCap,
   ArrowRight, ClipboardList, Search, SlidersHorizontal, X,
 } from 'lucide-react'
 import { jobService } from '../services/jobService'
@@ -20,7 +20,7 @@ const TABS = [
   { id: 'mine', label: 'My Applications' },
 ]
 
-const CATEGORY_ICONS = { Briefcase, GraduationCap, Code2 }
+const CATEGORY_ICONS = { Briefcase, GraduationCap }
 
 const HIRING_TYPES = [
   { value: 'internal', label: 'Internal' },
@@ -180,7 +180,7 @@ const Jobs = () => {
           </div>
           <div>
             <h1 className="text-2xl font-display font-bold text-white">{jobsLabel}</h1>
-            <p className="text-white/80 text-sm">Explore jobs, internships & hackathons, and track your applications</p>
+            <p className="text-white/80 text-sm">Explore jobs and internships, and track your applications</p>
           </div>
         </div>
       </div>
