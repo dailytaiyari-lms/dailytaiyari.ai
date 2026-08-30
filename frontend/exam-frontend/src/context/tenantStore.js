@@ -16,6 +16,7 @@ export const FEATURE_KEYS = [
     'leaderboard',
     'ai',
     'jobs',
+    'hackathons',
 ];
 
 // Platform default display names. A tenant admin may override any of these from
@@ -32,6 +33,7 @@ export const DEFAULT_FEATURE_LABELS = {
     leaderboard: 'Leaderboard',
     ai: 'AI Learning & Doubt Solver',
     jobs: 'Job Portal',
+    hackathons: 'Hackathons',
 };
 
 // Swap the document <link rel="icon"> to the tenant's favicon at runtime so the

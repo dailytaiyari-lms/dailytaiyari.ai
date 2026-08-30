@@ -36,6 +36,7 @@ urlpatterns = [
     path('api/v1/tenant-admin/ai/', include('chatbot.admin_urls')),
     path('api/v1/tenant-admin/course-ai/', include('coursegen.urls')),
     path('api/v1/tenant-admin/mock-ai/', include('mockgen.urls')),
+    path('api/v1/tenant-admin/hackathon-ai/', include('hackathons.ai_urls')),
     path('api/v1/auth/', include('users.urls')),
     path('api/v1/courses/', include('exams.urls')),
     path('api/v1/content/', include('content.urls')),
@@ -53,6 +54,7 @@ urlpatterns = [
     path('api/v1/marketing/', include('marketing.urls')),
     path('api/v1/notifications/', include('notifications.urls')),
     path('api/v1/notebooks/', include('notebooks.urls')),
+    path('api/v1/hackathons/', include('hackathons.urls')),
     
     # API Documentation
     path('api/docs/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),

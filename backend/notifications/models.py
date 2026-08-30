@@ -25,6 +25,11 @@ class Notification(models.Model):
     TYPE_COURSE_ASSIGNED = 'course_assigned'
     TYPE_BIRTHDAY = 'birthday'
     TYPE_BIRTHDAY_DIGEST = 'birthday_digest'
+    TYPE_HACKATHON_REGISTERED = 'hackathon_registered'
+    TYPE_HACKATHON_STAGE = 'hackathon_stage'
+    TYPE_HACKATHON_RESULT = 'hackathon_result'
+    TYPE_HACKATHON_WINNER = 'hackathon_winner'
+    TYPE_HACKATHON_ANNOUNCEMENT = 'hackathon_announcement'
     TYPE_CHOICES = [
         (TYPE_ENROLLMENT_REQUEST, 'Enrollment request'),
         (TYPE_ENROLLMENT_APPROVED, 'Enrollment approved'),
@@ -35,6 +40,11 @@ class Notification(models.Model):
         (TYPE_COURSE_ASSIGNED, 'Course assigned'),
         (TYPE_BIRTHDAY, 'Birthday greeting'),
         (TYPE_BIRTHDAY_DIGEST, 'Birthday digest (to admins)'),
+        (TYPE_HACKATHON_REGISTERED, 'Hackathon registration'),
+        (TYPE_HACKATHON_STAGE, 'Hackathon round update'),
+        (TYPE_HACKATHON_RESULT, 'Hackathon result'),
+        (TYPE_HACKATHON_WINNER, 'Hackathon winner'),
+        (TYPE_HACKATHON_ANNOUNCEMENT, 'Hackathon announcement'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

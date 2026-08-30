@@ -17,6 +17,7 @@ import {
   Settings,
   Users,
   Briefcase,
+  Rocket,
   Bookmark
 } from 'lucide-react'
 
@@ -35,6 +36,7 @@ const navItems = [
   { path: '/pyp', label: 'PYQ Papers', icon: FileText, feature: 'pyq', renamable: true },
   { path: '/community', label: 'Community', icon: Users, feature: 'community', renamable: true },
   { path: '/jobs', label: 'Careers', icon: Briefcase, feature: 'jobs', renamable: true },
+  { path: '/hackathons', label: 'Hackathons', icon: Rocket, feature: 'hackathons', renamable: true },
   { path: '/analytics', label: 'Analytics', icon: BarChart3, feature: 'analytics', renamable: true },
   { path: '/leaderboard', label: 'Leaderboard', icon: Trophy, feature: 'leaderboard', renamable: true },
   { path: '/doubt-solver', label: 'AI Doubt Solver', icon: MessageSquareText, feature: 'ai', renamable: true },
