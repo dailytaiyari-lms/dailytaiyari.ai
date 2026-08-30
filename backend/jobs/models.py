@@ -27,7 +27,6 @@ class Job(TimeStampedModel):
     CATEGORY_CHOICES = [
         ('job', 'Job'),
         ('internship', 'Internship'),
-        ('hackathon', 'Hackathon'),
     ]
     EMPLOYMENT_TYPES = [
         ('full_time', 'Full-time'),

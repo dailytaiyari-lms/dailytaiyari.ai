@@ -30,7 +30,6 @@ export const EMPLOYMENT_TYPES = [
 export const CATEGORIES = [
   { value: 'job', label: 'Job', icon: 'Briefcase', tint: 'bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-300' },
   { value: 'internship', label: 'Internship', icon: 'GraduationCap', tint: 'bg-cyan-50 text-cyan-700 dark:bg-cyan-900/20 dark:text-cyan-300' },
-  { value: 'hackathon', label: 'Hackathon', icon: 'Code2', tint: 'bg-fuchsia-50 text-fuchsia-700 dark:bg-fuchsia-900/20 dark:text-fuchsia-300' },
 ]
 
 export const categoryMeta = (category) =>
