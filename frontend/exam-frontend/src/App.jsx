@@ -49,6 +49,13 @@ import Community from './pages/Community'
 import CommunityPost from './pages/CommunityPost'
 import Jobs from './pages/Jobs'
 import JobDetail from './pages/JobDetail'
+import Hackathons from './pages/Hackathons'
+import HackathonDetail from './pages/HackathonDetail'
+import HackathonStage from './pages/HackathonStage'
+import HackathonManager from './pages/HackathonManager'
+import HackathonBuilder from './pages/HackathonBuilder'
+import HackathonParticipants from './pages/HackathonParticipants'
+import AIHackathonStudioPage from './pages/AIHackathonStudioPage'
 import JobManager from './pages/JobManager'
 import JobApplicants from './pages/JobApplicants'
 import JobApplicationReview from './pages/JobApplicationReview'
@@ -288,6 +295,10 @@ function App() {
           <Route path="/jobs" element={<FeatureRoute feature="jobs"><Jobs /></FeatureRoute>} />
           <Route path="/jobs/:jobId" element={<FeatureRoute feature="jobs"><JobDetail /></FeatureRoute>} />
 
+          {/* Hackathons (students) — the listing lives in the app shell; each
+              hackathon opens as its own full-page experience further below. */}
+          <Route path="/hackathons" element={<FeatureRoute feature="hackathons"><Hackathons /></FeatureRoute>} />
+
           {/* Admin Job Portal & Mock Tests now live under the full-page Admin View below */}
         </Route>
 
@@ -316,11 +327,24 @@ function App() {
           <Route path="/admin/mock-tests/:testId/submissions" element={<MockTestSubmissions />} />
           <Route path="/admin/mock-tests/:testId/submissions/:attemptId" element={<MockTestSubmissionReview />} />
           <Route path="/admin/mock-tests/:testId" element={<MockTestBuilder />} />
+
+          {/* Hackathons (admin) */}
+          <Route path="/admin/hackathons" element={<HackathonManager />} />
+          <Route path="/admin/hackathons/ai" element={<AIHackathonStudioPage />} />
+          <Route path="/admin/hackathons/:hackathonId" element={<HackathonBuilder />} />
+          <Route path="/admin/hackathons/:hackathonId/participants" element={<HackathonParticipants />} />
         </Route>
 
 
         {/* Public standalone pages (no app shell, no login required) */}
         <Route path="/" element={<RootRoute />} />
+        {/* A hackathon is a destination of its own: full-bleed page, no sidebar.
+            Readable by anyone; registering and entering rounds require login. */}
+        <Route path="/hackathons/:hackathonId" element={<HackathonDetail />} />
+        <Route
+          path="/hackathons/:hackathonId/rounds/:stageId"
+          element={<ProtectedRoute><HackathonStage /></ProtectedRoute>}
+        />
         <Route path="/refund-policy" element={<LegalPage slug="refund-policy" />} />
         <Route path="/privacy-policy" element={<LegalPage slug="privacy-policy" />} />
         <Route path="/terms" element={<LegalPage slug="terms" />} />

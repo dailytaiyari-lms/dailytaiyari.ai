@@ -28,6 +28,7 @@ class Tenant(models.Model):
         'leaderboard': 'Leaderboard',
         'ai': 'AI Learning & Doubt Solver',
         'jobs': 'Job Portal',
+        'hackathons': 'Hackathons',
     }
 
     # Canonical list of "advanced" behaviour switches a tenant admin controls

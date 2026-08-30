@@ -77,6 +77,7 @@ INSTALLED_APPS = [
     'marketing.apps.MarketingConfig',
     'notifications.apps.NotificationsConfig',
     'notebooks.apps.NotebooksConfig',
+    'hackathons.apps.HackathonsConfig',
 ]
 
 SILENCED_SYSTEM_CHECKS = ["auth.E003"]
