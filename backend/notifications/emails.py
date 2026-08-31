@@ -10,6 +10,7 @@ fragment (``body_html``) plus an optional CTA button.
 """
 import logging
 import re
+from email.utils import formataddr, parseaddr
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
@@ -76,6 +77,22 @@ def tenant_link(tenant, path):
     if path.startswith('http://') or path.startswith('https://'):
         return path
     return f"{origin}/{path.lstrip('/')}" if origin else path
+
+
+def from_address(tenant):
+    """Sender address showing the tenant's name as the display name.
+
+    The mailbox itself must stay on the platform's verified sending domain
+    (Azure Communication Services only signs that domain), so only the display
+    name is tenant-specific: ``CodeMinors <DoNotReply@dailytaiyari.in>``.
+    Falls back to the configured address unchanged when no tenant name exists.
+    """
+    configured = getattr(settings, 'DEFAULT_FROM_EMAIL', '') or ''
+    default_name, addr = parseaddr(configured)
+    if not addr:
+        return configured or None
+    display = (getattr(tenant, 'name', '') or '').strip() or default_name
+    return formataddr((display, addr)) if display else addr
 
 
 def _accent_for(tenant):
@@ -152,7 +169,7 @@ def send_branded_email(tenant, to, subject, heading, body_html,
         text_parts += ['', f'{cta_text or "Open"}: {cta_url}']
     text_body = '\n'.join(p for p in text_parts if p is not None).strip()
 
-    from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None)
+    from_email = from_address(tenant)
     try:
         msg = EmailMultiAlternatives(
             subject=subject,
