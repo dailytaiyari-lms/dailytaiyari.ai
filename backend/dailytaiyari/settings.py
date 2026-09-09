@@ -437,6 +437,17 @@ COURSEGEN_ASYNC = config('COURSEGEN_ASYNC', default=True, cast=bool)
 # batched LLM calls. Same contract: queue it, poll the job, fall back to inline.
 MOCKGEN_ASYNC = config('MOCKGEN_ASYNC', default=True, cast=bool)
 
+# --- AI provider network timeouts ---------------------------------------------
+# AI_READ_TIMEOUT applies to calls made during a web request and MUST stay below
+# gunicorn's `timeout` (see gunicorn.conf.py). If a provider may run as long as
+# gunicorn waits, gunicorn kills the worker first and the user gets a dropped
+# connection instead of a readable error. Some large free-tier models take ~100s
+# even for a short reply, so this genuinely fires.
+AI_READ_TIMEOUT = config('AI_READ_TIMEOUT', default=90, cast=int)
+# Celery tasks are not bound by gunicorn, so long-form generation may wait far
+# longer than a web request ever could.
+AI_READ_TIMEOUT_BACKGROUND = config('AI_READ_TIMEOUT_BACKGROUND', default=600, cast=int)
+
 # Celery (broker + result backend on Redis). Result backend stores the task
 # state so the poll endpoint can distinguish queued/running/done.
 CELERY_BROKER_URL = config('CELERY_BROKER_URL', default='redis://redis:6379/0')
