@@ -1,8 +1,9 @@
 """Tests for provider response and timeout handling.
 
-These cover the two failure modes seen in production: an aggregator answering
+These cover the failure modes seen in production: an aggregator answering
 HTTP 200 with no ``choices`` (which crashed with "'NoneType' object is not
-subscriptable"), and a model so slow the web request outlives gunicorn.
+subscriptable"), a model so slow the web request outlives gunicorn, and the
+newer OpenAI/Azure reasoning models rejecting ``max_tokens``.
 """
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -10,12 +11,15 @@ from unittest.mock import patch
 import requests
 from django.test import SimpleTestCase, override_settings
 
+from . import providers as providers_mod
 from .providers import (
     AIProviderError,
     ResolvedProvider,
     _normalise_error,
     _openai_content,
+    _openai_create,
     _openai_stream,
+    _token_param_for,
     complete,
     read_timeout,
 )
@@ -168,3 +172,110 @@ class TimeoutTests(SimpleTestCase):
                    side_effect=requests.exceptions.Timeout('timed out')):
             with self.assertRaises(AIProviderError):
                 complete(rp, [])
+
+
+class _FakeCompletions:
+    """Records the kwargs of each call and raises whatever is queued."""
+
+    def __init__(self, errors=None):
+        self.calls = []
+        self.errors = list(errors or [])
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.errors:
+            err = self.errors.pop(0)
+            if err is not None:
+                raise err
+        return _response(choices=[_choice('ok')])
+
+
+class _FakeClient:
+    def __init__(self, errors=None):
+        self.completions = _FakeCompletions(errors)
+        self.chat = SimpleNamespace(completions=self.completions)
+
+
+UNSUPPORTED = (
+    "Error code: 400 - {'error': {'message': \"Unsupported parameter: "
+    "'max_tokens' is not supported with this model. Use "
+    "'max_completion_tokens' instead.\", 'type': 'invalid_request_error'}}"
+)
+
+
+class TokenParameterTests(SimpleTestCase):
+    """Newer reasoning models need ``max_completion_tokens``, older ones don't."""
+
+    def setUp(self):
+        providers_mod._TOKEN_PARAM_OVERRIDES.clear()
+        self.addCleanup(providers_mod._TOKEN_PARAM_OVERRIDES.clear)
+
+    def test_classic_models_keep_max_tokens(self):
+        for name in ('gpt-4o', 'gpt-4o-mini', 'llama3.1', 'claude-3-5-sonnet'):
+            rp = ResolvedProvider(provider='openai', model=name)
+            self.assertEqual(_token_param_for(rp), 'max_tokens', name)
+
+    def test_reasoning_families_are_detected_by_name(self):
+        for name in ('gpt-5.1', 'GPT-5', 'o1-preview', 'o3-mini',
+                     'openai/gpt-5.1', 'openai/o4-mini'):
+            rp = ResolvedProvider(provider='openai', model=name)
+            self.assertEqual(_token_param_for(rp), 'max_completion_tokens', name)
+
+    def test_azure_deployment_alias_is_learned_from_the_error(self):
+        """An Azure deployment can be named anything, so the name tells us
+        nothing — the provider's own 400 has to teach us."""
+        rp = ResolvedProvider(provider='azure_openai', model='my-deployment',
+                              max_tokens=1234)
+        self.assertEqual(_token_param_for(rp), 'max_tokens')
+
+        client = _FakeClient(errors=[Exception(UNSUPPORTED)])
+        _openai_create(client, rp, {'model': rp.model, 'messages': []})
+
+        first, second = client.completions.calls
+        self.assertEqual(first.get('max_tokens'), 1234)
+        self.assertNotIn('max_completion_tokens', first)
+        self.assertEqual(second.get('max_completion_tokens'), 1234)
+        self.assertNotIn('max_tokens', second)
+
+    def test_the_correction_is_remembered_so_we_pay_it_once(self):
+        rp = ResolvedProvider(provider='azure_openai', model='my-deployment',
+                              max_tokens=50)
+        first = _FakeClient(errors=[Exception(UNSUPPORTED)])
+        _openai_create(first, rp, {'model': rp.model, 'messages': []})
+        self.assertEqual(len(first.completions.calls), 2)
+
+        second = _FakeClient()
+        _openai_create(second, rp, {'model': rp.model, 'messages': []})
+        self.assertEqual(len(second.completions.calls), 1)
+        self.assertEqual(second.completions.calls[0].get('max_completion_tokens'), 50)
+
+    def test_a_reasoning_model_that_wants_the_old_name_is_corrected_too(self):
+        rp = ResolvedProvider(provider='openai', model='gpt-5-legacy-proxy',
+                              max_tokens=7)
+        err = Exception("Unsupported parameter: 'max_completion_tokens' is not "
+                        "supported. Use 'max_tokens' instead.")
+        client = _FakeClient(errors=[err])
+        _openai_create(client, rp, {'model': rp.model, 'messages': []})
+
+        first, second = client.completions.calls
+        self.assertEqual(first.get('max_completion_tokens'), 7)
+        self.assertEqual(second.get('max_tokens'), 7)
+
+    def test_unrelated_errors_are_not_retried(self):
+        rp = ResolvedProvider(provider='openai', model='gpt-4o')
+        client = _FakeClient(errors=[Exception('Error code: 401 - invalid api key')])
+        with self.assertRaises(Exception) as ctx:
+            _openai_create(client, rp, {'model': rp.model, 'messages': []})
+        self.assertIn('401', str(ctx.exception))
+        self.assertEqual(len(client.completions.calls), 1)
+
+    def test_a_rate_limit_naming_max_tokens_is_not_mistaken_for_the_swap(self):
+        """429 bodies often mention token limits; that must not flip the param."""
+        rp = ResolvedProvider(provider='openai', model='gpt-4o')
+        err = Exception('Error code: 429 - Rate limit reached for max_tokens '
+                        'per minute. Please retry later.')
+        client = _FakeClient(errors=[err])
+        with self.assertRaises(Exception):
+            _openai_create(client, rp, {'model': rp.model, 'messages': []})
+        self.assertEqual(len(client.completions.calls), 1)
+        self.assertEqual(_token_param_for(rp), 'max_tokens')

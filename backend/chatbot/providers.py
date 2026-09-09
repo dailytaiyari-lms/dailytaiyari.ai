@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -313,14 +314,70 @@ def _openai_content(response):
     return ''
 
 
+# The newer OpenAI/Azure reasoning families (o-series, GPT-5) reject the classic
+# ``max_tokens`` parameter and demand ``max_completion_tokens`` instead, while
+# older models and most OpenAI-compatible servers only understand ``max_tokens``.
+# We cannot decide from the name alone: an Azure *deployment* name is chosen by
+# whoever created it, so ``gpt-5.1`` may be called anything. So we guess from the
+# name, then let the provider's own 400 correct us and remember the answer for
+# the rest of the process.
+_NEW_TOKEN_PARAM_RE = re.compile(r'(^|/)(o[1-9]|gpt-5)', re.IGNORECASE)
+_TOKEN_PARAM_OVERRIDES: dict[str, str] = {}
+
+
+def _token_param_for(rp: ResolvedProvider) -> str:
+    """Return the token-limit kwarg name to use for ``rp``'s model."""
+    model = (rp.model or '').strip().lower()
+    learned = _TOKEN_PARAM_OVERRIDES.get(model)
+    if learned:
+        return learned
+    if _NEW_TOKEN_PARAM_RE.search(model):
+        return 'max_completion_tokens'
+    return 'max_tokens'
+
+
+def _swap_token_param(exc, rp: ResolvedProvider):
+    """If ``exc`` is the provider complaining about the token param, learn the
+    correct name and return it. Returns ``None`` for every other error."""
+    text = str(getattr(exc, 'message', '') or exc)
+    if 'max_completion_tokens' not in text and 'max_tokens' not in text:
+        return None
+    lowered = text.lower()
+    if 'unsupported' not in lowered and 'not supported' not in lowered:
+        return None
+    current = _token_param_for(rp)
+    other = 'max_completion_tokens' if current == 'max_tokens' else 'max_tokens'
+    # Only trust the swap when the provider actually named the parameter it wants.
+    if other not in text:
+        return None
+    _TOKEN_PARAM_OVERRIDES[(rp.model or '').strip().lower()] = other
+    logger.info('AI model %r requires %s; switching.', rp.model, other)
+    return other
+
+
+def _openai_create(client, rp: ResolvedProvider, kwargs):
+    """``chat.completions.create`` that retries once with the other token param."""
+    attempt = dict(kwargs)
+    attempt[_token_param_for(rp)] = rp.max_tokens
+    try:
+        return client.chat.completions.create(**attempt)
+    except Exception as exc:  # noqa: BLE001 - inspected, then re-raised
+        corrected = _swap_token_param(exc, rp)
+        if not corrected:
+            raise
+        attempt.pop('max_tokens', None)
+        attempt.pop('max_completion_tokens', None)
+        attempt[corrected] = rp.max_tokens
+        return client.chat.completions.create(**attempt)
+
+
 def _openai_complete(rp: ResolvedProvider, messages):
     client = _openai_client(rp)
-    response = client.chat.completions.create(
-        model=rp.model,
-        messages=messages,
-        max_tokens=rp.max_tokens,
-        temperature=rp.temperature,
-    )
+    response = _openai_create(client, rp, {
+        'model': rp.model,
+        'messages': messages,
+        'temperature': rp.temperature,
+    })
     return _openai_content(response), Usage.from_openai(response.usage)
 
 
@@ -329,16 +386,15 @@ def _openai_stream(rp: ResolvedProvider, messages):
     kwargs = {
         'model': rp.model,
         'messages': messages,
-        'max_tokens': rp.max_tokens,
         'temperature': rp.temperature,
         'stream': True,
     }
     # Ask for usage in the final chunk where the provider supports it; servers
     # that reject the option (some self-hosted ones) are retried without it.
     try:
-        stream = client.chat.completions.create(stream_options={'include_usage': True}, **kwargs)
+        stream = _openai_create(client, rp, dict(kwargs, stream_options={'include_usage': True}))
     except Exception:  # noqa: BLE001 - fall back to a plain stream
-        stream = client.chat.completions.create(**kwargs)
+        stream = _openai_create(client, rp, kwargs)
 
     usage = Usage()
     produced = False
@@ -538,7 +594,11 @@ def test_connection(rp: ResolvedProvider):
         model=rp.model,
         api_version=rp.api_version,
         temperature=0,
-        max_tokens=16,
+        # Reasoning models spend part of the completion budget on hidden
+        # reasoning tokens before emitting any text, so a 16-token probe can come
+        # back empty and read as a credential failure. The extra headroom costs
+        # a fraction of a paisa and only applies to this one-off probe.
+        max_tokens=256,
         source=rp.source,
     )
     messages = [
