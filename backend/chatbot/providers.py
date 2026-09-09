@@ -24,6 +24,7 @@ import time
 from dataclasses import dataclass, field
 
 import requests
+from django.conf import settings
 
 from .models import AIProviderConfig
 
@@ -32,7 +33,37 @@ logger = logging.getLogger(__name__)
 # Network guard rails. Streaming answers can legitimately take a while, but a
 # hung provider must never pin a worker forever.
 CONNECT_TIMEOUT = 10
-READ_TIMEOUT = 120
+
+# The web timeout MUST stay below gunicorn's ``timeout`` (see gunicorn.conf.py).
+# If the provider is allowed to run as long as gunicorn waits, gunicorn kills the
+# worker first and the caller gets a dead connection instead of a readable "the
+# model took too long" message. Some free/large models genuinely take ~100s for
+# even a short reply, so this fires in practice.
+READ_TIMEOUT = getattr(settings, 'AI_READ_TIMEOUT', 90)
+
+# Celery tasks are not bound by gunicorn, so long-form generation (a course
+# outline, a full mock paper, a hackathon brief) may wait far longer.
+BACKGROUND_READ_TIMEOUT = getattr(settings, 'AI_READ_TIMEOUT_BACKGROUND', 600)
+
+
+def in_background_worker():
+    """True when the current call runs inside a Celery task, not a web request.
+
+    Timeouts differ by an order of magnitude between the two, and threading a
+    flag through every generation module would touch a dozen call sites for no
+    behavioural gain, so the context is detected once here.
+    """
+    try:
+        from celery import current_task
+    except ImportError:  # pragma: no cover - celery is pinned
+        return False
+    request = getattr(current_task, 'request', None)
+    return getattr(request, 'id', None) is not None
+
+
+def read_timeout():
+    """Seconds to wait for a provider response in the current context."""
+    return BACKGROUND_READ_TIMEOUT if in_background_worker() else READ_TIMEOUT
 
 
 class AIProviderError(RuntimeError):
@@ -184,14 +215,14 @@ def _openai_client(rp: ResolvedProvider):
             api_key=rp.api_key,
             azure_endpoint=rp.base_url.rstrip('/'),
             api_version=rp.api_version,
-            timeout=READ_TIMEOUT,
+            timeout=read_timeout(),
             max_retries=1,
         )
 
     kwargs = {
         # Self-hosted servers usually ignore the key but the SDK requires one.
         'api_key': rp.api_key or 'not-needed',
-        'timeout': READ_TIMEOUT,
+        'timeout': read_timeout(),
         'max_retries': 1,
     }
     if rp.base_url:
@@ -199,6 +230,87 @@ def _openai_client(rp: ResolvedProvider):
     if rp.extra_headers:
         kwargs['default_headers'] = rp.extra_headers
     return OpenAI(**kwargs)
+
+
+def _error_detail(payload):
+    """Human-readable message from a provider's ``error`` field, if any."""
+    if payload is None:
+        return ''
+    if isinstance(payload, dict):
+        message = payload.get('message') or ''
+        code = payload.get('code') or ''
+        meta = payload.get('metadata') or {}
+        # OpenRouter nests the upstream provider's own text under metadata.
+        if not message and isinstance(meta, dict):
+            message = meta.get('raw') or ''
+        if message and code:
+            return f'{message} (code {code})'
+        return str(message or code or '')
+    message = getattr(payload, 'message', '') or ''
+    code = getattr(payload, 'code', '') or ''
+    if message and code:
+        return f'{message} (code {code})'
+    return str(message or code or '')
+
+
+def _response_error(response):
+    """The ``error`` object on an OpenAI-shaped response, wherever it landed.
+
+    Aggregators return HTTP 200 with a bare ``{"error": {...}}`` body. The SDK
+    parses that into a ChatCompletion whose declared fields are all empty, so
+    the error is only reachable via the pydantic extras.
+    """
+    err = getattr(response, 'error', None)
+    if err is None:
+        extra = getattr(response, 'model_extra', None)
+        if isinstance(extra, dict):
+            err = extra.get('error')
+    return err
+
+
+def _openai_content(response):
+    """Text of the first choice, or a clear :class:`AIProviderError`.
+
+    A provider that fronts other vendors (OpenRouter especially) can answer
+    HTTP 200 with **no choices at all** when the upstream model is rate
+    limited, overloaded or moderated. Indexing ``choices[0]`` then raised
+    ``'NoneType' object is not subscriptable``, which was stored verbatim on
+    the usage record and shown to tenant admins.
+    """
+    choices = getattr(response, 'choices', None)
+    if not choices:
+        detail = _error_detail(_response_error(response))
+        if detail:
+            raise AIProviderError(f'The AI provider rejected the request: {detail[:300]}')
+        raise AIProviderError(
+            'The AI provider returned an empty response. This usually means the '
+            'model was rate limited or temporarily overloaded — try again, or '
+            'pick a different model.'
+        )
+
+    choice = choices[0]
+    message = getattr(choice, 'message', None)
+    content = getattr(message, 'content', None) if message is not None else None
+    if content:
+        return content
+
+    # A choice with no text still carries the reason it stopped, which is far
+    # more actionable than an empty answer.
+    reason = getattr(choice, 'finish_reason', '') or ''
+    if reason == 'length':
+        raise AIProviderError(
+            'The model hit its output limit before producing any text. Raise '
+            'the max tokens for this provider, or use a shorter prompt.'
+        )
+    if reason == 'content_filter':
+        raise AIProviderError(
+            "The model's safety filter blocked this response. Rephrase the "
+            'request and try again.'
+        )
+    detail = _error_detail(_response_error(response))
+    if detail:
+        raise AIProviderError(f'The AI provider rejected the request: {detail[:300]}')
+    return ''
 
 
 def _openai_complete(rp: ResolvedProvider, messages):
@@ -209,7 +321,7 @@ def _openai_complete(rp: ResolvedProvider, messages):
         max_tokens=rp.max_tokens,
         temperature=rp.temperature,
     )
-    return response.choices[0].message.content or '', Usage.from_openai(response.usage)
+    return _openai_content(response), Usage.from_openai(response.usage)
 
 
 def _openai_stream(rp: ResolvedProvider, messages):
@@ -229,15 +341,35 @@ def _openai_stream(rp: ResolvedProvider, messages):
         stream = client.chat.completions.create(**kwargs)
 
     usage = Usage()
+    produced = False
+    stream_error = ''
     for chunk in stream:
         if getattr(chunk, 'usage', None):
             usage = Usage.from_openai(chunk.usage)
+        # An error can arrive mid-stream instead of as a failed request.
+        detail = _error_detail(_response_error(chunk))
+        if detail:
+            stream_error = detail
         if not chunk.choices:
             continue
         delta = chunk.choices[0].delta
         text = getattr(delta, 'content', None)
         if text:
+            produced = True
             yield text, None
+
+    # A stream that ends without a single token is a failure, not a blank
+    # answer: surfacing it stops the UI showing an empty bubble as success.
+    if not produced:
+        if stream_error:
+            raise AIProviderError(
+                f'The AI provider rejected the request: {stream_error[:300]}'
+            )
+        raise AIProviderError(
+            'The AI provider returned an empty response. This usually means the '
+            'model was rate limited or temporarily overloaded — try again, or '
+            'pick a different model.'
+        )
     yield '', usage
 
 
@@ -291,7 +423,7 @@ def _anthropic_complete(rp: ResolvedProvider, messages):
         _anthropic_url(rp),
         headers=_anthropic_headers(rp),
         json=_anthropic_payload(rp, messages),
-        timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+        timeout=(CONNECT_TIMEOUT, read_timeout()),
     )
     _raise_for_http(response)
     data = response.json()
@@ -312,7 +444,7 @@ def _anthropic_stream(rp: ResolvedProvider, messages):
         headers=_anthropic_headers(rp),
         json=payload,
         stream=True,
-        timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+        timeout=(CONNECT_TIMEOUT, read_timeout()),
     ) as response:
         _raise_for_http(response)
         usage = Usage()
@@ -344,6 +476,18 @@ def _anthropic_stream(rp: ResolvedProvider, messages):
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _normalise_error(rp: ResolvedProvider, exc: Exception) -> AIProviderError:
+    """Turn any SDK/HTTP exception into a message worth showing an admin."""
+    if isinstance(exc, requests.exceptions.Timeout) or 'timeout' in type(exc).__name__.lower():
+        waited = read_timeout()
+        return AIProviderError(
+            f'The model "{rp.model}" did not respond within {waited}s. Large '
+            'free-tier models are often this slow — pick a faster model, or '
+            'connect your own provider key.'
+        )
+    return AIProviderError(str(exc)[:300])
+
+
 def complete(rp: ResolvedProvider, messages):
     """Run a non-streaming completion.
 
@@ -360,7 +504,7 @@ def complete(rp: ResolvedProvider, messages):
         raise
     except Exception as exc:  # noqa: BLE001 - normalise every SDK's errors
         logger.warning('AI provider %s failed: %s', rp.provider, exc)
-        raise AIProviderError(str(exc)[:300]) from exc
+        raise _normalise_error(rp, exc) from exc
     return content, usage, int((time.time() - started) * 1000)
 
 
@@ -382,7 +526,7 @@ def stream(rp: ResolvedProvider, messages):
         raise
     except Exception as exc:  # noqa: BLE001
         logger.warning('AI provider %s stream failed: %s', rp.provider, exc)
-        raise AIProviderError(str(exc)[:300]) from exc
+        raise _normalise_error(rp, exc) from exc
 
 
 def test_connection(rp: ResolvedProvider):
