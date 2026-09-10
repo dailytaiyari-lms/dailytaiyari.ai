@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, lazy, Suspense } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
+import DOMPurify from 'dompurify'
 import toast from 'react-hot-toast'
 import {
   ArrowLeft, Play, Send, Loader2, Code2, CheckCircle2, XCircle,
@@ -92,7 +93,7 @@ const ProblemStatement = ({ statement }) => {
     return (
       <div
         className="prose prose-sm dark:prose-invert max-w-none prose-headings:font-display prose-p:leading-relaxed prose-pre:bg-surface-900 prose-pre:text-surface-100"
-        dangerouslySetInnerHTML={{ __html: statement }}
+        dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(statement, { ADD_ATTR: ['target', 'rel'] }) }}
       />
     )
   }
