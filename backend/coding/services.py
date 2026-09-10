@@ -235,11 +235,34 @@ def run_against_cases(*, language, source, cases, time_limit_ms, memory_limit_mb
 
 
 def engine_health():
-    """Best-effort check that the engine is reachable and has languages."""
+    """Check the engine is reachable AND has every runtime we advertise.
+
+    Reachability alone is not enough: Piston starts with an empty package store,
+    and in that state it happily serves /api/v2/runtimes (returning `[]`) while
+    failing every execute call. Treating that as healthy is what let a
+    runtime-less engine 503 every submission unnoticed, so a missing runtime is
+    reported as unhealthy here.
+
+    Returns {'ok': bool, 'runtimes': [...], 'missing': [...]} or
+    {'ok': False, 'error': str} when the engine cannot be reached.
+    """
     try:
         resp = requests.get(f'{_engine_url()}/api/v2/runtimes', timeout=5)
         resp.raise_for_status()
-        langs = {r.get('language') for r in resp.json()}
-        return {'ok': True, 'runtimes': sorted(l for l in langs if l)}
-    except requests.RequestException as exc:
+        installed = {
+            (r.get('language'), r.get('version'))
+            for r in resp.json()
+        }
+    except (requests.RequestException, ValueError) as exc:
         return {'ok': False, 'error': str(exc)}
+
+    missing = sorted(
+        f"{cfg['piston_language']} {cfg['piston_version']}"
+        for cfg in LANGUAGES.values()
+        if (cfg['piston_language'], cfg['piston_version']) not in installed
+    )
+    return {
+        'ok': not missing,
+        'runtimes': sorted(f'{lang} {ver}' for lang, ver in installed if lang),
+        'missing': missing,
+    }
