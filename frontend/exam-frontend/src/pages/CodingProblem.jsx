@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, lazy, Suspense } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
+import DOMPurify from 'dompurify'
 import toast from 'react-hot-toast'
 import {
   ArrowLeft, Play, Send, Loader2, Code2, CheckCircle2, XCircle,
@@ -79,6 +80,29 @@ const IOBlock = ({ label, text }) => (
     </pre>
   </div>
 )
+
+// Statements authored in the AI studio / rich editor are HTML; older ones are
+// plain text. Render markup as HTML and fall back to pre-wrapped text.
+const looksLikeHtml = (s) => /<\/?[a-z][\s\S]*>/i.test(s || '')
+
+const ProblemStatement = ({ statement }) => {
+  if (!statement) {
+    return <div className="text-sm text-surface-500">No statement provided.</div>
+  }
+  if (looksLikeHtml(statement)) {
+    return (
+      <div
+        className="prose prose-sm dark:prose-invert max-w-none prose-headings:font-display prose-p:leading-relaxed prose-pre:bg-surface-900 prose-pre:text-surface-100"
+        dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(statement, { ADD_ATTR: ['target', 'rel'] }) }}
+      />
+    )
+  }
+  return (
+    <div className="text-sm text-surface-700 dark:text-surface-200 whitespace-pre-wrap leading-relaxed">
+      {statement}
+    </div>
+  )
+}
 
 const VerdictPill = ({ verdict }) => {
   const v = VERDICT[verdict] || { label: verdict, icon: XCircle, cls: 'text-surface-500 bg-surface-100 dark:bg-surface-800' }
@@ -231,9 +255,7 @@ const CodingProblem = () => {
         <div className="space-y-4">
           <div className="card p-5">
             <h3 className="text-sm font-semibold text-surface-600 dark:text-surface-300 mb-2">Problem</h3>
-            <div className="text-sm text-surface-700 dark:text-surface-200 whitespace-pre-wrap leading-relaxed">
-              {problem.statement || 'No statement provided.'}
-            </div>
+            <ProblemStatement statement={problem.statement} />
           </div>
 
           {samples.length > 0 && (
