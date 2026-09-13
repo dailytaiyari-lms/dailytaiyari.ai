@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import { useAuthStore } from '../context/authStore'
 const PdfReader = lazy(() => import('../components/content/PdfReader'))
-import VideoPlayer from '../components/content/VideoPlayer'
+import VideoPlayer, { formatTime } from '../components/content/VideoPlayer'
 
 const ContentViewer = () => {
   const { contentId } = useParams()
@@ -24,6 +24,7 @@ const ContentViewer = () => {
   const { fetchProfile } = useAuthStore()
   const startTime = useRef(Date.now())
   const [isCompleted, setIsCompleted] = useState(false)
+  const [videoDuration, setVideoDuration] = useState(0)
 
   const { data: content, isLoading } = useQuery({
     queryKey: ['content', contentId],
@@ -112,6 +113,15 @@ const ContentViewer = () => {
 
   const isBookmarked = progressData?.is_bookmarked || false
 
+  // For videos prefer the real length (measured by the player, else the value
+  // stored on the content) over the generic estimated reading time.
+  const isVideo = content?.content_type === 'video'
+  const durationLabel = (() => {
+    if (isVideo && videoDuration > 0) return formatTime(videoDuration)
+    if (isVideo && content?.video_duration_minutes) return `${content.video_duration_minutes} min`
+    return `${content?.estimated_time_minutes ?? 0} min`
+  })()
+
   return (
     <div className="max-w-4xl mx-auto">
       {/* Breadcrumb */}
@@ -166,7 +176,7 @@ const ContentViewer = () => {
 
         <div className="flex flex-wrap items-center gap-4 mt-4 text-sm text-surface-500">
           <span className="flex items-center gap-1.5">
-            <Clock size={16} /> {content?.estimated_time_minutes} min
+            <Clock size={16} /> {durationLabel}
           </span>
           <span className="flex items-center gap-1.5">
             <Eye size={16} /> {content?.views_count} views
@@ -186,7 +196,12 @@ const ContentViewer = () => {
 
       {/* Video Player (YouTube / Vimeo / Google Drive / uploaded) */}
       {content?.content_type === 'video' && (content?.video_url || content?.video_file) && (
-        <VideoPlayer url={content.video_url} fileUrl={content.video_file} title={content.title} />
+        <VideoPlayer
+          url={content.video_url}
+          fileUrl={content.video_file}
+          title={content.title}
+          onDuration={setVideoDuration}
+        />
       )}
 
       {/* Notes Content: render as HTML if content looks like HTML, else as Markdown (with LaTeX) */}
