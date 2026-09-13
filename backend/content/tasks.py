@@ -36,44 +36,96 @@ PROBE_TIMEOUT_SECONDS = 120
 
 
 def _iter_top_level_atoms(path, limit=25):
-    """Yield the top-level atom types of an MP4, in file order."""
+    """Yield ``(atom_type, payload_offset, payload_size)`` in file order."""
     with open(path, 'rb') as fh:
         for _ in range(limit):
+            start = fh.tell()
             header = fh.read(8)
             if len(header) < 8:
                 return
             size = int.from_bytes(header[:4], 'big')
             atom = header[4:8].decode('latin-1', errors='replace')
-            yield atom
+            header_len = 8
             if size == 1:
                 # 64-bit size follows the type.
                 ext = fh.read(8)
                 if len(ext) < 8:
                     return
                 size = int.from_bytes(ext, 'big')
-                if size < 16:
+                header_len = 16
+                if size < header_len:
                     return
-                fh.seek(size - 16, os.SEEK_CUR)
             elif size == 0:
                 # Extends to EOF — nothing meaningful after this.
+                yield atom, start + header_len, None
                 return
             elif size < 8:
                 return
-            else:
-                fh.seek(size - 8, os.SEEK_CUR)
+
+            yield atom, start + header_len, size - header_len
+            fh.seek(start + size)
+
+
+def _has_movie_extends(path, offset, size):
+    """True when a ``moov`` box contains ``mvex`` — the fMP4 marker.
+
+    ``mvex`` announces that the real samples live in later fragments, so the
+    movie header carries no sample table and usually a zero duration.
+    """
+    if not size or size > 32 * 1024 * 1024:
+        return False
+    try:
+        with open(path, 'rb') as fh:
+            fh.seek(offset)
+            return b'mvex' in fh.read(size)
+    except OSError:
+        return False
+
+
+def inspect_mp4(path):
+    """Return ``(faststart, fragmented)`` for an MP4.
+
+    ``faststart`` means the ``moov`` index precedes the media data.
+
+    ``fragmented`` means the file is an fMP4: a stub ``moov`` followed by many
+    ``moof``/``mdat`` fragment pairs. Those are built for live streaming, and a
+    browser handed one over plain HTTP reports a nonsense duration (the movie
+    header declares zero, so players guess from the first fragment) and cannot
+    seek, because there is no sample table mapping a timestamp to a byte offset
+    — every seek restarts the file. Such a file is technically "faststart" yet
+    still needs remuxing, so the two answers have to be separate.
+    """
+    faststart = False
+    fragmented = False
+    seen_media = False
+    try:
+        for atom, offset, size in _iter_top_level_atoms(path):
+            if atom == 'moof':
+                fragmented = True
+                break
+            if atom == 'moov':
+                if _has_movie_extends(path, offset, size):
+                    fragmented = True
+                    if not seen_media:
+                        faststart = True
+                    break
+                if not seen_media:
+                    faststart = True
+            elif atom == 'mdat':
+                seen_media = True
+                if faststart:
+                    # Index up front and no fragment header before the media.
+                    break
+    except OSError:
+        logger.warning('Could not inspect atoms for %s', path, exc_info=True)
+        return False, False
+    return faststart, fragmented
 
 
 def is_faststart(path):
-    """True when the ``moov`` index precedes the media data."""
-    try:
-        for atom in _iter_top_level_atoms(path):
-            if atom == 'moov':
-                return True
-            if atom == 'mdat':
-                return False
-    except OSError:
-        logger.warning('Could not inspect atoms for %s', path, exc_info=True)
-    return False
+    """True when the file already starts instantly and can be seeked."""
+    faststart, fragmented = inspect_mp4(path)
+    return faststart and not fragmented
 
 
 def probe_duration_seconds(path):
@@ -146,7 +198,8 @@ def optimize_content_video(self, content_id):
             fields['video_duration_seconds'] = int(round(duration))
             fields['video_duration_minutes'] = max(1, int(round(duration / 60)))
 
-        if is_faststart(local_src):
+        faststart, fragmented = inspect_mp4(local_src)
+        if faststart and not fragmented:
             fields['video_status'] = 'ready'
             Content.objects.filter(pk=content_id).update(**fields)
             enqueue_hls_packaging(content_id)
@@ -171,7 +224,7 @@ def optimize_content_video(self, content_id):
             logger.warning('Could not delete original video %s', source_name, exc_info=True)
 
         enqueue_hls_packaging(content_id)
-        return 'remuxed'
+        return 'defragmented' if fragmented else 'remuxed'
 
     except subprocess.TimeoutExpired:
         Content.objects.filter(pk=content_id).update(video_status='failed')
