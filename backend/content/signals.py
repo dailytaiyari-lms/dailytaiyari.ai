@@ -31,5 +31,8 @@ def optimize_new_video(sender, instance, created, **kwargs):
     if current.endswith('-faststart.mp4'):
         return
 
-    Content.objects.filter(pk=instance.pk).update(video_status='pending')
+    # A replacement upload must not inherit the previous file's progress.
+    Content.objects.filter(pk=instance.pk).update(
+        video_status='pending', video_progress=0,
+    )
     enqueue_video_optimization(instance)

@@ -458,6 +458,17 @@ CELERY_TASK_TIME_LIMIT = 180
 CELERY_TASK_SOFT_TIME_LIMIT = 150
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 
+# Redis has no real ack, so kombu re-queues any task still unacked after
+# `visibility_timeout` (default 1h). Video jobs run for hours, so the default
+# hands a still-running encode to a second worker, which duplicates the work
+# and resets the row's progress — and the duplicate is restored to the *head*
+# of the queue, so it jumps ahead of genuinely unprocessed videos. Keep this
+# above the longest task budget (VIDEO_TRANSCODE_TIMEOUT, 6h) so only a truly
+# dead worker triggers redelivery.
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    'visibility_timeout': config('CELERY_VISIBILITY_TIMEOUT', default=25200, cast=int),
+}
+
 # Uploaded lecture videos are remuxed so playback starts immediately (see
 # content/tasks.py). Turn off where ffmpeg is unavailable.
 VIDEO_OPTIMIZATION_ENABLED = config('VIDEO_OPTIMIZATION_ENABLED', default=True, cast=bool)

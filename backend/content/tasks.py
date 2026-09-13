@@ -25,6 +25,8 @@ from celery import shared_task
 from django.core.files import File
 from django.db import transaction
 
+from .ffmpeg_utils import run_with_progress
+
 logger = logging.getLogger(__name__)
 
 FFMPEG = os.environ.get('FFMPEG_BINARY', 'ffmpeg')
@@ -33,6 +35,14 @@ FFPROBE = os.environ.get('FFPROBE_BINARY', 'ffprobe')
 # Long lectures are big; give ffmpeg room but never hang a worker forever.
 REMUX_TIMEOUT_SECONDS = int(os.environ.get('VIDEO_REMUX_TIMEOUT', '3600'))
 PROBE_TIMEOUT_SECONDS = 120
+# A re-encode is far slower than a stream copy, so it gets its own budget.
+TRANSCODE_TIMEOUT_SECONDS = int(os.environ.get('VIDEO_TRANSCODE_TIMEOUT', str(6 * 3600)))
+TRANSCODE_PRESET = os.environ.get('VIDEO_HLS_PRESET', 'veryfast')
+
+# Codecs every current browser can decode inside an MP4. Anything else plays
+# for some students and not others, so it is re-encoded rather than copied.
+BROWSER_VIDEO_CODECS = {'h264'}
+BROWSER_AUDIO_CODECS = {'aac', 'mp3'}
 
 
 def _iter_top_level_atoms(path, limit=25):
@@ -143,6 +153,53 @@ def probe_duration_seconds(path):
         return None
 
 
+def probe_codecs(path):
+    """Return ``(video_codec, audio_codec)``; either may be ``None``."""
+    try:
+        out = subprocess.run(
+            [FFPROBE, '-v', 'error', '-show_entries', 'stream=codec_type,codec_name',
+             '-of', 'json', path],
+            capture_output=True, text=True, timeout=PROBE_TIMEOUT_SECONDS, check=True,
+        )
+        streams = json.loads(out.stdout).get('streams', [])
+    except (subprocess.SubprocessError, ValueError, OSError):
+        logger.warning('Could not probe codecs for %s', path, exc_info=True)
+        return None, None
+
+    video = next((s.get('codec_name') for s in streams if s.get('codec_type') == 'video'), None)
+    audio = next((s.get('codec_name') for s in streams if s.get('codec_type') == 'audio'), None)
+    return video, audio
+
+
+def needs_transcode(path):
+    """Which streams cannot be copied, as ``(video_bad, audio_bad)``.
+
+    Rewriting the container cannot change what is inside it. A lecture encoded
+    as AV1, VP9 or HEVC plays in some browsers and shows nothing at all in
+    others — Safari and iOS in particular — so those have to be re-encoded to
+    H.264/AAC, which every current browser can decode.
+
+    The two are reported separately because re-encoding the picture is the
+    expensive half: an unusual audio track alongside H.264 video only needs the
+    audio redone, which is minutes of work rather than hours.
+    """
+    video, audio = probe_codecs(path)
+    return (
+        bool(video) and video not in BROWSER_VIDEO_CODECS,
+        bool(audio) and audio not in BROWSER_AUDIO_CODECS,
+    )
+
+
+def _report_progress(content_id, field, percent):
+    """Record encode progress without letting a write failure kill the job."""
+    from content.models import Content
+
+    try:
+        Content.objects.filter(pk=content_id).update(**{field: percent})
+    except Exception:
+        logger.exception('could not record %s for content %s', field, content_id)
+
+
 def remux_faststart(src_path, dst_path):
     """Stream-copy ``src_path`` into ``dst_path`` with the index up front."""
     subprocess.run(
@@ -152,24 +209,59 @@ def remux_faststart(src_path, dst_path):
     )
 
 
+def transcode_h264(src_path, dst_path, total_seconds=None, on_progress=None,
+                   copy_video=False):
+    """Re-encode to H.264/AAC so every browser can play the result.
+
+    Capped at 1080p in either orientation: the fallback MP4 only has to be
+    universally playable, and letting a 4K source through would cost hours of
+    CPU for a size almost no student watches. The adaptive ladder handles
+    quality separately.
+
+    ``copy_video`` keeps an already-playable picture as-is and re-encodes only
+    the audio, which turns an hours-long job into a couple of minutes.
+    """
+    video_args = (
+        ['-c:v', 'copy'] if copy_video else [
+            # Bound the long edge, so a portrait 2160x3840 clip is cut down too
+            # rather than only ever being capped on width.
+            '-vf', "scale='if(gt(iw,ih),min(1920,iw),-2)':"
+                   "'if(gt(iw,ih),-2,min(1920,ih))'",
+            '-c:v', 'libx264', '-preset', TRANSCODE_PRESET, '-crf', '23',
+            '-pix_fmt', 'yuv420p',
+        ]
+    )
+    run_with_progress(
+        [FFMPEG, '-v', 'error', '-y', '-i', src_path,
+         '-map', '0:v:0', '-map', '0:a:0?'] + video_args + [
+         '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
+         '-movflags', '+faststart', dst_path],
+        total_seconds, on_progress, TRANSCODE_TIMEOUT_SECONDS,
+    )
+
+
 @shared_task(
     name='content.optimize_video',
     bind=True,
     max_retries=2,
     default_retry_delay=120,
     acks_late=True,
-    # The project-wide limit is tuned for short grading jobs; a two hour remux
-    # needs far longer, so override it here rather than globally.
-    soft_time_limit=REMUX_TIMEOUT_SECONDS + 120,
-    time_limit=REMUX_TIMEOUT_SECONDS + 300,
+    # The project-wide limit is tuned for short grading jobs; this task needs
+    # far longer, so override it here rather than globally. The budget has to
+    # cover the *slowest* path the task can take — a re-encode, not the remux —
+    # because `acks_late` means a hard kill never acks, so an over-running job
+    # is redelivered and restarts from zero, forever.
+    soft_time_limit=TRANSCODE_TIMEOUT_SECONDS + 120,
+    time_limit=TRANSCODE_TIMEOUT_SECONDS + 300,
 )
 def optimize_content_video(self, content_id):
-    """Make an uploaded lecture video start playing immediately.
+    """Make an uploaded lecture video start playing immediately and seek.
 
-    Downloads the upload, records its real duration, and — when the index is at
-    the back — rewrites it with ``+faststart`` and swaps the stored file. Never
-    raises into the caller: a failure leaves the original file playable, just
-    slower to start.
+    Downloads the upload and records its real duration, then repairs whichever
+    problem the file has: a trailing index or fragmentation is fixed by a cheap
+    stream copy, while a codec browsers cannot all decode needs a real
+    re-encode. Never raises into the caller: a failure leaves the original file
+    in place.
     """
     from content.models import Content
 
@@ -182,7 +274,9 @@ def optimize_content_video(self, content_id):
         return 'no-video'
 
     source_name = content.video_file.name
-    Content.objects.filter(pk=content_id).update(video_status='processing')
+    Content.objects.filter(pk=content_id).update(
+        video_status='processing', video_progress=0,
+    )
 
     workdir = tempfile.mkdtemp(prefix='dt-video-')
     local_src = os.path.join(workdir, 'source.mp4')
@@ -199,13 +293,28 @@ def optimize_content_video(self, content_id):
             fields['video_duration_minutes'] = max(1, int(round(duration / 60)))
 
         faststart, fragmented = inspect_mp4(local_src)
-        if faststart and not fragmented:
+        video_bad, audio_bad = needs_transcode(local_src)
+
+        if faststart and not fragmented and not video_bad and not audio_bad:
             fields['video_status'] = 'ready'
+            fields['video_progress'] = 100
             Content.objects.filter(pk=content_id).update(**fields)
             enqueue_hls_packaging(content_id)
             return 'already-faststart'
 
-        remux_faststart(local_src, local_out)
+        if video_bad or audio_bad:
+            # The container may be fine, but a codec browsers cannot all decode
+            # survives repackaging untouched — it has to be re-encoded. Keep the
+            # picture when only the audio is at fault; that is the slow half.
+            transcode_h264(
+                local_src, local_out, duration,
+                lambda pct: _report_progress(content_id, 'video_progress', pct),
+                copy_video=not video_bad,
+            )
+            outcome = 'audio-transcoded' if not video_bad else 'transcoded'
+        else:
+            remux_faststart(local_src, local_out)
+            outcome = 'defragmented' if fragmented else 'remuxed'
 
         # Save under a fresh name so anyone mid-playback keeps a working URL,
         # then drop the original.
@@ -214,7 +323,15 @@ def optimize_content_video(self, content_id):
         with open(local_out, 'rb') as fh:
             content.video_file.save(f'{stem}-faststart.mp4', File(fh), save=False)
 
+        # A re-encode changes the duration slightly and the source duration may
+        # have been unreadable, so trust the file we actually publish.
+        out_duration = probe_duration_seconds(local_out)
+        if out_duration:
+            fields['video_duration_seconds'] = int(round(out_duration))
+            fields['video_duration_minutes'] = max(1, int(round(out_duration / 60)))
+
         fields['video_status'] = 'ready'
+        fields['video_progress'] = 100
         fields['video_file'] = content.video_file.name
         Content.objects.filter(pk=content_id).update(**fields)
 
@@ -224,7 +341,7 @@ def optimize_content_video(self, content_id):
             logger.warning('Could not delete original video %s', source_name, exc_info=True)
 
         enqueue_hls_packaging(content_id)
-        return 'defragmented' if fragmented else 'remuxed'
+        return outcome
 
     except subprocess.TimeoutExpired:
         Content.objects.filter(pk=content_id).update(video_status='failed')
@@ -246,6 +363,25 @@ def optimize_content_video(self, content_id):
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+def dispatch_video_optimization(content_id):
+    """Send a content to the media queue. Returns False if the broker refused.
+
+    Callers that a human is waiting on need to know whether the job was really
+    accepted, rather than discovering days later that nothing ran.
+    """
+    try:
+        # retry=False so a dead broker fails immediately instead of blocking
+        # the request thread that just finished the upload.
+        optimize_content_video.apply_async(
+            args=[content_id], queue='media', retry=False, ignore_result=True,
+        )
+        return True
+    except Exception:
+        # Broker down — the upload still plays, just without the speed-up.
+        logger.warning('Could not queue video optimisation for %s', content_id, exc_info=True)
+        return False
+
+
 def enqueue_video_optimization(content):
     """Queue optimisation for a content row once its transaction commits."""
     from django.conf import settings
@@ -257,18 +393,7 @@ def enqueue_video_optimization(content):
 
     content_id = content.pk
 
-    def _dispatch():
-        try:
-            # retry=False so a dead broker fails immediately instead of blocking
-            # the request thread that just finished the upload.
-            optimize_content_video.apply_async(
-                args=[content_id], queue='media', retry=False, ignore_result=True,
-            )
-        except Exception:
-            # Broker down — the upload still plays, just without the speed-up.
-            logger.warning('Could not queue video optimisation for %s', content_id, exc_info=True)
-
-    transaction.on_commit(_dispatch)
+    transaction.on_commit(lambda: dispatch_video_optimization(content_id))
 
 
 HLS_TIMEOUT_SECONDS = int(os.environ.get('VIDEO_TRANSCODE_TIMEOUT', str(6 * 3600)))
@@ -301,7 +426,9 @@ def package_content_hls(self, content_id):
     if not content.video_file:
         return 'no-video'
 
-    Content.objects.filter(pk=content_id).update(hls_status='processing')
+    Content.objects.filter(pk=content_id).update(
+        hls_status='processing', hls_progress=0,
+    )
     previous = content.hls_playlist
     prefix = f'content_hls/{content_id}'
     workdir = tempfile.mkdtemp(prefix='dt-hls-')
@@ -313,7 +440,11 @@ def package_content_hls(self, content_id):
         with content.video_file.open('rb') as remote, open(local_src, 'wb') as local:
             shutil.copyfileobj(remote, local, length=8 * 1024 * 1024)
 
-        rungs = hls.package(local_src, outdir)
+        rungs = hls.package(
+            local_src, outdir,
+            content.video_duration_seconds or probe_duration_seconds(local_src),
+            lambda pct: _report_progress(content_id, 'hls_progress', pct),
+        )
 
         # Publish under a fresh generation so viewers mid-playback keep the old
         # tree working; the previous generation is removed afterwards.
@@ -323,7 +454,7 @@ def package_content_hls(self, content_id):
             raise RuntimeError('HLS packaging produced no master playlist')
 
         Content.objects.filter(pk=content_id).update(
-            hls_playlist=master, hls_status='ready',
+            hls_playlist=master, hls_status='ready', hls_progress=100,
         )
 
         if previous:

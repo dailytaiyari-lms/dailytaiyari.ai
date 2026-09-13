@@ -67,6 +67,10 @@ class Content(OrderedModel):
     video_status = models.CharField(
         max_length=20, choices=VIDEO_STATUS_CHOICES, blank=True, default=''
     )
+    # 0-100 while the stage named by `video_status` runs. Re-encoding a long
+    # lecture takes minutes, so the builder shows this rather than a spinner
+    # that cannot distinguish slow progress from a stuck worker.
+    video_progress = models.PositiveSmallIntegerField(default=0)
     video_duration_minutes = models.PositiveIntegerField(null=True, blank=True)
     video_duration_seconds = models.PositiveIntegerField(null=True, blank=True)
     # Storage path of the HLS master playlist produced from `video_file`. HLS
@@ -77,6 +81,7 @@ class Content(OrderedModel):
     hls_status = models.CharField(
         max_length=20, choices=VIDEO_STATUS_CHOICES, blank=True, default=''
     )
+    hls_progress = models.PositiveSmallIntegerField(default=0)
     pdf_file = models.FileField(upload_to='content_pdfs/', blank=True, null=True)
     thumbnail = models.ImageField(upload_to='content_thumbnails/', blank=True, null=True)
     

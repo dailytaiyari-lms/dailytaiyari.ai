@@ -20,6 +20,8 @@ import subprocess
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 
+from .ffmpeg_utils import run_with_progress
+
 logger = logging.getLogger(__name__)
 
 FFMPEG = os.environ.get('FFMPEG_BINARY', 'ffmpeg')
@@ -125,7 +127,7 @@ def build_command(src, outdir, rungs, has_audio):
     return cmd
 
 
-def package(src_path, outdir):
+def package(src_path, outdir, total_seconds=None, on_progress=None):
     """Transcode ``src_path`` into an HLS ladder inside ``outdir``."""
     height, has_audio = probe_streams(src_path)
     rungs = ladder_for(height)
@@ -133,10 +135,9 @@ def package(src_path, outdir):
     for rung in rungs:
         os.makedirs(os.path.join(outdir, f'v{rung[0]}'), exist_ok=True)
 
-    subprocess.run(
+    run_with_progress(
         build_command(src_path, outdir, rungs, has_audio),
-        capture_output=True, text=True,
-        timeout=TRANSCODE_TIMEOUT_SECONDS, check=True,
+        total_seconds, on_progress, TRANSCODE_TIMEOUT_SECONDS,
     )
     return rungs
 

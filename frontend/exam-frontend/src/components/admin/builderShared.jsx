@@ -489,7 +489,7 @@ export const buildInitial = (fields, instance) => {
 /* ===========================================================================
  * Generic entity modal (course/subject/chapter/topic/content/quiz)
  * ========================================================================= */
-export const EntityModal = ({ type, instance, defaults, onClose, onSubmit, saving }) => {
+export const EntityModal = ({ type, instance, defaults, onClose, onSubmit, saving, uploadPct = null }) => {
     const schema = SCHEMAS[type]
     const [values, setValues] = useState(() => ({
         ...buildInitial(schema.fields, instance),
@@ -649,11 +649,35 @@ export const EntityModal = ({ type, instance, defaults, onClose, onSubmit, savin
                         ))}
                     </div>
 
+                    {saving && uploadPct !== null && (
+                        <div className="pt-2">
+                            <div className="flex items-center justify-between text-xs mb-1.5">
+                                <span className="font-semibold text-surface-600 dark:text-surface-300">
+                                    {uploadPct < 100 ? 'Uploading file…' : 'Saving — finishing upload…'}
+                                </span>
+                                <span className="tabular-nums text-surface-500">{uploadPct}%</span>
+                            </div>
+                            <div className="h-1.5 rounded-full bg-surface-200 dark:bg-surface-700 overflow-hidden">
+                                <div
+                                    className="h-full rounded-full bg-primary-500 transition-[width] duration-200"
+                                    style={{ width: `${uploadPct}%` }}
+                                />
+                            </div>
+                            <p className="text-[11px] text-surface-400 mt-1.5">
+                                {uploadPct < 100
+                                    ? 'Keep this tab open until the upload finishes.'
+                                    : 'Storing the file — this can take a moment for a large video.'}
+                            </p>
+                        </div>
+                    )}
+
                     <div className="flex justify-end gap-2 pt-2">
                         <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
                         <button type="submit" disabled={saving} className="btn-primary">
                             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                            {isEdit ? 'Save Changes' : 'Create'}
+                            {saving && uploadPct !== null && uploadPct < 100
+                                ? `Uploading ${uploadPct}%`
+                                : isEdit ? 'Save Changes' : 'Create'}
                         </button>
                     </div>
                 </form>

@@ -22,7 +22,8 @@ class AdminContentSerializer(serializers.ModelSerializer):
             'id', 'title', 'slug', 'description', 'content_type', 'material_kind',
             'topic', 'topic_name', 'subject', 'subject_name', 'courses',
             'content_html', 'video_url', 'video_file', 'video_duration_minutes',
-            'video_duration_seconds', 'video_status', 'hls_status', 'pdf_file',
+            'video_duration_seconds', 'video_status', 'video_progress',
+            'hls_status', 'hls_progress', 'pdf_file',
             'difficulty', 'status', 'is_free', 'is_premium',
             'estimated_time_minutes', 'order', 'author_name',
             'views_count', 'likes_count', 'bookmarks_count',
@@ -31,6 +32,8 @@ class AdminContentSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'id', 'slug', 'views_count', 'likes_count', 'bookmarks_count',
             'created_at', 'updated_at',
+            # Owned by the optimisation pipeline, never by the form.
+            'video_status', 'video_progress', 'hls_status', 'hls_progress',
         ]
 
     def _unique_slug(self, title, instance=None):
