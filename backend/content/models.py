@@ -37,6 +37,13 @@ class Content(OrderedModel):
         ('practice', 'Practice questions'),
     ]
 
+    VIDEO_STATUS_CHOICES = [
+        ('pending', 'Pending optimisation'),
+        ('processing', 'Optimising'),
+        ('ready', 'Ready to stream'),
+        ('failed', 'Optimisation failed'),
+    ]
+
     title = models.CharField(max_length=500)
     slug = models.SlugField(max_length=500, unique=True)
     description = models.TextField(blank=True)
@@ -53,7 +60,23 @@ class Content(OrderedModel):
     content_html = models.TextField(blank=True)  # For notes
     video_url = models.URLField(blank=True)  # For videos (YouTube, Vimeo, Google Drive)
     video_file = models.FileField(upload_to='content_videos/', blank=True, null=True)  # Uploaded video on blob
+    # Streaming readiness of `video_file`. An MP4 whose `moov` index sits at the
+    # end of the file forces the browser to download almost all of it before the
+    # first frame renders, which is painful for long lectures. We remux uploads
+    # so the index sits up front; this tracks that pipeline.
+    video_status = models.CharField(
+        max_length=20, choices=VIDEO_STATUS_CHOICES, blank=True, default=''
+    )
     video_duration_minutes = models.PositiveIntegerField(null=True, blank=True)
+    video_duration_seconds = models.PositiveIntegerField(null=True, blank=True)
+    # Storage path of the HLS master playlist produced from `video_file`. HLS
+    # cuts the lecture into a few seconds per segment at several bitrates, so
+    # playback starts after one small segment and the quality adapts to the
+    # viewer's bandwidth instead of forcing one fixed bitrate on everyone.
+    hls_playlist = models.CharField(max_length=500, blank=True, default='')
+    hls_status = models.CharField(
+        max_length=20, choices=VIDEO_STATUS_CHOICES, blank=True, default=''
+    )
     pdf_file = models.FileField(upload_to='content_pdfs/', blank=True, null=True)
     thumbnail = models.ImageField(upload_to='content_thumbnails/', blank=True, null=True)
     

@@ -83,11 +83,107 @@ const writePrefs = (patch) => {
 }
 
 /**
- * Custom HTML5 video player with modern controls: play/pause, ±10s skip,
- * scrubbing with buffered range, volume, playback speed, picture-in-picture,
- * fullscreen and keyboard shortcuts.
+ * Adaptive-bitrate playback for an HLS master playlist.
+ *
+ * Safari plays HLS natively. Everywhere else hls.js drives Media Source
+ * Extensions; it is loaded lazily so browsers on a progressive MP4 never pay
+ * for the library. A deliberately conservative starting bandwidth estimate
+ * makes the first segment a low rung, so playback begins almost immediately
+ * and the quality climbs once real throughput is known.
  */
-const FileVideoPlayer = ({ src, title, onDuration }) => {
+const useHlsPlayback = (videoRef, hlsSrc) => {
+  const hlsRef = useRef(null)
+  const [levels, setLevels] = useState([])
+  const [level, setLevelState] = useState(-1)
+  const [activeLevel, setActiveLevel] = useState(-1)
+  const [unavailable, setUnavailable] = useState(false)
+
+  useEffect(() => {
+    const video = videoRef.current
+    setLevels([])
+    setLevelState(-1)
+    setActiveLevel(-1)
+    setUnavailable(false)
+    if (!video || !hlsSrc) return undefined
+
+    if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = hlsSrc
+      return () => {
+        video.removeAttribute('src')
+      }
+    }
+
+    let cancelled = false
+    let instance = null
+
+    import('hls.js')
+      .then(({ default: Hls }) => {
+        if (cancelled) return
+        if (!Hls.isSupported()) {
+          setUnavailable(true)
+          return
+        }
+        instance = new Hls({
+          // Keep memory sane on a two hour lecture while buffering far enough
+          // ahead to ride out a rough patch of network.
+          maxBufferLength: 30,
+          maxMaxBufferLength: 120,
+          backBufferLength: 60,
+          startLevel: -1,
+          abrEwmaDefaultEstimate: 800000,
+        })
+        hlsRef.current = instance
+
+        instance.on(Hls.Events.MANIFEST_PARSED, (_evt, data) => {
+          setLevels(
+            (data.levels || []).map((l, i) => ({
+              index: i,
+              height: l.height,
+              label: l.height ? `${l.height}p` : `${Math.round((l.bitrate || 0) / 1000)}k`,
+            })),
+          )
+        })
+        instance.on(Hls.Events.LEVEL_SWITCHED, (_evt, data) => setActiveLevel(data.level))
+        instance.on(Hls.Events.ERROR, (_evt, data) => {
+          if (!data.fatal) return
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            instance.startLoad()
+          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            instance.recoverMediaError()
+          } else {
+            instance.destroy()
+            hlsRef.current = null
+            // Fall back to the progressive MP4 rather than showing nothing.
+            setUnavailable(true)
+          }
+        })
+
+        instance.loadSource(hlsSrc)
+        instance.attachMedia(video)
+      })
+      .catch(() => setUnavailable(true))
+
+    return () => {
+      cancelled = true
+      if (instance) instance.destroy()
+      hlsRef.current = null
+    }
+  }, [hlsSrc, videoRef])
+
+  const setLevel = useCallback((index) => {
+    setLevelState(index)
+    if (hlsRef.current) hlsRef.current.currentLevel = index
+  }, [])
+
+  return { levels, level, activeLevel, setLevel, unavailable }
+}
+
+/**
+ * Custom HTML5 video player with modern controls: play/pause, ±10s skip,
+ * scrubbing with buffered range, volume, playback speed, quality selection,
+ * picture-in-picture, fullscreen and keyboard shortcuts.
+ */
+const FileVideoPlayer = ({ src, hlsSrc, title, poster, optimizing, onDuration }) => {
   const videoRef = useRef(null)
   const shellRef = useRef(null)
   const hideTimer = useRef(null)
@@ -100,6 +196,7 @@ const FileVideoPlayer = ({ src, title, onDuration }) => {
 
   const [playing, setPlaying] = useState(false)
   const [waiting, setWaiting] = useState(false)
+  const [ready, setReady] = useState(false)
   const [ended, setEnded] = useState(false)
   const [duration, setDuration] = useState(0)
   const [current, setCurrent] = useState(0)
@@ -118,6 +215,12 @@ const FileVideoPlayer = ({ src, title, onDuration }) => {
   const [showSpeedMenu, setShowSpeedMenu] = useState(false)
   const [scrubbing, setScrubbing] = useState(false)
   const [feedback, setFeedback] = useState(null)
+
+  const { levels, level, activeLevel, setLevel, unavailable: hlsUnavailable } =
+    useHlsPlayback(videoRef, hlsSrc)
+  // Only hand the element a direct URL when HLS is not driving it; hls.js feeds
+  // the video through Media Source Extensions instead of a `src`.
+  const progressive = !hlsSrc || hlsUnavailable
 
   useEffect(() => {
     if (!feedback) return undefined
@@ -300,6 +403,7 @@ const FileVideoPlayer = ({ src, title, onDuration }) => {
   const handleLoadedMetadata = (e) => {
     const video = e.currentTarget
     reportDuration(video.duration)
+    setReady(true)
     video.volume = volume
     video.muted = muted
     video.playbackRate = speed
@@ -378,8 +482,9 @@ const FileVideoPlayer = ({ src, title, onDuration }) => {
     >
       <video
         ref={videoRef}
-        src={src}
+        src={progressive ? src : undefined}
         title={title}
+        poster={poster || undefined}
         playsInline
         preload="metadata"
         controlsList="nodownload"
@@ -445,13 +550,26 @@ const FileVideoPlayer = ({ src, title, onDuration }) => {
         className="absolute right-0 top-0 h-[72%] w-1/4 md:hidden"
       />
 
-      {waiting && (
-        <div className="absolute inset-0 grid place-items-center pointer-events-none">
-          <Loader2 className="w-10 h-10 text-white/90 animate-spin" />
+      {optimizing && !playing && (
+        <div className="absolute top-3 left-3 right-3 flex justify-center pointer-events-none">
+          <span className="px-3 py-1.5 rounded-full bg-black/65 backdrop-blur-sm text-[11px] font-medium text-white/85">
+            Preparing this video for instant playback — the first start may be slower.
+          </span>
         </div>
       )}
 
-      {!playing && !waiting && (
+      {(waiting || !ready) && (
+        <div className="absolute inset-0 grid place-items-center pointer-events-none">
+          <div className="flex flex-col items-center gap-2 px-4 py-3 rounded-xl bg-black/45 backdrop-blur-sm">
+            <Loader2 className="w-9 h-9 text-white/90 animate-spin" />
+            <span className="text-xs font-medium text-white/80">
+              {ready ? 'Buffering…' : 'Loading video…'}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {ready && !playing && !waiting && (
         <button
           type="button"
           onClick={togglePlay}
@@ -599,7 +717,37 @@ const FileVideoPlayer = ({ src, title, onDuration }) => {
                 {speed !== 1 && <span className="text-[11px] font-semibold">{speed}x</span>}
               </button>
               {showSpeedMenu && (
-                <div className="absolute bottom-full right-0 mb-2 w-28 rounded-lg bg-black/90 backdrop-blur border border-white/10 py-1 shadow-xl">
+                <div className="absolute bottom-full right-0 mb-2 w-36 max-h-72 overflow-y-auto rounded-lg bg-black/90 backdrop-blur border border-white/10 py-1 shadow-xl">
+                  {levels.length > 1 && (
+                    <>
+                      <p className="px-3 py-1 text-[10px] uppercase tracking-wide text-white/50">Quality</p>
+                      <button
+                        type="button"
+                        onClick={() => setLevel(-1)}
+                        className="flex items-center justify-between w-full px-3 py-1.5 text-xs hover:bg-white/10"
+                      >
+                        <span>
+                          Auto
+                          {level === -1 && activeLevel >= 0 && levels[activeLevel] && (
+                            <span className="ml-1 text-white/45">{levels[activeLevel].label}</span>
+                          )}
+                        </span>
+                        {level === -1 && <Check className="w-3.5 h-3.5" />}
+                      </button>
+                      {[...levels].reverse().map((l) => (
+                        <button
+                          key={l.index}
+                          type="button"
+                          onClick={() => setLevel(l.index)}
+                          className="flex items-center justify-between w-full px-3 py-1.5 text-xs hover:bg-white/10"
+                        >
+                          <span>{l.label}</span>
+                          {level === l.index && <Check className="w-3.5 h-3.5" />}
+                        </button>
+                      ))}
+                      <div className="my-1 border-t border-white/10" />
+                    </>
+                  )}
                   <p className="px-3 py-1 text-[10px] uppercase tracking-wide text-white/50">Speed</p>
                   {SPEEDS.map((s) => (
                     <button
@@ -648,9 +796,11 @@ const FileVideoPlayer = ({ src, title, onDuration }) => {
  * Unified video player for reading material videos.
  * - External providers (YouTube/Vimeo/Drive) render in a responsive iframe.
  * - Videos uploaded to our blob render in a custom player with skip controls,
- *   speed control and the download control hidden.
+ *   speed control and the download control hidden. When an adaptive HLS ladder
+ *   has been published for the upload it is preferred over the progressive MP4,
+ *   which then serves as the fallback.
  */
-const VideoPlayer = ({ url, fileUrl, title, onDuration }) => {
+const VideoPlayer = ({ url, fileUrl, hlsUrl, title, poster, videoStatus, onDuration }) => {
   const { kind, src } = useMemo(() => resolveVideo(url, fileUrl), [url, fileUrl])
 
   if (kind === 'none') {
@@ -665,7 +815,14 @@ const VideoPlayer = ({ url, fileUrl, title, onDuration }) => {
   if (kind === 'file') {
     return (
       <div className="card overflow-hidden mb-6">
-        <FileVideoPlayer src={src} title={title} onDuration={onDuration} />
+        <FileVideoPlayer
+          src={src}
+          hlsSrc={hlsUrl || undefined}
+          title={title}
+          poster={poster}
+          optimizing={videoStatus === 'pending' || videoStatus === 'processing'}
+          onDuration={onDuration}
+        />
       </div>
     )
   }
