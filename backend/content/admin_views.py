@@ -7,7 +7,9 @@ import uuid
 
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
+from django.conf import settings
 from rest_framework import filters, status
+from rest_framework.decorators import action
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
@@ -17,6 +19,7 @@ from core.permissions import IsCourseEditor
 from exams.admin_views import TenantAdminModelViewSet
 from .models import Content
 from .admin_serializers import AdminContentSerializer
+from .tasks import dispatch_video_optimization
 
 
 class AdminImageUploadView(APIView):
@@ -59,3 +62,54 @@ class AdminContentViewSet(TenantAdminModelViewSet):
     ordering = ['order', '-created_at']
     tenant_lookup = 'subject__course__tenant'
     course_lookup = 'subject__course'
+
+    @action(detail=True, methods=['post'])
+    def reprocess_video(self, request, pk=None):
+        """Re-run the optimisation pipeline for an uploaded video.
+
+        Optimisation normally runs once, on upload. That leaves two gaps this
+        closes: videos uploaded before the pipeline existed, and uploads whose
+        job never ran because the worker was down or ffmpeg was missing. Both
+        leave a lecture that plays but cannot be seeked, with no way to retry
+        from the builder.
+
+        Safe to run on an already-good file: the task detects that cheaply and
+        moves straight on to the quality ladder, so the same button also serves
+        as a retry for failed HLS packaging.
+        """
+        content = self.get_object()
+
+        if not content.video_file:
+            return Response(
+                {'detail': 'This content has no uploaded video to process.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not getattr(settings, 'VIDEO_OPTIMIZATION_ENABLED', True):
+            return Response(
+                {'detail': 'Video processing is disabled on this server.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Re-queueing mid-encode would have two workers writing the same row.
+        if content.video_status in ('pending', 'processing') or content.hls_status == 'processing':
+            return Response(
+                {'detail': 'This video is already being processed.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        Content.objects.filter(pk=content.pk).update(
+            video_status='pending', video_progress=0,
+        )
+
+        if not dispatch_video_optimization(content.pk):
+            # Tell the admin now rather than leaving a row stuck on "queued".
+            Content.objects.filter(pk=content.pk).update(video_status='failed')
+            return Response(
+                {'detail': 'Could not reach the processing queue. '
+                           'Check that the media worker is running.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        content.refresh_from_db()
+        return Response(self.get_serializer(content).data)

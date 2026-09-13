@@ -8,7 +8,7 @@ import {
     FileText, ListChecks, GraduationCap, Pencil, Eye, Video, FileType,
     Sparkles, HelpCircle, ClipboardList, Clock, Users, X, CheckCircle2, Save,
     Code2, Trash2, Image as ImageIcon, Upload, Radio, Calendar, Link2,
-    Notebook as NotebookIcon, AlertTriangle, Zap,
+    Notebook as NotebookIcon, AlertTriangle, Zap, RefreshCw,
 } from 'lucide-react'
 import { contentBuilderService as svc } from '../services/contentBuilderService'
 import { tenantAdminService } from '../services/tenantAdminService'
@@ -43,6 +43,21 @@ const isVideoProcessing = (ct) =>
     (ct.video_status === 'ready' && ['pending', 'processing'].includes(ct.hls_status))
 
 /**
+ * Can the admin usefully kick off processing for this row?
+ *
+ * True for an uploaded video that is idle, which covers both a file that
+ * predates the pipeline and one whose job never ran because the worker was
+ * down. Re-encoding an already-finished video is allowed too — it is the only
+ * way to pick up a later pipeline improvement.
+ */
+const canReprocessVideo = (ct) =>
+    ct.content_type === 'video' && !!ct.video_file && !isVideoProcessing(ct)
+
+/** Nothing has ever been done to this uploaded file. */
+const isUnprocessedVideo = (ct) =>
+    ct.content_type === 'video' && !!ct.video_file && !ct.video_status
+
+/**
  * What the pipeline is doing to an uploaded video, in the admin's terms.
  *
  * Two stages run back to back. The first makes the file playable and seekable
@@ -52,7 +67,15 @@ const isVideoProcessing = (ct) =>
  */
 const videoPipelineState = (ct) => {
     const { video_status: vs, hls_status: hs } = ct
-    if (!vs) return null
+    if (!vs) {
+        // An uploaded file nothing has touched: it plays, but seeking may not
+        // work and startup can be slow. Worth surfacing, since the fix is one
+        // click away.
+        if (ct.content_type === 'video' && ct.video_file) {
+            return { tone: 'slate', icon: AlertTriangle, spin: false, label: 'Not optimised' }
+        }
+        return null
+    }
     if (vs === 'failed') {
         return { tone: 'rose', icon: AlertTriangle, label: 'Processing failed', spin: false }
     }
@@ -94,6 +117,7 @@ const PIPELINE_TONE = {
     sky: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400',
     rose: 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400',
     emerald: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+    slate: 'bg-surface-100 text-surface-500 dark:bg-surface-800 dark:text-surface-400',
 }
 
 const PIPELINE_BAR = {
@@ -101,6 +125,7 @@ const PIPELINE_BAR = {
     sky: 'bg-sky-500',
     rose: 'bg-rose-500',
     emerald: 'bg-emerald-500',
+    slate: 'bg-surface-400',
 }
 
 const VideoPipelineBadge = ({ ct }) => {
@@ -142,8 +167,23 @@ const ContentSection = ({ topic, subjectId, openModal, askDelete }) => {
     const videos = contents.filter((ct) => ct.content_type === 'video')
     const reading = contents.filter((ct) => ct.content_type !== 'video')
 
+    const queryClient = useQueryClient()
+    const reprocess = useMutation({
+        mutationFn: (ct) => svc.reprocessVideo(ct.id),
+        onSuccess: () => {
+            toast.success('Processing queued')
+            queryClient.invalidateQueries({ queryKey: ['cb-contents', topic.id] })
+        },
+        onError: (err) => toast.error(formatApiError(err)),
+    })
+
     const ContentRow = ({ ct }) => {
         const Icon = CONTENT_ICON[ct.content_type] || FileText
+        const busy = reprocess.isPending && reprocess.variables?.id === ct.id
+        const failed = ct.video_status === 'failed' || ct.hls_status === 'failed'
+        const label = isUnprocessedVideo(ct)
+            ? 'Optimise video'
+            : failed ? 'Retry processing' : 'Re-encode video'
         return (
             <div className="group card p-3.5 flex items-center justify-between gap-3 hover:border-primary-200 dark:hover:border-primary-800 transition-colors">
                 <div className="flex items-center gap-3 min-w-0">
@@ -159,11 +199,33 @@ const ContentSection = ({ topic, subjectId, openModal, askDelete }) => {
                         <VideoPipelineBadge ct={ct} />
                     </div>
                 </div>
-                <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-                    <RowActions
-                        onEdit={() => openModal('content', ct, { topicId: topic.id, subjectId })}
-                        onDelete={() => askDelete('content', ct, ct.title)}
-                    />
+                <div className="flex items-center gap-1 shrink-0">
+                    {canReprocessVideo(ct) && (
+                        <button
+                            onClick={() => reprocess.mutate(ct)}
+                            disabled={busy}
+                            title={label}
+                            // An unoptimised or failed video needs attention, so
+                            // that button stays visible; re-encoding a healthy
+                            // one is a power action and only shows on hover.
+                            className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg transition-all disabled:opacity-60 ${
+                                isUnprocessedVideo(ct) || failed
+                                    ? 'text-amber-700 bg-amber-100 hover:bg-amber-200 dark:text-amber-400 dark:bg-amber-900/30 dark:hover:bg-amber-900/50'
+                                    : 'opacity-0 group-hover:opacity-100 text-surface-400 hover:text-primary-600 hover:bg-surface-100 dark:hover:bg-surface-800'
+                            }`}
+                        >
+                            {busy
+                                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                : <RefreshCw className="w-3.5 h-3.5" />}
+                            {label}
+                        </button>
+                    )}
+                    <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                        <RowActions
+                            onEdit={() => openModal('content', ct, { topicId: topic.id, subjectId })}
+                            onDelete={() => askDelete('content', ct, ct.title)}
+                        />
+                    </div>
                 </div>
             </div>
         )

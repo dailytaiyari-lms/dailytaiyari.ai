@@ -344,6 +344,25 @@ def optimize_content_video(self, content_id):
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+def dispatch_video_optimization(content_id):
+    """Send a content to the media queue. Returns False if the broker refused.
+
+    Callers that a human is waiting on need to know whether the job was really
+    accepted, rather than discovering days later that nothing ran.
+    """
+    try:
+        # retry=False so a dead broker fails immediately instead of blocking
+        # the request thread that just finished the upload.
+        optimize_content_video.apply_async(
+            args=[content_id], queue='media', retry=False, ignore_result=True,
+        )
+        return True
+    except Exception:
+        # Broker down — the upload still plays, just without the speed-up.
+        logger.warning('Could not queue video optimisation for %s', content_id, exc_info=True)
+        return False
+
+
 def enqueue_video_optimization(content):
     """Queue optimisation for a content row once its transaction commits."""
     from django.conf import settings
@@ -355,18 +374,7 @@ def enqueue_video_optimization(content):
 
     content_id = content.pk
 
-    def _dispatch():
-        try:
-            # retry=False so a dead broker fails immediately instead of blocking
-            # the request thread that just finished the upload.
-            optimize_content_video.apply_async(
-                args=[content_id], queue='media', retry=False, ignore_result=True,
-            )
-        except Exception:
-            # Broker down — the upload still plays, just without the speed-up.
-            logger.warning('Could not queue video optimisation for %s', content_id, exc_info=True)
-
-    transaction.on_commit(_dispatch)
+    transaction.on_commit(lambda: dispatch_video_optimization(content_id))
 
 
 HLS_TIMEOUT_SECONDS = int(os.environ.get('VIDEO_TRANSCODE_TIMEOUT', str(6 * 3600)))

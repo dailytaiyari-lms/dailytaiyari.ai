@@ -100,6 +100,8 @@ export const contentBuilderService = {
     return (await api.patch(`/content/admin/contents/${id}/`, body, config)).data
   },
   deleteContent: async (id) => api.delete(`/content/admin/contents/${id}/`),
+  reprocessVideo: async (id) =>
+    (await api.post(`/content/admin/contents/${id}/reprocess_video/`)).data,
 
   // ---- Quizzes ----
   getQuizzes: async (topicId) =>
