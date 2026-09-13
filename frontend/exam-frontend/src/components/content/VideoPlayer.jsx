@@ -91,6 +91,12 @@ const FileVideoPlayer = ({ src, title }) => {
   const videoRef = useRef(null)
   const shellRef = useRef(null)
   const hideTimer = useRef(null)
+  // Target of an in-flight seek. Some hosts drop the connection when we jump
+  // past the buffered range, which makes the element reload and restart at 0 —
+  // we re-apply this target once the media is ready again.
+  const pendingSeekRef = useRef(null)
+  const seekAttemptsRef = useRef(0)
+  const resumeAfterSeekRef = useRef(false)
 
   const [playing, setPlaying] = useState(false)
   const [waiting, setWaiting] = useState(false)
@@ -138,24 +144,90 @@ const FileVideoPlayer = ({ src, title }) => {
     revealControls()
   }, [revealControls])
 
+  const applySeek = useCallback((target) => {
+    const video = videoRef.current
+    if (!video) return
+    pendingSeekRef.current = target
+    seekAttemptsRef.current = 0
+    resumeAfterSeekRef.current = !video.paused && !video.ended
+    try {
+      video.currentTime = target
+    } catch {
+      /* seek may throw while the media is not ready yet */
+    }
+    setCurrent(target)
+  }, [])
+
+  const clearPendingSeek = useCallback(() => {
+    const video = videoRef.current
+    pendingSeekRef.current = null
+    seekAttemptsRef.current = 0
+    if (video && resumeAfterSeekRef.current && video.paused && !video.ended) {
+      video.play().catch(() => {})
+    }
+    resumeAfterSeekRef.current = false
+    if (video) setCurrent(video.currentTime)
+  }, [])
+
+  // Re-apply a pending seek once the element is ready again. Covers hosts that
+  // restart the stream (and reset currentTime to 0) on a forward jump.
+  const settlePendingSeek = useCallback(() => {
+    const video = videoRef.current
+    const target = pendingSeekRef.current
+    if (!video || target == null) return
+    if (!Number.isFinite(video.duration) || video.duration <= 0) return
+    if (Math.abs(video.currentTime - target) < 0.75) {
+      clearPendingSeek()
+      return
+    }
+    if (seekAttemptsRef.current >= 3) {
+      // Source refuses to seek there — stop fighting it and follow the media.
+      clearPendingSeek()
+      return
+    }
+    seekAttemptsRef.current += 1
+    try {
+      video.currentTime = Math.min(target, Math.max(video.duration - 0.25, 0))
+    } catch {
+      clearPendingSeek()
+    }
+  }, [clearPendingSeek])
+
+  const seekToTime = useCallback(
+    (value) => {
+      const video = videoRef.current
+      if (!video) return
+      const dur = Number.isFinite(video.duration) ? video.duration : 0
+      if (dur <= 0) return
+      // Stop just short of the very end so a forward jump never fires `ended`.
+      applySeek(Math.min(Math.max(value, 0), Math.max(dur - 0.25, 0)))
+    },
+    [applySeek],
+  )
+
   const seekBy = useCallback(
     (delta) => {
       const video = videoRef.current
-      if (!video || !Number.isFinite(video.duration)) return
-      video.currentTime = Math.min(Math.max(video.currentTime + delta, 0), video.duration)
-      setCurrent(video.currentTime)
+      if (!video) return
+      const from = pendingSeekRef.current ?? video.currentTime
+      seekToTime(from + delta)
       setFeedback({ dir: delta > 0 ? 'forward' : 'back', value: Math.abs(delta), id: Date.now() })
       revealControls()
     },
-    [revealControls],
+    [seekToTime, revealControls],
   )
 
-  const seekTo = useCallback((value) => {
-    const video = videoRef.current
-    if (!video) return
-    video.currentTime = value
-    setCurrent(value)
-  }, [])
+  const seekTo = seekToTime
+
+  // Safety net: never let a stuck pending seek block time updates forever.
+  useEffect(() => {
+    const t = setInterval(() => {
+      const video = videoRef.current
+      if (!video || pendingSeekRef.current == null) return
+      if (video.readyState >= 1) settlePendingSeek()
+    }, 500)
+    return () => clearInterval(t)
+  }, [settlePendingSeek])
 
   const changeVolume = useCallback((value) => {
     const video = videoRef.current
@@ -222,6 +294,7 @@ const FileVideoPlayer = ({ src, title }) => {
     video.volume = volume
     video.muted = muted
     video.playbackRate = speed
+    settlePendingSeek()
   }
 
   const handleProgress = (e) => {
@@ -299,12 +372,22 @@ const FileVideoPlayer = ({ src, title }) => {
         src={src}
         title={title}
         playsInline
+        preload="metadata"
         controlsList="nodownload"
         onContextMenu={(e) => e.preventDefault()}
         onClick={togglePlay}
         onDoubleClick={toggleFullscreen}
         onLoadedMetadata={handleLoadedMetadata}
-        onTimeUpdate={(e) => !scrubbing && setCurrent(e.currentTarget.currentTime)}
+        onTimeUpdate={(e) => {
+          if (scrubbing) return
+          // While a seek is in flight, ignore stale positions from a stream
+          // that restarted at 0 — settlePendingSeek will restore the target.
+          if (pendingSeekRef.current != null) return
+          setCurrent(e.currentTarget.currentTime)
+        }}
+        onSeeked={settlePendingSeek}
+        onCanPlayThrough={settlePendingSeek}
+        onLoadedData={settlePendingSeek}
         onDurationChange={(e) => setDuration(e.currentTarget.duration || 0)}
         onProgress={handleProgress}
         onPlay={() => {
@@ -317,8 +400,14 @@ const FileVideoPlayer = ({ src, title }) => {
           setControlsVisible(true)
         }}
         onWaiting={() => setWaiting(true)}
-        onPlaying={() => setWaiting(false)}
-        onCanPlay={() => setWaiting(false)}
+        onPlaying={() => {
+          setWaiting(false)
+          settlePendingSeek()
+        }}
+        onCanPlay={() => {
+          setWaiting(false)
+          settlePendingSeek()
+        }}
         onEnded={() => {
           setPlaying(false)
           setEnded(true)
