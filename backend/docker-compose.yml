@@ -198,10 +198,54 @@ services:
     volumes:
       - piston_data:/piston
     # No `ports:` on purpose — do NOT expose to host/internet.
+    # Assert the engine actually has runtimes, not merely that the port is open:
+    # a Piston with an empty package store answers `[]` here and 503s every
+    # submission, which is exactly the failure this healthcheck must catch.
+    # The image ships neither curl nor wget, so probe with node.
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - |
+          require('http').get('http://localhost:2000/api/v2/runtimes', r => {
+            let d = '';
+            r.on('data', c => d += c);
+            r.on('end', () => {
+              try { process.exit(JSON.parse(d).length > 0 ? 0 : 1); }
+              catch (e) { process.exit(1); }
+            });
+          }).on('error', () => process.exit(1));
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      # Generous: a cold start that has to install gcc takes several minutes,
+      # and we don't want the container marked unhealthy while it provisions.
+      start_period: 600s
     cpus: "1.0"
     mem_limit: 1536m
     mem_reservation: 256m
     pids_limit: 1024
+
+  # One-shot provisioner: installs the language runtimes coding problems need.
+  # Piston boots with an EMPTY package store, and the packages live in the
+  # `piston_data` volume — so any fresh volume (first boot, `compose down -v`,
+  # volume prune, VM rebuild) silently leaves Piston up but with zero languages
+  # and every Run/Submit returning 503. Running this on each `compose up` makes
+  # that state self-healing. It exits 0 immediately when everything is present.
+  #
+  # Deliberately NOT a `depends_on` of `web`: installing gcc takes minutes and
+  # must never block the app from starting.
+  piston-init:
+    image: curlimages/curl:8.5.0
+    depends_on:
+      - piston
+    environment:
+      - PISTON_URL=http://piston:2000
+    volumes:
+      - ./deploy/piston/provision.sh:/provision.sh:ro
+    entrypoint: ["sh", "/provision.sh"]
+    restart: on-failure:3
 
   nginx:
     image: nginx:1.25-alpine
