@@ -117,8 +117,10 @@ const ContentViewer = () => {
   // stored on the content) over the generic estimated reading time.
   const isVideo = content?.content_type === 'video'
   const durationLabel = (() => {
-    if (isVideo && videoDuration > 0) return formatTime(videoDuration)
+    // ffprobe on the server is authoritative: a browser reads the length out of
+    // the file header, which some uploads (fragmented MP4s) get wrong.
     if (isVideo && content?.video_duration_seconds) return formatTime(content.video_duration_seconds)
+    if (isVideo && videoDuration > 0) return formatTime(videoDuration)
     if (isVideo && content?.video_duration_minutes) return `${content.video_duration_minutes} min`
     return `${content?.estimated_time_minutes ?? 0} min`
   })()
