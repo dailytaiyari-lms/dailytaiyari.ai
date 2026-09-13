@@ -54,7 +54,7 @@ export const resolveVideo = (url = '', fileUrl = '') => {
   return { kind: 'none', src: '' }
 }
 
-const formatTime = (seconds) => {
+export const formatTime = (seconds) => {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00'
   const total = Math.floor(seconds)
   const h = Math.floor(total / 3600)
@@ -87,7 +87,7 @@ const writePrefs = (patch) => {
  * scrubbing with buffered range, volume, playback speed, picture-in-picture,
  * fullscreen and keyboard shortcuts.
  */
-const FileVideoPlayer = ({ src, title }) => {
+const FileVideoPlayer = ({ src, title, onDuration }) => {
   const videoRef = useRef(null)
   const shellRef = useRef(null)
   const hideTimer = useRef(null)
@@ -143,6 +143,15 @@ const FileVideoPlayer = ({ src, title }) => {
     else video.pause()
     revealControls()
   }, [revealControls])
+
+  const reportDuration = useCallback(
+    (value) => {
+      const next = Number.isFinite(value) && value > 0 ? value : 0
+      setDuration(next)
+      if (next) onDuration?.(next)
+    },
+    [onDuration],
+  )
 
   const applySeek = useCallback((target) => {
     const video = videoRef.current
@@ -290,7 +299,7 @@ const FileVideoPlayer = ({ src, title }) => {
 
   const handleLoadedMetadata = (e) => {
     const video = e.currentTarget
-    setDuration(video.duration || 0)
+    reportDuration(video.duration)
     video.volume = volume
     video.muted = muted
     video.playbackRate = speed
@@ -388,7 +397,7 @@ const FileVideoPlayer = ({ src, title }) => {
         onSeeked={settlePendingSeek}
         onCanPlayThrough={settlePendingSeek}
         onLoadedData={settlePendingSeek}
-        onDurationChange={(e) => setDuration(e.currentTarget.duration || 0)}
+        onDurationChange={(e) => reportDuration(e.currentTarget.duration)}
         onProgress={handleProgress}
         onPlay={() => {
           setPlaying(true)
@@ -640,7 +649,7 @@ const FileVideoPlayer = ({ src, title }) => {
  * - Videos uploaded to our blob render in a custom player with skip controls,
  *   speed control and the download control hidden.
  */
-const VideoPlayer = ({ url, fileUrl, title }) => {
+const VideoPlayer = ({ url, fileUrl, title, onDuration }) => {
   const { kind, src } = useMemo(() => resolveVideo(url, fileUrl), [url, fileUrl])
 
   if (kind === 'none') {
@@ -655,7 +664,7 @@ const VideoPlayer = ({ url, fileUrl, title }) => {
   if (kind === 'file') {
     return (
       <div className="card overflow-hidden mb-6">
-        <FileVideoPlayer src={src} title={title} />
+        <FileVideoPlayer src={src} title={title} onDuration={onDuration} />
       </div>
     )
   }
