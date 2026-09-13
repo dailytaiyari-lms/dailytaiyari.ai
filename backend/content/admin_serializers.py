@@ -21,7 +21,8 @@ class AdminContentSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'title', 'slug', 'description', 'content_type', 'material_kind',
             'topic', 'topic_name', 'subject', 'subject_name', 'courses',
-            'content_html', 'video_url', 'video_file', 'video_duration_minutes', 'pdf_file',
+            'content_html', 'video_url', 'video_file', 'video_duration_minutes',
+            'video_duration_seconds', 'video_status', 'pdf_file',
             'difficulty', 'status', 'is_free', 'is_premium',
             'estimated_time_minutes', 'order', 'author_name',
             'views_count', 'likes_count', 'bookmarks_count',

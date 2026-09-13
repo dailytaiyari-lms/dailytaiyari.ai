@@ -152,6 +152,29 @@ services:
       redis:
         condition: service_healthy
 
+  # Dedicated worker for the `media` queue: faststart remuxing of uploaded
+  # lecture videos. A two hour file is I/O heavy and can run for many minutes,
+  # so it gets its own worker — a big upload must never head-of-line block
+  # coding grading or AI authoring. Concurrency stays at 1 because ffmpeg is
+  # already disk-bound and parallel remuxes only fight each other.
+  celery-mediaworker:
+    build: .
+    restart: unless-stopped
+    entrypoint: []
+    command: >
+      celery -A dailytaiyari worker --loglevel=info
+      --queues=media
+      --concurrency=${CELERY_MEDIA_CONCURRENCY:-1}
+    volumes:
+      - .:/app
+      - media_volume:/app/media
+    environment: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   # Sandboxed notebook grading runner. Runs untrusted student notebook code.
   # SECURITY: never publish ports (internal docker network only); reachable only
   # from `web`/`celery-nbworker` at http://nbrunner:2100. Unlike Piston it needs

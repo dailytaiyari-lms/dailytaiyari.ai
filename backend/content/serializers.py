@@ -15,7 +15,7 @@ class ContentSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'title', 'slug', 'description', 'content_type', 'material_kind',
             'topic', 'topic_name', 'subject', 'subject_name',
-            'video_url', 'video_duration_minutes', 'thumbnail',
+            'video_url', 'video_duration_minutes', 'video_duration_seconds', 'thumbnail',
             'difficulty', 'status', 'is_free', 'is_premium',
             'estimated_time_minutes', 'views_count', 'likes_count',
             'bookmarks_count', 'author_name', 'order', 'created_at'
@@ -27,7 +27,9 @@ class ContentDetailSerializer(ContentSerializer):
     has_pdf = serializers.SerializerMethodField()
 
     class Meta(ContentSerializer.Meta):
-        fields = ContentSerializer.Meta.fields + ['content_html', 'video_file', 'has_pdf']
+        fields = ContentSerializer.Meta.fields + [
+            'content_html', 'video_file', 'video_status', 'has_pdf',
+        ]
 
     def get_has_pdf(self, obj):
         return bool(obj.pdf_file)

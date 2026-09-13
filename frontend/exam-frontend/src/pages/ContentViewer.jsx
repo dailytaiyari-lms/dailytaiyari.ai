@@ -118,6 +118,7 @@ const ContentViewer = () => {
   const isVideo = content?.content_type === 'video'
   const durationLabel = (() => {
     if (isVideo && videoDuration > 0) return formatTime(videoDuration)
+    if (isVideo && content?.video_duration_seconds) return formatTime(content.video_duration_seconds)
     if (isVideo && content?.video_duration_minutes) return `${content.video_duration_minutes} min`
     return `${content?.estimated_time_minutes ?? 0} min`
   })()
@@ -200,6 +201,8 @@ const ContentViewer = () => {
           url={content.video_url}
           fileUrl={content.video_file}
           title={content.title}
+          poster={content.thumbnail}
+          videoStatus={content.video_status}
           onDuration={setVideoDuration}
         />
       )}

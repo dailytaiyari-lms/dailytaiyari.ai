@@ -87,7 +87,7 @@ const writePrefs = (patch) => {
  * scrubbing with buffered range, volume, playback speed, picture-in-picture,
  * fullscreen and keyboard shortcuts.
  */
-const FileVideoPlayer = ({ src, title, onDuration }) => {
+const FileVideoPlayer = ({ src, title, poster, optimizing, onDuration }) => {
   const videoRef = useRef(null)
   const shellRef = useRef(null)
   const hideTimer = useRef(null)
@@ -100,6 +100,7 @@ const FileVideoPlayer = ({ src, title, onDuration }) => {
 
   const [playing, setPlaying] = useState(false)
   const [waiting, setWaiting] = useState(false)
+  const [ready, setReady] = useState(false)
   const [ended, setEnded] = useState(false)
   const [duration, setDuration] = useState(0)
   const [current, setCurrent] = useState(0)
@@ -300,6 +301,7 @@ const FileVideoPlayer = ({ src, title, onDuration }) => {
   const handleLoadedMetadata = (e) => {
     const video = e.currentTarget
     reportDuration(video.duration)
+    setReady(true)
     video.volume = volume
     video.muted = muted
     video.playbackRate = speed
@@ -380,6 +382,7 @@ const FileVideoPlayer = ({ src, title, onDuration }) => {
         ref={videoRef}
         src={src}
         title={title}
+        poster={poster || undefined}
         playsInline
         preload="metadata"
         controlsList="nodownload"
@@ -445,13 +448,26 @@ const FileVideoPlayer = ({ src, title, onDuration }) => {
         className="absolute right-0 top-0 h-[72%] w-1/4 md:hidden"
       />
 
-      {waiting && (
-        <div className="absolute inset-0 grid place-items-center pointer-events-none">
-          <Loader2 className="w-10 h-10 text-white/90 animate-spin" />
+      {optimizing && !playing && (
+        <div className="absolute top-3 left-3 right-3 flex justify-center pointer-events-none">
+          <span className="px-3 py-1.5 rounded-full bg-black/65 backdrop-blur-sm text-[11px] font-medium text-white/85">
+            Preparing this video for instant playback — the first start may be slower.
+          </span>
         </div>
       )}
 
-      {!playing && !waiting && (
+      {(waiting || !ready) && (
+        <div className="absolute inset-0 grid place-items-center pointer-events-none">
+          <div className="flex flex-col items-center gap-2 px-4 py-3 rounded-xl bg-black/45 backdrop-blur-sm">
+            <Loader2 className="w-9 h-9 text-white/90 animate-spin" />
+            <span className="text-xs font-medium text-white/80">
+              {ready ? 'Buffering…' : 'Loading video…'}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {ready && !playing && !waiting && (
         <button
           type="button"
           onClick={togglePlay}
@@ -650,7 +666,7 @@ const FileVideoPlayer = ({ src, title, onDuration }) => {
  * - Videos uploaded to our blob render in a custom player with skip controls,
  *   speed control and the download control hidden.
  */
-const VideoPlayer = ({ url, fileUrl, title, onDuration }) => {
+const VideoPlayer = ({ url, fileUrl, title, poster, videoStatus, onDuration }) => {
   const { kind, src } = useMemo(() => resolveVideo(url, fileUrl), [url, fileUrl])
 
   if (kind === 'none') {
@@ -665,7 +681,13 @@ const VideoPlayer = ({ url, fileUrl, title, onDuration }) => {
   if (kind === 'file') {
     return (
       <div className="card overflow-hidden mb-6">
-        <FileVideoPlayer src={src} title={title} onDuration={onDuration} />
+        <FileVideoPlayer
+          src={src}
+          title={title}
+          poster={poster}
+          optimizing={videoStatus === 'pending' || videoStatus === 'processing'}
+          onDuration={onDuration}
+        />
       </div>
     )
   }
