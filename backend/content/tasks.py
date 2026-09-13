@@ -15,9 +15,11 @@ first chunk arrives, and seeking works off byte ranges.
 import json
 import logging
 import os
+import posixpath
 import shutil
 import subprocess
 import tempfile
+import uuid
 
 from celery import shared_task
 from django.core.files import File
@@ -147,6 +149,7 @@ def optimize_content_video(self, content_id):
         if is_faststart(local_src):
             fields['video_status'] = 'ready'
             Content.objects.filter(pk=content_id).update(**fields)
+            enqueue_hls_packaging(content_id)
             return 'already-faststart'
 
         remux_faststart(local_src, local_out)
@@ -167,6 +170,7 @@ def optimize_content_video(self, content_id):
         except Exception:
             logger.warning('Could not delete original video %s', source_name, exc_info=True)
 
+        enqueue_hls_packaging(content_id)
         return 'remuxed'
 
     except subprocess.TimeoutExpired:
@@ -212,3 +216,100 @@ def enqueue_video_optimization(content):
             logger.warning('Could not queue video optimisation for %s', content_id, exc_info=True)
 
     transaction.on_commit(_dispatch)
+
+
+HLS_TIMEOUT_SECONDS = int(os.environ.get('VIDEO_TRANSCODE_TIMEOUT', str(6 * 3600)))
+
+
+@shared_task(
+    name='content.package_video_hls',
+    bind=True,
+    max_retries=1,
+    default_retry_delay=300,
+    acks_late=True,
+    soft_time_limit=HLS_TIMEOUT_SECONDS + 300,
+    time_limit=HLS_TIMEOUT_SECONDS + 600,
+)
+def package_content_hls(self, content_id):
+    """Publish an adaptive-bitrate HLS ladder for a content's video.
+
+    Runs after the faststart remux, so the lecture is already watchable while
+    this is grinding away. When it finishes the player switches to HLS and
+    starts on a small segment instead of a big progressive stream.
+    """
+    from content.models import Content
+    from content import hls
+
+    try:
+        content = Content.objects.get(pk=content_id)
+    except Content.DoesNotExist:
+        return 'content-missing'
+
+    if not content.video_file:
+        return 'no-video'
+
+    Content.objects.filter(pk=content_id).update(hls_status='processing')
+    previous = content.hls_playlist
+    prefix = f'content_hls/{content_id}'
+    workdir = tempfile.mkdtemp(prefix='dt-hls-')
+    local_src = os.path.join(workdir, 'source.mp4')
+    outdir = os.path.join(workdir, 'out')
+    os.makedirs(outdir, exist_ok=True)
+
+    try:
+        with content.video_file.open('rb') as remote, open(local_src, 'wb') as local:
+            shutil.copyfileobj(remote, local, length=8 * 1024 * 1024)
+
+        rungs = hls.package(local_src, outdir)
+
+        # Publish under a fresh generation so viewers mid-playback keep the old
+        # tree working; the previous generation is removed afterwards.
+        generation = posixpath.join(prefix, uuid.uuid4().hex[:8])
+        master = hls.upload(outdir, generation)
+        if not master:
+            raise RuntimeError('HLS packaging produced no master playlist')
+
+        Content.objects.filter(pk=content_id).update(
+            hls_playlist=master, hls_status='ready',
+        )
+
+        if previous:
+            old_generation = posixpath.dirname(previous)
+            if old_generation and old_generation != generation:
+                hls.delete_tree(old_generation)
+
+        return f'packaged:{",".join(r[0] for r in rungs)}'
+
+    except subprocess.TimeoutExpired:
+        Content.objects.filter(pk=content_id).update(hls_status='failed')
+        logger.error('HLS packaging timed out for content %s', content_id)
+        return 'timeout'
+    except FileNotFoundError:
+        Content.objects.filter(pk=content_id).update(hls_status='failed')
+        logger.error('ffmpeg is not available; skipping HLS for %s', content_id)
+        return 'ffmpeg-missing'
+    except Exception as exc:
+        Content.objects.filter(pk=content_id).update(hls_status='failed')
+        logger.exception('HLS packaging failed for content %s', content_id)
+        try:
+            raise self.retry(exc=exc)
+        except self.MaxRetriesExceededError:
+            return 'failed'
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+def enqueue_hls_packaging(content_id):
+    """Queue HLS packaging, tolerating a broker that is not reachable."""
+    from django.conf import settings
+    from content.models import Content
+
+    if not getattr(settings, 'VIDEO_HLS_ENABLED', True):
+        return
+    Content.objects.filter(pk=content_id).update(hls_status='pending')
+    try:
+        package_content_hls.apply_async(
+            args=[content_id], queue='media', retry=False, ignore_result=True,
+        )
+    except Exception:
+        logger.warning('Could not queue HLS packaging for %s', content_id, exc_info=True)

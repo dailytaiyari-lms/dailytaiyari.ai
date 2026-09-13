@@ -200,6 +200,7 @@ const ContentViewer = () => {
         <VideoPlayer
           url={content.video_url}
           fileUrl={content.video_file}
+          hlsUrl={content.hls_url}
           title={content.title}
           poster={content.thumbnail}
           videoStatus={content.video_status}

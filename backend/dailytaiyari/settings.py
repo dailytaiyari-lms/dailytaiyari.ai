@@ -462,6 +462,10 @@ CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 # content/tasks.py). Turn off where ffmpeg is unavailable.
 VIDEO_OPTIMIZATION_ENABLED = config('VIDEO_OPTIMIZATION_ENABLED', default=True, cast=bool)
 
+# Adaptive-bitrate HLS packaging (see content/hls.py). This re-encodes, so it is
+# CPU-heavy and runs on the dedicated `media` queue well after upload.
+VIDEO_HLS_ENABLED = config('VIDEO_HLS_ENABLED', default=True, cast=bool)
+
 # Caching. Prefer a shared Redis cache when REDIS_URL is configured (needed once
 # there are multiple web workers/hosts); otherwise fall back to per-process
 # LocMem so the app still runs without Redis.

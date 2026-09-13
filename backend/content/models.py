@@ -69,6 +69,14 @@ class Content(OrderedModel):
     )
     video_duration_minutes = models.PositiveIntegerField(null=True, blank=True)
     video_duration_seconds = models.PositiveIntegerField(null=True, blank=True)
+    # Storage path of the HLS master playlist produced from `video_file`. HLS
+    # cuts the lecture into a few seconds per segment at several bitrates, so
+    # playback starts after one small segment and the quality adapts to the
+    # viewer's bandwidth instead of forcing one fixed bitrate on everyone.
+    hls_playlist = models.CharField(max_length=500, blank=True, default='')
+    hls_status = models.CharField(
+        max_length=20, choices=VIDEO_STATUS_CHOICES, blank=True, default=''
+    )
     pdf_file = models.FileField(upload_to='content_pdfs/', blank=True, null=True)
     thumbnail = models.ImageField(upload_to='content_thumbnails/', blank=True, null=True)
     

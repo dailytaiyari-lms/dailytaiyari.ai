@@ -1,6 +1,7 @@
 """
 Serializers for Content app.
 """
+from django.core.files.storage import default_storage
 from rest_framework import serializers
 from .models import Content, ContentProgress, StudyPlan, StudyPlanItem
 
@@ -25,14 +26,27 @@ class ContentSerializer(serializers.ModelSerializer):
 class ContentDetailSerializer(ContentSerializer):
     """Detailed serializer with content body."""
     has_pdf = serializers.SerializerMethodField()
+    hls_url = serializers.SerializerMethodField()
 
     class Meta(ContentSerializer.Meta):
         fields = ContentSerializer.Meta.fields + [
-            'content_html', 'video_file', 'video_status', 'has_pdf',
+            'content_html', 'video_file', 'video_status',
+            'hls_url', 'hls_status', 'has_pdf',
         ]
 
     def get_has_pdf(self, obj):
         return bool(obj.pdf_file)
+
+    def get_hls_url(self, obj):
+        """Absolute URL of the adaptive playlist, when one has been published."""
+        if obj.hls_status != 'ready' or not obj.hls_playlist:
+            return None
+        try:
+            url = default_storage.url(obj.hls_playlist)
+        except Exception:
+            return None
+        request = self.context.get('request')
+        return request.build_absolute_uri(url) if request else url
 
 
 class ContentProgressSerializer(serializers.ModelSerializer):

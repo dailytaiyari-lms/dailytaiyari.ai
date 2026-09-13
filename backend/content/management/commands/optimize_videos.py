@@ -6,11 +6,12 @@ pipeline existed.
     python manage.py optimize_videos --all
     python manage.py optimize_videos --content-id 42
     python manage.py optimize_videos --sync      # run inline, no Celery
+    python manage.py optimize_videos --hls-only  # only (re)build HLS ladders
 """
 from django.core.management.base import BaseCommand
 
 from content.models import Content
-from content.tasks import optimize_content_video
+from content.tasks import optimize_content_video, package_content_hls
 
 
 class Command(BaseCommand):
@@ -25,14 +26,20 @@ class Command(BaseCommand):
                             help='List what would be processed and exit.')
         parser.add_argument('--sync', action='store_true',
                             help='Process inline instead of queueing to Celery.')
+        parser.add_argument('--hls-only', action='store_true',
+                            help='Skip the remux and only build HLS ladders.')
 
     def handle(self, *args, **options):
         qs = Content.objects.exclude(video_file='').exclude(video_file__isnull=True)
 
         if options['content_id']:
             qs = qs.filter(pk=options['content_id'])
+        elif options['hls_only']:
+            qs = qs.exclude(hls_status='ready')
         elif not options['all']:
             qs = qs.exclude(video_status='ready')
+
+        task = package_content_hls if options['hls_only'] else optimize_content_video
 
         total = qs.count()
         if not total:
@@ -41,17 +48,18 @@ class Command(BaseCommand):
 
         self.stdout.write(f'{total} video(s) to process.')
 
-        for content in qs.only('id', 'title', 'video_file', 'video_status').iterator():
+        for content in qs.only('id', 'title', 'video_file', 'video_status', 'hls_status').iterator():
             label = f'#{content.pk} {content.title[:60]}'
+            state = content.hls_status if options['hls_only'] else content.video_status
             if options['dry_run']:
-                self.stdout.write(f'  would process {label} [{content.video_status or "new"}]')
+                self.stdout.write(f'  would process {label} [{state or "new"}]')
                 continue
 
             if options['sync']:
-                result = optimize_content_video(content.pk)
+                result = task(content.pk)
                 self.stdout.write(f'  {label}: {result}')
             else:
-                optimize_content_video.apply_async(args=[content.pk], queue='media')
+                task.apply_async(args=[content.pk], queue='media')
                 self.stdout.write(f'  queued {label}')
 
         if not options['dry_run']:
