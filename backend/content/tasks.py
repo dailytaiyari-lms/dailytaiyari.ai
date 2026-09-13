@@ -172,19 +172,22 @@ def probe_codecs(path):
 
 
 def needs_transcode(path):
-    """True when the media has to be re-encoded rather than just repackaged.
+    """Which streams cannot be copied, as ``(video_bad, audio_bad)``.
 
     Rewriting the container cannot change what is inside it. A lecture encoded
     as AV1, VP9 or HEVC plays in some browsers and shows nothing at all in
     others — Safari and iOS in particular — so those have to be re-encoded to
     H.264/AAC, which every current browser can decode.
+
+    The two are reported separately because re-encoding the picture is the
+    expensive half: an unusual audio track alongside H.264 video only needs the
+    audio redone, which is minutes of work rather than hours.
     """
     video, audio = probe_codecs(path)
-    if video and video not in BROWSER_VIDEO_CODECS:
-        return True
-    if audio and audio not in BROWSER_AUDIO_CODECS:
-        return True
-    return False
+    return (
+        bool(video) and video not in BROWSER_VIDEO_CODECS,
+        bool(audio) and audio not in BROWSER_AUDIO_CODECS,
+    )
 
 
 def _report_progress(content_id, field, percent):
@@ -206,19 +209,31 @@ def remux_faststart(src_path, dst_path):
     )
 
 
-def transcode_h264(src_path, dst_path, total_seconds=None, on_progress=None):
+def transcode_h264(src_path, dst_path, total_seconds=None, on_progress=None,
+                   copy_video=False):
     """Re-encode to H.264/AAC so every browser can play the result.
 
-    Capped at 1080p: the fallback MP4 only has to be universally playable, and
-    letting a 4K source through would cost hours of CPU for a size almost no
-    student watches. The adaptive ladder handles quality separately.
+    Capped at 1080p in either orientation: the fallback MP4 only has to be
+    universally playable, and letting a 4K source through would cost hours of
+    CPU for a size almost no student watches. The adaptive ladder handles
+    quality separately.
+
+    ``copy_video`` keeps an already-playable picture as-is and re-encodes only
+    the audio, which turns an hours-long job into a couple of minutes.
     """
+    video_args = (
+        ['-c:v', 'copy'] if copy_video else [
+            # Bound the long edge, so a portrait 2160x3840 clip is cut down too
+            # rather than only ever being capped on width.
+            '-vf', "scale='if(gt(iw,ih),min(1920,iw),-2)':"
+                   "'if(gt(iw,ih),-2,min(1920,ih))'",
+            '-c:v', 'libx264', '-preset', TRANSCODE_PRESET, '-crf', '23',
+            '-pix_fmt', 'yuv420p',
+        ]
+    )
     run_with_progress(
         [FFMPEG, '-v', 'error', '-y', '-i', src_path,
-         '-map', '0:v:0', '-map', '0:a:0?',
-         '-vf', "scale='min(1920,iw)':-2",
-         '-c:v', 'libx264', '-preset', TRANSCODE_PRESET, '-crf', '23',
-         '-pix_fmt', 'yuv420p',
+         '-map', '0:v:0', '-map', '0:a:0?'] + video_args + [
          '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
          '-movflags', '+faststart', dst_path],
         total_seconds, on_progress, TRANSCODE_TIMEOUT_SECONDS,
@@ -231,10 +246,13 @@ def transcode_h264(src_path, dst_path, total_seconds=None, on_progress=None):
     max_retries=2,
     default_retry_delay=120,
     acks_late=True,
-    # The project-wide limit is tuned for short grading jobs; a two hour remux
-    # needs far longer, so override it here rather than globally.
-    soft_time_limit=REMUX_TIMEOUT_SECONDS + 120,
-    time_limit=REMUX_TIMEOUT_SECONDS + 300,
+    # The project-wide limit is tuned for short grading jobs; this task needs
+    # far longer, so override it here rather than globally. The budget has to
+    # cover the *slowest* path the task can take — a re-encode, not the remux —
+    # because `acks_late` means a hard kill never acks, so an over-running job
+    # is redelivered and restarts from zero, forever.
+    soft_time_limit=TRANSCODE_TIMEOUT_SECONDS + 120,
+    time_limit=TRANSCODE_TIMEOUT_SECONDS + 300,
 )
 def optimize_content_video(self, content_id):
     """Make an uploaded lecture video start playing immediately and seek.
@@ -275,24 +293,25 @@ def optimize_content_video(self, content_id):
             fields['video_duration_minutes'] = max(1, int(round(duration / 60)))
 
         faststart, fragmented = inspect_mp4(local_src)
-        transcode = needs_transcode(local_src)
+        video_bad, audio_bad = needs_transcode(local_src)
 
-        if faststart and not fragmented and not transcode:
+        if faststart and not fragmented and not video_bad and not audio_bad:
             fields['video_status'] = 'ready'
             fields['video_progress'] = 100
             Content.objects.filter(pk=content_id).update(**fields)
             enqueue_hls_packaging(content_id)
             return 'already-faststart'
 
-        if transcode:
-            # The container is fine but the codec is not universally playable,
-            # so repackaging would not help — the picture has to be re-encoded.
-            # That is slow enough to be worth reporting on.
+        if video_bad or audio_bad:
+            # The container may be fine, but a codec browsers cannot all decode
+            # survives repackaging untouched — it has to be re-encoded. Keep the
+            # picture when only the audio is at fault; that is the slow half.
             transcode_h264(
                 local_src, local_out, duration,
                 lambda pct: _report_progress(content_id, 'video_progress', pct),
+                copy_video=not video_bad,
             )
-            outcome = 'transcoded'
+            outcome = 'audio-transcoded' if not video_bad else 'transcoded'
         else:
             remux_faststart(local_src, local_out)
             outcome = 'defragmented' if fragmented else 'remuxed'

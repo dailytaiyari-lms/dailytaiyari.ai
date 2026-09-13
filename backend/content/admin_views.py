@@ -92,14 +92,20 @@ class AdminContentViewSet(TenantAdminModelViewSet):
             )
 
         # Re-queueing mid-encode would have two workers writing the same row.
-        if content.video_status in ('pending', 'processing') or content.hls_status == 'processing':
+        # `pending` counts for HLS too: the job is already on the queue, so a
+        # second dispatch would package the same video twice.
+        in_flight = ('pending', 'processing')
+        if content.video_status in in_flight or content.hls_status in in_flight:
             return Response(
                 {'detail': 'This video is already being processed.'},
                 status=status.HTTP_409_CONFLICT,
             )
 
+        # Clear the previous run's state as well, so a row that failed HLS last
+        # time does not keep showing "Processing failed" through the new run.
         Content.objects.filter(pk=content.pk).update(
             video_status='pending', video_progress=0,
+            hls_status='', hls_progress=0,
         )
 
         if not dispatch_video_optimization(content.pk):

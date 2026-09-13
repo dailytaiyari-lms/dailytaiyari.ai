@@ -7,6 +7,7 @@ clip's known duration.
 """
 import logging
 import subprocess
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,11 @@ def run_with_progress(cmd, total_seconds, on_progress, timeout, min_step=2):
 
     Falls back silently to a plain run when the duration is unknown — progress
     is a convenience, and a missing percentage must never fail an encode.
+
+    ``timeout`` bounds the whole run, exactly as ``subprocess.run(timeout=...)``
+    would, and raises ``TimeoutExpired`` on expiry. A watchdog enforces it
+    rather than a deadline checked per line, because a wedged ffmpeg stops
+    writing progress altogether and would otherwise block the read forever.
     """
     if not total_seconds or total_seconds <= 0 or on_progress is None:
         subprocess.run(cmd, capture_output=True, text=True,
@@ -58,6 +64,30 @@ def run_with_progress(cmd, total_seconds, on_progress, timeout, min_step=2):
     proc = subprocess.Popen(
         full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
+
+    # Drain stderr on its own thread. ffmpeg blocks once the stderr pipe buffer
+    # fills, which stops it emitting progress and deadlocks the read below —
+    # rare with `-v error`, but a damaged source can emit errors per frame.
+    stderr_parts = []
+
+    def _drain():
+        try:
+            stderr_parts.append(proc.stderr.read())
+        except Exception:  # pipe torn down by kill()
+            pass
+
+    drainer = threading.Thread(target=_drain, daemon=True)
+    drainer.start()
+
+    timed_out = threading.Event()
+
+    def _expire():
+        timed_out.set()
+        proc.kill()
+
+    watchdog = threading.Timer(timeout, _expire)
+    watchdog.start()
+
     last_reported = -min_step
     try:
         for line in proc.stdout:
@@ -71,12 +101,19 @@ def run_with_progress(cmd, total_seconds, on_progress, timeout, min_step=2):
                     on_progress(percent)
                 except Exception:  # never let reporting break the encode
                     logger.exception('progress callback failed')
-        stderr = proc.stderr.read()
-        proc.wait(timeout=timeout)
+        proc.wait()
     except BaseException:
         proc.kill()
         proc.wait()
         raise
+    finally:
+        watchdog.cancel()
+        drainer.join(timeout=10)
+
+    stderr = stderr_parts[0] if stderr_parts else ''
+
+    if timed_out.is_set():
+        raise subprocess.TimeoutExpired(full, timeout, stderr=stderr)
 
     if proc.returncode != 0:
         raise subprocess.CalledProcessError(proc.returncode, full, stderr=stderr)
