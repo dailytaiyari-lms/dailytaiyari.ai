@@ -550,7 +550,7 @@ const FileVideoPlayer = ({ src, title }) => {
             </span>
           </button>
 
-          <div className="flex items-center group/vol">
+          <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={toggleMute}
@@ -568,7 +568,8 @@ const FileVideoPlayer = ({ src, title }) => {
               value={muted ? 0 : volume}
               aria-label="Volume"
               onChange={(e) => changeVolume(Number(e.target.value))}
-              className="dt-video-range w-0 group-hover/vol:w-16 md:group-hover/vol:w-20 focus:w-20 transition-all duration-200 cursor-pointer"
+              style={{ '--dt-fill': `${(muted ? 0 : volume) * 100}%` }}
+              className="dt-video-range hidden md:block shrink-0 w-20 cursor-pointer"
             />
           </div>
 
