@@ -33,6 +33,14 @@ FFPROBE = os.environ.get('FFPROBE_BINARY', 'ffprobe')
 # Long lectures are big; give ffmpeg room but never hang a worker forever.
 REMUX_TIMEOUT_SECONDS = int(os.environ.get('VIDEO_REMUX_TIMEOUT', '3600'))
 PROBE_TIMEOUT_SECONDS = 120
+# A re-encode is far slower than a stream copy, so it gets its own budget.
+TRANSCODE_TIMEOUT_SECONDS = int(os.environ.get('VIDEO_TRANSCODE_TIMEOUT', str(6 * 3600)))
+TRANSCODE_PRESET = os.environ.get('VIDEO_HLS_PRESET', 'veryfast')
+
+# Codecs every current browser can decode inside an MP4. Anything else plays
+# for some students and not others, so it is re-encoded rather than copied.
+BROWSER_VIDEO_CODECS = {'h264'}
+BROWSER_AUDIO_CODECS = {'aac', 'mp3'}
 
 
 def _iter_top_level_atoms(path, limit=25):
@@ -143,12 +151,65 @@ def probe_duration_seconds(path):
         return None
 
 
+def probe_codecs(path):
+    """Return ``(video_codec, audio_codec)``; either may be ``None``."""
+    try:
+        out = subprocess.run(
+            [FFPROBE, '-v', 'error', '-show_entries', 'stream=codec_type,codec_name',
+             '-of', 'json', path],
+            capture_output=True, text=True, timeout=PROBE_TIMEOUT_SECONDS, check=True,
+        )
+        streams = json.loads(out.stdout).get('streams', [])
+    except (subprocess.SubprocessError, ValueError, OSError):
+        logger.warning('Could not probe codecs for %s', path, exc_info=True)
+        return None, None
+
+    video = next((s.get('codec_name') for s in streams if s.get('codec_type') == 'video'), None)
+    audio = next((s.get('codec_name') for s in streams if s.get('codec_type') == 'audio'), None)
+    return video, audio
+
+
+def needs_transcode(path):
+    """True when the media has to be re-encoded rather than just repackaged.
+
+    Rewriting the container cannot change what is inside it. A lecture encoded
+    as AV1, VP9 or HEVC plays in some browsers and shows nothing at all in
+    others — Safari and iOS in particular — so those have to be re-encoded to
+    H.264/AAC, which every current browser can decode.
+    """
+    video, audio = probe_codecs(path)
+    if video and video not in BROWSER_VIDEO_CODECS:
+        return True
+    if audio and audio not in BROWSER_AUDIO_CODECS:
+        return True
+    return False
+
+
 def remux_faststart(src_path, dst_path):
     """Stream-copy ``src_path`` into ``dst_path`` with the index up front."""
     subprocess.run(
         [FFMPEG, '-v', 'error', '-y', '-i', src_path,
          '-c', 'copy', '-map', '0', '-movflags', '+faststart', dst_path],
         capture_output=True, text=True, timeout=REMUX_TIMEOUT_SECONDS, check=True,
+    )
+
+
+def transcode_h264(src_path, dst_path):
+    """Re-encode to H.264/AAC so every browser can play the result.
+
+    Capped at 1080p: the fallback MP4 only has to be universally playable, and
+    letting a 4K source through would cost hours of CPU for a size almost no
+    student watches. The adaptive ladder handles quality separately.
+    """
+    subprocess.run(
+        [FFMPEG, '-v', 'error', '-y', '-i', src_path,
+         '-map', '0:v:0', '-map', '0:a:0?',
+         '-vf', "scale='min(1920,iw)':-2",
+         '-c:v', 'libx264', '-preset', TRANSCODE_PRESET, '-crf', '23',
+         '-pix_fmt', 'yuv420p',
+         '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
+         '-movflags', '+faststart', dst_path],
+        capture_output=True, text=True, timeout=TRANSCODE_TIMEOUT_SECONDS, check=True,
     )
 
 
@@ -164,12 +225,13 @@ def remux_faststart(src_path, dst_path):
     time_limit=REMUX_TIMEOUT_SECONDS + 300,
 )
 def optimize_content_video(self, content_id):
-    """Make an uploaded lecture video start playing immediately.
+    """Make an uploaded lecture video start playing immediately and seek.
 
-    Downloads the upload, records its real duration, and — when the index is at
-    the back — rewrites it with ``+faststart`` and swaps the stored file. Never
-    raises into the caller: a failure leaves the original file playable, just
-    slower to start.
+    Downloads the upload and records its real duration, then repairs whichever
+    problem the file has: a trailing index or fragmentation is fixed by a cheap
+    stream copy, while a codec browsers cannot all decode needs a real
+    re-encode. Never raises into the caller: a failure leaves the original file
+    in place.
     """
     from content.models import Content
 
@@ -199,13 +261,22 @@ def optimize_content_video(self, content_id):
             fields['video_duration_minutes'] = max(1, int(round(duration / 60)))
 
         faststart, fragmented = inspect_mp4(local_src)
-        if faststart and not fragmented:
+        transcode = needs_transcode(local_src)
+
+        if faststart and not fragmented and not transcode:
             fields['video_status'] = 'ready'
             Content.objects.filter(pk=content_id).update(**fields)
             enqueue_hls_packaging(content_id)
             return 'already-faststart'
 
-        remux_faststart(local_src, local_out)
+        if transcode:
+            # The container is fine but the codec is not universally playable,
+            # so repackaging would not help — the picture has to be re-encoded.
+            transcode_h264(local_src, local_out)
+            outcome = 'transcoded'
+        else:
+            remux_faststart(local_src, local_out)
+            outcome = 'defragmented' if fragmented else 'remuxed'
 
         # Save under a fresh name so anyone mid-playback keeps a working URL,
         # then drop the original.
@@ -213,6 +284,13 @@ def optimize_content_video(self, content_id):
         stem, _ = os.path.splitext(base)
         with open(local_out, 'rb') as fh:
             content.video_file.save(f'{stem}-faststart.mp4', File(fh), save=False)
+
+        # A re-encode changes the duration slightly and the source duration may
+        # have been unreadable, so trust the file we actually publish.
+        out_duration = probe_duration_seconds(local_out)
+        if out_duration:
+            fields['video_duration_seconds'] = int(round(out_duration))
+            fields['video_duration_minutes'] = max(1, int(round(out_duration / 60)))
 
         fields['video_status'] = 'ready'
         fields['video_file'] = content.video_file.name
@@ -224,7 +302,7 @@ def optimize_content_video(self, content_id):
             logger.warning('Could not delete original video %s', source_name, exc_info=True)
 
         enqueue_hls_packaging(content_id)
-        return 'defragmented' if fragmented else 'remuxed'
+        return outcome
 
     except subprocess.TimeoutExpired:
         Content.objects.filter(pk=content_id).update(video_status='failed')
