@@ -304,7 +304,13 @@
   appearance: none;
   height: 4px;
   border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.35);
+  background: linear-gradient(
+    to right,
+    #fff 0,
+    #fff var(--dt-fill, 100%),
+    rgba(255, 255, 255, 0.35) var(--dt-fill, 100%),
+    rgba(255, 255, 255, 0.35) 100%
+  );
   outline: none;
 }
 .dt-video-range::-webkit-slider-thumb {
