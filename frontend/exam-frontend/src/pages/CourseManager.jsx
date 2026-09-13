@@ -8,7 +8,7 @@ import {
     FileText, ListChecks, GraduationCap, Pencil, Eye, Video, FileType,
     Sparkles, HelpCircle, ClipboardList, Clock, Users, X, CheckCircle2, Save,
     Code2, Trash2, Image as ImageIcon, Upload, Radio, Calendar, Link2,
-    Notebook as NotebookIcon,
+    Notebook as NotebookIcon, AlertTriangle, Zap,
 } from 'lucide-react'
 import { contentBuilderService as svc } from '../services/contentBuilderService'
 import { tenantAdminService } from '../services/tenantAdminService'
@@ -34,12 +34,109 @@ const statusPill = (status) =>
             : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
 
 /* ===========================================================================
+ * Video processing status
+ * ========================================================================= */
+
+/** True while the optimisation pipeline still has work to do on this content. */
+const isVideoProcessing = (ct) =>
+    ['pending', 'processing'].includes(ct.video_status) ||
+    (ct.video_status === 'ready' && ['pending', 'processing'].includes(ct.hls_status))
+
+/**
+ * What the pipeline is doing to an uploaded video, in the admin's terms.
+ *
+ * Two stages run back to back. The first makes the file playable and seekable
+ * at all; the second builds the adaptive quality ladder, which on a long
+ * lecture can take many minutes. Reporting a percentage rather than a bare
+ * spinner is the difference between "still working" and "apparently stuck".
+ */
+const videoPipelineState = (ct) => {
+    const { video_status: vs, hls_status: hs } = ct
+    if (!vs) return null
+    if (vs === 'failed') {
+        return { tone: 'rose', icon: AlertTriangle, label: 'Processing failed', spin: false }
+    }
+    if (vs === 'pending') {
+        return { tone: 'amber', icon: Loader2, label: 'Queued for processing', spin: true }
+    }
+    if (vs === 'processing') {
+        const pct = ct.video_progress || 0
+        return {
+            tone: 'amber', icon: Loader2, spin: true,
+            label: pct > 0 ? `Optimising video ${pct}%` : 'Optimising video',
+            pct,
+        }
+    }
+    // Video itself is watchable from here on; the ladder is a quality upgrade.
+    if (hs === 'processing') {
+        const pct = ct.hls_progress || 0
+        return {
+            tone: 'sky', icon: Loader2, spin: true,
+            label: pct > 0 ? `Building quality options ${pct}%` : 'Building quality options',
+            pct,
+            sub: 'Playable now — adaptive quality is still encoding.',
+        }
+    }
+    if (hs === 'pending') {
+        return { tone: 'sky', icon: Loader2, label: 'Queued for quality encoding', spin: true }
+    }
+    if (hs === 'failed') {
+        return { tone: 'amber', icon: AlertTriangle, label: 'Quality options unavailable', spin: false }
+    }
+    if (hs === 'ready') {
+        return { tone: 'emerald', icon: Zap, label: 'Adaptive streaming ready', spin: false }
+    }
+    return { tone: 'emerald', icon: CheckCircle2, label: 'Ready to stream', spin: false }
+}
+
+const PIPELINE_TONE = {
+    amber: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+    sky: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400',
+    rose: 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400',
+    emerald: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+}
+
+const PIPELINE_BAR = {
+    amber: 'bg-amber-500',
+    sky: 'bg-sky-500',
+    rose: 'bg-rose-500',
+    emerald: 'bg-emerald-500',
+}
+
+const VideoPipelineBadge = ({ ct }) => {
+    const state = videoPipelineState(ct)
+    if (!state) return null
+    const Icon = state.icon
+    return (
+        <div className="mt-1.5">
+            <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded ${PIPELINE_TONE[state.tone]}`}>
+                <Icon className={`w-3 h-3 ${state.spin ? 'animate-spin' : ''}`} />
+                {state.label}
+            </span>
+            {state.pct > 0 && (
+                <div className="h-1 mt-1 rounded-full bg-surface-200 dark:bg-surface-700 overflow-hidden max-w-[220px]">
+                    <div
+                        className={`h-full rounded-full ${PIPELINE_BAR[state.tone]} transition-[width] duration-500`}
+                        style={{ width: `${state.pct}%` }}
+                    />
+                </div>
+            )}
+            {state.sub && <p className="text-[10px] text-surface-400 mt-0.5">{state.sub}</p>}
+        </div>
+    )
+}
+
+/* ===========================================================================
  * Content list for the selected topic
  * ========================================================================= */
 const ContentSection = ({ topic, subjectId, openModal, askDelete }) => {
     const { data: contents = [], isLoading } = useQuery({
         queryKey: ['cb-contents', topic.id],
         queryFn: () => svc.getContents(topic.id),
+        // Encoding happens in a worker with nothing to push the result back, so
+        // poll while a video is mid-pipeline and stop as soon as all are done.
+        refetchInterval: (query) =>
+            (query.state.data || []).some(isVideoProcessing) ? 5000 : false,
     })
 
     const videos = contents.filter((ct) => ct.content_type === 'video')
@@ -59,6 +156,7 @@ const ContentSection = ({ topic, subjectId, openModal, askDelete }) => {
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-100 dark:bg-surface-800 text-surface-500 capitalize">{ct.content_type}</span>
                             <span className={`text-[10px] px-1.5 py-0.5 rounded capitalize ${statusPill(ct.status)}`}>{ct.status}</span>
                         </div>
+                        <VideoPipelineBadge ct={ct} />
                     </div>
                 </div>
                 <div className="opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1889,6 +1987,7 @@ const CourseManager = () => {
     const [sel, setSel] = useState({ subjectId: null, chapterId: null, topicId: null, topic: null })
     const [modal, setModal] = useState(null)   // { type, instance, extra }
     const [del, setDel] = useState(null)        // { type, instance, label }
+    const [uploadPct, setUploadPct] = useState(null)  // 0-100 while a file uploads
     const [instructorsOpen, setInstructorsOpen] = useState(false)
     const [thumbnailOpen, setThumbnailOpen] = useState(false)
 
@@ -1933,14 +2032,22 @@ const CourseManager = () => {
                 assignment: [svc.updateAssignment, svc.createAssignment],
             }
             const [update, create] = map[type]
-            return instance ? update(instance.id, withParents) : create(withParents)
+            // Only report progress when bytes are actually going up: a plain
+            // field edit would otherwise sit at "Uploading 0%" until it saved.
+            const hasFile = Object.values(withParents).some((v) => v instanceof File)
+            const track = hasFile ? setUploadPct : undefined
+            if (track) setUploadPct(0)
+            return instance
+                ? update(instance.id, withParents, track)
+                : create(withParents, track)
         },
         onSuccess: (_d, vars) => {
             toast.success(`${vars.type === 'exam' ? 'Course' : vars.type[0].toUpperCase() + vars.type.slice(1)} ${vars.instance ? 'saved' : 'created'}`)
             invalidateFor(vars.type, vars.extra)
+            setUploadPct(null)
             setModal(null)
         },
-        onError: (err) => toast.error(formatApiError(err)),
+        onError: (err) => { setUploadPct(null); toast.error(formatApiError(err)) },
     })
 
     const deleteMutation = useMutation({
@@ -2030,6 +2137,7 @@ const CourseManager = () => {
                         instance={modal.instance}
                         defaults={modal.extra?.defaults}
                         saving={saveMutation.isPending}
+                        uploadPct={uploadPct}
                         onClose={() => setModal(null)}
                         onSubmit={(payload) => saveMutation.mutate({ type: modal.type, instance: modal.instance, payload, extra: modal.extra })}
                     />

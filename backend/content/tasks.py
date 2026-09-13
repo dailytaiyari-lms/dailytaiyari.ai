@@ -25,6 +25,8 @@ from celery import shared_task
 from django.core.files import File
 from django.db import transaction
 
+from .ffmpeg_utils import run_with_progress
+
 logger = logging.getLogger(__name__)
 
 FFMPEG = os.environ.get('FFMPEG_BINARY', 'ffmpeg')
@@ -185,6 +187,16 @@ def needs_transcode(path):
     return False
 
 
+def _report_progress(content_id, field, percent):
+    """Record encode progress without letting a write failure kill the job."""
+    from content.models import Content
+
+    try:
+        Content.objects.filter(pk=content_id).update(**{field: percent})
+    except Exception:
+        logger.exception('could not record %s for content %s', field, content_id)
+
+
 def remux_faststart(src_path, dst_path):
     """Stream-copy ``src_path`` into ``dst_path`` with the index up front."""
     subprocess.run(
@@ -194,14 +206,14 @@ def remux_faststart(src_path, dst_path):
     )
 
 
-def transcode_h264(src_path, dst_path):
+def transcode_h264(src_path, dst_path, total_seconds=None, on_progress=None):
     """Re-encode to H.264/AAC so every browser can play the result.
 
     Capped at 1080p: the fallback MP4 only has to be universally playable, and
     letting a 4K source through would cost hours of CPU for a size almost no
     student watches. The adaptive ladder handles quality separately.
     """
-    subprocess.run(
+    run_with_progress(
         [FFMPEG, '-v', 'error', '-y', '-i', src_path,
          '-map', '0:v:0', '-map', '0:a:0?',
          '-vf', "scale='min(1920,iw)':-2",
@@ -209,7 +221,7 @@ def transcode_h264(src_path, dst_path):
          '-pix_fmt', 'yuv420p',
          '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
          '-movflags', '+faststart', dst_path],
-        capture_output=True, text=True, timeout=TRANSCODE_TIMEOUT_SECONDS, check=True,
+        total_seconds, on_progress, TRANSCODE_TIMEOUT_SECONDS,
     )
 
 
@@ -244,7 +256,9 @@ def optimize_content_video(self, content_id):
         return 'no-video'
 
     source_name = content.video_file.name
-    Content.objects.filter(pk=content_id).update(video_status='processing')
+    Content.objects.filter(pk=content_id).update(
+        video_status='processing', video_progress=0,
+    )
 
     workdir = tempfile.mkdtemp(prefix='dt-video-')
     local_src = os.path.join(workdir, 'source.mp4')
@@ -265,6 +279,7 @@ def optimize_content_video(self, content_id):
 
         if faststart and not fragmented and not transcode:
             fields['video_status'] = 'ready'
+            fields['video_progress'] = 100
             Content.objects.filter(pk=content_id).update(**fields)
             enqueue_hls_packaging(content_id)
             return 'already-faststart'
@@ -272,7 +287,11 @@ def optimize_content_video(self, content_id):
         if transcode:
             # The container is fine but the codec is not universally playable,
             # so repackaging would not help — the picture has to be re-encoded.
-            transcode_h264(local_src, local_out)
+            # That is slow enough to be worth reporting on.
+            transcode_h264(
+                local_src, local_out, duration,
+                lambda pct: _report_progress(content_id, 'video_progress', pct),
+            )
             outcome = 'transcoded'
         else:
             remux_faststart(local_src, local_out)
@@ -293,6 +312,7 @@ def optimize_content_video(self, content_id):
             fields['video_duration_minutes'] = max(1, int(round(out_duration / 60)))
 
         fields['video_status'] = 'ready'
+        fields['video_progress'] = 100
         fields['video_file'] = content.video_file.name
         Content.objects.filter(pk=content_id).update(**fields)
 
@@ -379,7 +399,9 @@ def package_content_hls(self, content_id):
     if not content.video_file:
         return 'no-video'
 
-    Content.objects.filter(pk=content_id).update(hls_status='processing')
+    Content.objects.filter(pk=content_id).update(
+        hls_status='processing', hls_progress=0,
+    )
     previous = content.hls_playlist
     prefix = f'content_hls/{content_id}'
     workdir = tempfile.mkdtemp(prefix='dt-hls-')
@@ -391,7 +413,11 @@ def package_content_hls(self, content_id):
         with content.video_file.open('rb') as remote, open(local_src, 'wb') as local:
             shutil.copyfileobj(remote, local, length=8 * 1024 * 1024)
 
-        rungs = hls.package(local_src, outdir)
+        rungs = hls.package(
+            local_src, outdir,
+            content.video_duration_seconds or probe_duration_seconds(local_src),
+            lambda pct: _report_progress(content_id, 'hls_progress', pct),
+        )
 
         # Publish under a fresh generation so viewers mid-playback keep the old
         # tree working; the previous generation is removed afterwards.
@@ -401,7 +427,7 @@ def package_content_hls(self, content_id):
             raise RuntimeError('HLS packaging produced no master playlist')
 
         Content.objects.filter(pk=content_id).update(
-            hls_playlist=master, hls_status='ready',
+            hls_playlist=master, hls_status='ready', hls_progress=100,
         )
 
         if previous:
