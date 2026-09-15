@@ -58,7 +58,7 @@ class Content(OrderedModel):
     
     # Content data
     content_html = models.TextField(blank=True)  # For notes
-    video_url = models.URLField(blank=True)  # For videos (YouTube, Vimeo, Google Drive)
+    video_url = models.URLField(blank=True)  # For videos (YouTube, Vimeo, Google Drive, OneDrive)
     video_file = models.FileField(upload_to='content_videos/', blank=True, null=True)  # Uploaded video on blob
     # Streaming readiness of `video_file`. An MP4 whose `moov` index sits at the
     # end of the file forces the browser to download almost all of it before the
