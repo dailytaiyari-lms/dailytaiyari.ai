@@ -209,6 +209,44 @@
     @apply animate-pulse rounded;
   }
 
+  /*
+   * Rich HTML is persisted with inline colors so it also works in exports and
+   * emails. Those light-theme colors otherwise override prose-invert. Keep
+   * legacy content theme-aware here so existing records need no migration.
+   */
+  .dark .prose [style*="color:" i],
+  .dark .prose [color] {
+    color: theme('colors.surface.200') !important;
+  }
+
+  .dark .prose :is(h1, h2, h3, h4, h5, h6, strong)[style*="color:" i],
+  .dark .prose :is(h1, h2, h3, h4, h5, h6, strong)[color] {
+    color: theme('colors.surface.50') !important;
+  }
+
+  /* Light authored panels (callouts, inline code, and striped table rows). */
+  .dark .prose [style*="background:" i],
+  .dark .prose [style*="background-color:" i],
+  .dark .prose [bgcolor],
+  .dark .prose [style*="background:" i] *,
+  .dark .prose [style*="background-color:" i] *,
+  .dark .prose [bgcolor] * {
+    color: #1f2937 !important;
+  }
+
+  /* These authored surfaces intentionally retain dark backgrounds. */
+  .dark .prose pre[style],
+  .dark .prose pre[style] *,
+  .dark .prose th[style],
+  .dark .prose th[style] * {
+    color: theme('colors.surface.100') !important;
+  }
+
+  .dark .prose a[style*="color:" i],
+  .dark .prose a[color] {
+    color: rgb(var(--color-primary-400)) !important;
+  }
+
   /* Streak fire animation */
   .fire-glow {
     @apply animate-pulse;
