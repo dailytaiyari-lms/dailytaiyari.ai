@@ -237,6 +237,7 @@ const NotebookPage = () => {
       setFlowPhase('result')
 
       queryClient.invalidateQueries({ queryKey: ['notebook', notebookId] })
+      queryClient.invalidateQueries({ queryKey: ['topicNotebooks'] })
       refetchHistory()
     } catch (err) {
       const message = err.friendly

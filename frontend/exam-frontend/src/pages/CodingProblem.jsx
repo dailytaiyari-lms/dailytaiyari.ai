@@ -166,6 +166,7 @@ const CodingProblem = () => {
         toast.error(data.compile_output || 'Could not grade your submission. Please try again.')
         return
       }
+      queryClient.invalidateQueries({ queryKey: ['topicCoding'] })
       if (data.all_passed) {
         toast.success(data.xp_awarded > 0 ? `All test cases passed! +${data.xp_awarded} XP 🎉` : 'All test cases passed! 🎉')
         queryClient.invalidateQueries({ queryKey: ['codingProblem', problemId] })
@@ -185,6 +186,7 @@ const CodingProblem = () => {
         toast('Marked as not solved')
       }
       queryClient.invalidateQueries({ queryKey: ['codingProblem', problemId] })
+      queryClient.invalidateQueries({ queryKey: ['topicCoding'] })
     },
     onError: (err) => toast.error(err?.response?.data?.error || 'Could not update. Try again.'),
   })

@@ -120,6 +120,7 @@ const QuizAttempt = () => {
       queryClient.invalidateQueries({ queryKey: ['strongTopics'] })
       queryClient.invalidateQueries({ queryKey: ['chartData'] })
       queryClient.invalidateQueries({ queryKey: ['currentStreak'] })
+      queryClient.invalidateQueries({ queryKey: ['studyChapterDetail'] })
 
       // Refresh user profile to get updated XP
       fetchProfile()

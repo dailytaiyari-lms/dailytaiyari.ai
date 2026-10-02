@@ -19,6 +19,7 @@ const StudyChapterTopics = () => {
     queryKey: ['studyChapterDetail', chapterId],
     queryFn: () => courseService.getStudyChapterDetail(chapterId),
     enabled: !!chapterId,
+    refetchOnMount: 'always',
     retry: (count, err) => err?.response?.status !== 403 && count < 2,
   })
 

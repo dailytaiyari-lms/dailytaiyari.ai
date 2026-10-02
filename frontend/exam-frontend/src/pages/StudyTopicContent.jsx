@@ -43,30 +43,35 @@ const StudyTopicContent = () => {
     queryKey: ['studyChapterDetail', chapterId],
     queryFn: () => courseService.getStudyChapterDetail(chapterId),
     enabled: !!chapterId,
+    refetchOnMount: 'always',
   })
 
   const { data: assignments = [] } = useQuery({
     queryKey: ['topicAssignments', topicId],
     queryFn: () => assignmentService.getByTopic(topicId),
     enabled: !!topicId,
+    refetchOnMount: 'always',
   })
 
   const { data: codingProblems = [] } = useQuery({
     queryKey: ['topicCoding', topicId],
     queryFn: () => codingService.getByTopic(topicId),
     enabled: !!topicId,
+    refetchOnMount: 'always',
   })
 
   const { data: notebooks = [] } = useQuery({
     queryKey: ['topicNotebooks', topicId],
     queryFn: () => notebookService.getByTopic(topicId),
     enabled: !!topicId,
+    refetchOnMount: 'always',
   })
 
   const { data: liveClasses = [] } = useQuery({
     queryKey: ['topicLive', topicId],
     queryFn: () => liveClassService.getByTopic(topicId),
     enabled: !!topicId,
+    refetchOnMount: 'always',
   })
 
   if (isLoading) return <Loading fullScreen />
