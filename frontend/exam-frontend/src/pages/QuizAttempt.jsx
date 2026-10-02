@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -13,7 +13,10 @@ import {
   PartyPopper,
   CheckCircle2,
   ChevronRight,
-  ChevronLeft
+  ChevronLeft,
+  ShieldCheck,
+  AlertTriangle,
+  Maximize2
 } from 'lucide-react'
 import { quizService } from '../services/quizService'
 import { useAuthStore } from '../context/authStore'
@@ -46,6 +49,17 @@ const QuizAttempt = () => {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [result, setResult] = useState(null)
   const [showConfetti, setShowConfetti] = useState(false)
+  const [proctoringStarted, setProctoringStarted] = useState(false)
+  const [isStarting, setIsStarting] = useState(false)
+  const [showProctorWarning, setShowProctorWarning] = useState(false)
+  const [violationCount, setViolationCount] = useState(0)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const submittedRef = useRef(false)
+  const lastViolationAtRef = useRef(0)
+  const fullscreenSupported = Boolean(
+    document.documentElement.requestFullscreen ||
+    document.documentElement.webkitRequestFullscreen
+  )
 
   // Fetch leaderboard after quiz is completed
   const { data: leaderboard } = useQuery({
@@ -59,16 +73,105 @@ const QuizAttempt = () => {
     queryFn: () => quizService.getQuizDetails(quizId),
   })
 
-  // Initialize timer
-  useEffect(() => {
-    if (quiz) {
-      setTimeLeft(quiz.duration_minutes * 60)
+  const enterFullscreen = useCallback(async () => {
+    const element = document.documentElement
+    const requestFullscreen = element?.requestFullscreen || element?.webkitRequestFullscreen
+    if (!requestFullscreen) {
+      return false
     }
-  }, [quiz])
+    await requestFullscreen.call(element)
+    setIsFullscreen(true)
+    return true
+  }, [])
+
+  const exitFullscreen = useCallback(async () => {
+    const exit = document.exitFullscreen || document.webkitExitFullscreen
+    if ((document.fullscreenElement || document.webkitFullscreenElement) && exit) {
+      await exit.call(document)
+    }
+    setIsFullscreen(false)
+  }, [])
+
+  const beginProctoredQuiz = async () => {
+    if (isStarting) return
+    setIsStarting(true)
+    try {
+      // Fullscreen requests must originate from this explicit user action.
+      await enterFullscreen()
+      const attempt = await quizService.startQuiz(quizId)
+      const elapsedSeconds = attempt?.started_at
+        ? Math.max(0, Math.floor((Date.now() - Date.parse(attempt.started_at)) / 1000))
+        : 0
+      setTimeLeft(Math.max(0, quiz.duration_minutes * 60 - elapsedSeconds))
+      setViolationCount(attempt?.proctoring_violations || 0)
+      setProctoringStarted(true)
+    } catch (error) {
+      await exitFullscreen().catch(() => {})
+      toast.error(error?.response?.data?.error || error.message || 'Could not start the proctored quiz')
+    } finally {
+      setIsStarting(false)
+    }
+  }
+
+  const reportViolation = useCallback((eventType) => {
+    if (submittedRef.current) return
+    const now = Date.now()
+    if (now - lastViolationAtRef.current < 1000) return
+    lastViolationAtRef.current = now
+    setViolationCount((count) => count + 1)
+    setShowProctorWarning(true)
+    quizService.reportProctoringEvent(quizId, eventType).catch(() => {
+      toast.error('Could not record the proctoring event. Check your connection.')
+    })
+  }, [quizId])
+
+  useEffect(() => {
+    if (!proctoringStarted || result) return
+
+    const onVisibilityChange = () => {
+      if (document.hidden) reportViolation('tab_switch')
+    }
+    const onFullscreenChange = () => {
+      const fullscreen = Boolean(document.fullscreenElement || document.webkitFullscreenElement)
+      setIsFullscreen(fullscreen)
+      if (fullscreenSupported && !fullscreen && !submittedRef.current) {
+        reportViolation('fullscreen_exit')
+      }
+    }
+    const onKeyDown = (event) => {
+      const key = event.key.toLowerCase()
+      const restrictedBrowserShortcut =
+        (event.ctrlKey || event.metaKey) && ['l', 'n', 't', 'w'].includes(key)
+      const restrictedTabShortcut =
+        key === 'tab' && (event.ctrlKey || event.metaKey || event.altKey)
+      if (restrictedBrowserShortcut || restrictedTabShortcut) {
+        event.preventDefault()
+        event.stopPropagation()
+        reportViolation('restricted_shortcut')
+      }
+    }
+    const onBeforeUnload = (event) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    document.addEventListener('fullscreenchange', onFullscreenChange)
+    document.addEventListener('webkitfullscreenchange', onFullscreenChange)
+    window.addEventListener('keydown', onKeyDown, true)
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      document.removeEventListener('fullscreenchange', onFullscreenChange)
+      document.removeEventListener('webkitfullscreenchange', onFullscreenChange)
+      window.removeEventListener('keydown', onKeyDown, true)
+      window.removeEventListener('beforeunload', onBeforeUnload)
+    }
+  }, [fullscreenSupported, proctoringStarted, reportViolation, result])
 
   // Timer countdown
   useEffect(() => {
-    if (timeLeft <= 0 || result) return
+    if (!proctoringStarted || timeLeft <= 0 || result) return
 
     const timer = setInterval(() => {
       setTimeLeft((prev) => {
@@ -81,7 +184,7 @@ const QuizAttempt = () => {
     }, 1000)
 
     return () => clearInterval(timer)
-  }, [timeLeft, result])
+  }, [timeLeft, result, proctoringStarted])
 
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60)
@@ -102,6 +205,7 @@ const QuizAttempt = () => {
 
   const handleSubmit = async () => {
     if (isSubmitting) return
+    submittedRef.current = true
     setIsSubmitting(true)
 
     try {
@@ -110,6 +214,7 @@ const QuizAttempt = () => {
         time_taken_seconds: quiz.duration_minutes * 60 - timeLeft,
       })
 
+      await exitFullscreen().catch(() => {})
       setResult(response)
 
       // Invalidate caches to refresh dashboard and analytics
@@ -130,6 +235,7 @@ const QuizAttempt = () => {
         setTimeout(() => setShowConfetti(false), 5000)
       }
     } catch (error) {
+      submittedRef.current = false
       toast.error('Failed to submit quiz')
     } finally {
       setIsSubmitting(false)
@@ -142,6 +248,42 @@ const QuizAttempt = () => {
   const question = questions[currentQuestion]
   const progress = ((currentQuestion + 1) / questions.length) * 100
   const markingScheme = quiz?.marking_scheme
+
+  if (!proctoringStarted) {
+    return (
+      <div className="min-h-[80vh] bg-surface-50 dark:bg-surface-950 flex items-center justify-center p-4">
+        <div className="card p-8 max-w-lg w-full text-center">
+          <ShieldCheck size={56} className="mx-auto mb-4 text-primary-500" />
+          <h1 className="text-2xl font-bold mb-3">Proctored quiz</h1>
+          <p className="text-surface-500 mb-5">
+            When supported, this quiz runs in fullscreen. Switching tabs, leaving fullscreen,
+            or using restricted browser shortcuts will be recorded and shown to your faculty.
+          </p>
+          <ul className="list-disc pl-5 text-left text-sm text-surface-600 dark:text-surface-300 space-y-2 mb-6">
+            <li>Stay on this quiz until you submit it.</li>
+            <li>Do not use Alt+Tab, Cmd+Tab, Ctrl+Tab, or browser navigation shortcuts.</li>
+            {fullscreenSupported ? (
+              <li>If fullscreen closes, you must re-enter it before continuing.</li>
+            ) : (
+              <li>Your browser does not support fullscreen; tab switching will still be monitored.</li>
+            )}
+          </ul>
+          <button
+            onClick={beginProctoredQuiz}
+            disabled={isStarting}
+            className="btn-primary w-full flex items-center justify-center gap-2"
+          >
+            <Maximize2 size={18} />
+            {isStarting
+              ? 'Starting...'
+              : fullscreenSupported
+                ? 'Enter fullscreen and start'
+                : 'Start proctored quiz'}
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   // Result Screen
   if (result) {
@@ -375,7 +517,7 @@ const QuizAttempt = () => {
   }
 
   return (
-    <div className="max-w-3xl mx-auto">
+    <div className="max-w-3xl mx-auto min-h-screen bg-surface-50 dark:bg-surface-950">
       {/* Header */}
       <div className="sticky top-0 z-20 bg-surface-50/95 dark:bg-surface-950/95 backdrop-blur-sm py-4 -mx-4 px-4">
         <div className="flex items-center justify-between mb-3">
@@ -528,6 +670,35 @@ const QuizAttempt = () => {
           )}
         </div>
       </div>
+
+      {showProctorWarning && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+          <div className="card p-6 max-w-sm w-full text-center">
+            <AlertTriangle size={48} className="mx-auto mb-3 text-warning-500" />
+            <h3 className="text-xl font-bold mb-2">Proctoring warning</h3>
+            <p className="text-sm text-surface-500 mb-2">
+              You left the quiz tab, exited fullscreen, or used a restricted shortcut.
+            </p>
+            <p className="font-semibold text-warning-600 mb-5">
+              Recorded violations: {violationCount}
+            </p>
+            <button
+              onClick={async () => {
+                try {
+                  if (!isFullscreen) await enterFullscreen()
+                  setShowProctorWarning(false)
+                } catch (error) {
+                  toast.error(error.message || 'Fullscreen is required to continue')
+                }
+              }}
+              className="btn-primary w-full flex items-center justify-center gap-2"
+            >
+              <Maximize2 size={18} />
+              {fullscreenSupported ? 'Re-enter and continue' : 'Continue quiz'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
