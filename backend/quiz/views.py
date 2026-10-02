@@ -36,6 +36,11 @@ class QuizSubmitThrottle(UserRateThrottle):
     rate = '3000/hour'
 
 
+class ProctoringEventThrottle(UserRateThrottle):
+    """Prevent a client from flooding its own proctoring counters."""
+    rate = '120/minute'
+
+
 def _get_student_course_ids(request):
     """
     Return the IDs of every *active* course the student may access.
@@ -338,7 +343,11 @@ class QuizViewSet(TenantAwareReadOnlyViewSet):
         
         return Response(QuizAttemptSummarySerializer(attempts, many=True).data)
 
-    @action(detail=True, methods=['post'])
+    @action(
+        detail=True,
+        methods=['post'],
+        throttle_classes=[ProctoringEventThrottle],
+    )
     def start(self, request, pk=None):
         """Start a quiz attempt."""
         quiz = self.get_object()

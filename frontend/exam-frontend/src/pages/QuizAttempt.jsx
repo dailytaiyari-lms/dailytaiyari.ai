@@ -54,8 +54,12 @@ const QuizAttempt = () => {
   const [showProctorWarning, setShowProctorWarning] = useState(false)
   const [violationCount, setViolationCount] = useState(0)
   const [isFullscreen, setIsFullscreen] = useState(false)
-  const proctoredContainerRef = useRef(null)
   const submittedRef = useRef(false)
+  const lastViolationAtRef = useRef(0)
+  const fullscreenSupported = Boolean(
+    document.documentElement.requestFullscreen ||
+    document.documentElement.webkitRequestFullscreen
+  )
 
   // Fetch leaderboard after quiz is completed
   const { data: leaderboard } = useQuery({
@@ -70,13 +74,14 @@ const QuizAttempt = () => {
   })
 
   const enterFullscreen = useCallback(async () => {
-    const element = proctoredContainerRef.current
+    const element = document.documentElement
     const requestFullscreen = element?.requestFullscreen || element?.webkitRequestFullscreen
     if (!requestFullscreen) {
-      throw new Error('Fullscreen mode is not supported by this browser.')
+      return false
     }
     await requestFullscreen.call(element)
     setIsFullscreen(true)
+    return true
   }, [])
 
   const exitFullscreen = useCallback(async () => {
@@ -110,6 +115,9 @@ const QuizAttempt = () => {
 
   const reportViolation = useCallback((eventType) => {
     if (submittedRef.current) return
+    const now = Date.now()
+    if (now - lastViolationAtRef.current < 1000) return
+    lastViolationAtRef.current = now
     setViolationCount((count) => count + 1)
     setShowProctorWarning(true)
     quizService.reportProctoringEvent(quizId, eventType).catch(() => {
@@ -126,7 +134,9 @@ const QuizAttempt = () => {
     const onFullscreenChange = () => {
       const fullscreen = Boolean(document.fullscreenElement || document.webkitFullscreenElement)
       setIsFullscreen(fullscreen)
-      if (!fullscreen && !submittedRef.current) reportViolation('fullscreen_exit')
+      if (fullscreenSupported && !fullscreen && !submittedRef.current) {
+        reportViolation('fullscreen_exit')
+      }
     }
     const onKeyDown = (event) => {
       const key = event.key.toLowerCase()
@@ -157,7 +167,7 @@ const QuizAttempt = () => {
       window.removeEventListener('keydown', onKeyDown, true)
       window.removeEventListener('beforeunload', onBeforeUnload)
     }
-  }, [proctoringStarted, reportViolation, result])
+  }, [fullscreenSupported, proctoringStarted, reportViolation, result])
 
   // Timer countdown
   useEffect(() => {
@@ -241,21 +251,22 @@ const QuizAttempt = () => {
 
   if (!proctoringStarted) {
     return (
-      <div
-        ref={proctoredContainerRef}
-        className="min-h-[80vh] bg-surface-50 dark:bg-surface-950 flex items-center justify-center p-4"
-      >
+      <div className="min-h-[80vh] bg-surface-50 dark:bg-surface-950 flex items-center justify-center p-4">
         <div className="card p-8 max-w-lg w-full text-center">
           <ShieldCheck size={56} className="mx-auto mb-4 text-primary-500" />
           <h1 className="text-2xl font-bold mb-3">Proctored quiz</h1>
           <p className="text-surface-500 mb-5">
-            This quiz runs in fullscreen. Switching tabs, leaving fullscreen, or using
-            restricted browser shortcuts will be recorded and shown to your faculty.
+            When supported, this quiz runs in fullscreen. Switching tabs, leaving fullscreen,
+            or using restricted browser shortcuts will be recorded and shown to your faculty.
           </p>
           <ul className="list-disc pl-5 text-left text-sm text-surface-600 dark:text-surface-300 space-y-2 mb-6">
             <li>Stay on this quiz until you submit it.</li>
             <li>Do not use Alt+Tab, Cmd+Tab, Ctrl+Tab, or browser navigation shortcuts.</li>
-            <li>If fullscreen closes, you must re-enter it before continuing.</li>
+            {fullscreenSupported ? (
+              <li>If fullscreen closes, you must re-enter it before continuing.</li>
+            ) : (
+              <li>Your browser does not support fullscreen; tab switching will still be monitored.</li>
+            )}
           </ul>
           <button
             onClick={beginProctoredQuiz}
@@ -263,7 +274,11 @@ const QuizAttempt = () => {
             className="btn-primary w-full flex items-center justify-center gap-2"
           >
             <Maximize2 size={18} />
-            {isStarting ? 'Starting...' : 'Enter fullscreen and start'}
+            {isStarting
+              ? 'Starting...'
+              : fullscreenSupported
+                ? 'Enter fullscreen and start'
+                : 'Start proctored quiz'}
           </button>
         </div>
       </div>
@@ -502,10 +517,7 @@ const QuizAttempt = () => {
   }
 
   return (
-    <div
-      ref={proctoredContainerRef}
-      className="max-w-3xl mx-auto min-h-screen bg-surface-50 dark:bg-surface-950"
-    >
+    <div className="max-w-3xl mx-auto min-h-screen bg-surface-50 dark:bg-surface-950">
       {/* Header */}
       <div className="sticky top-0 z-20 bg-surface-50/95 dark:bg-surface-950/95 backdrop-blur-sm py-4 -mx-4 px-4">
         <div className="flex items-center justify-between mb-3">
@@ -681,7 +693,8 @@ const QuizAttempt = () => {
               }}
               className="btn-primary w-full flex items-center justify-center gap-2"
             >
-              <Maximize2 size={18} /> Re-enter and continue
+              <Maximize2 size={18} />
+              {fullscreenSupported ? 'Re-enter and continue' : 'Continue quiz'}
             </button>
           </div>
         </div>
