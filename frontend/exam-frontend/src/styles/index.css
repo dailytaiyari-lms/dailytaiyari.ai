@@ -235,10 +235,10 @@
   }
 
   /* These authored surfaces intentionally retain dark backgrounds. */
-  .dark .prose pre,
-  .dark .prose pre *,
-  .dark .prose th,
-  .dark .prose th * {
+  .dark .prose pre[style],
+  .dark .prose pre[style] *,
+  .dark .prose th[style],
+  .dark .prose th[style] * {
     color: theme('colors.surface.100') !important;
   }
 
