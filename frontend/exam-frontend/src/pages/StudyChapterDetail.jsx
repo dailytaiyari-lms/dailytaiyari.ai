@@ -26,6 +26,7 @@ const StudyChapterDetail = () => {
     queryKey: ['studyChapterDetail', chapterId],
     queryFn: () => courseService.getStudyChapterDetail(chapterId),
     enabled: !!chapterId,
+    refetchOnMount: 'always',
   })
 
   const { data: leaderboard } = useQuery({
