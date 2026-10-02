@@ -369,6 +369,53 @@ class QuizViewSet(TenantAwareReadOnlyViewSet):
             status=status.HTTP_201_CREATED
         )
 
+    @action(detail=True, methods=['post'])
+    def proctoring_event(self, request, pk=None):
+        """Record a browser-detected proctoring violation for an active attempt."""
+        quiz = self.get_object()
+        event_type = request.data.get('event_type')
+        counter_fields = {
+            'tab_switch': 'tab_switch_count',
+            'fullscreen_exit': 'fullscreen_exit_count',
+            'restricted_shortcut': 'restricted_shortcut_count',
+        }
+        counter_field = counter_fields.get(event_type)
+        if not counter_field:
+            return Response(
+                {'error': 'Invalid proctoring event type.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        attempt = QuizAttempt.objects.filter(
+            student=request.user.profile,
+            quiz=quiz,
+            status='in_progress',
+        ).first()
+        if not attempt:
+            return Response(
+                {'error': 'No active quiz attempt.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        QuizAttempt.objects.filter(pk=attempt.pk).update(
+            proctoring_violations=F('proctoring_violations') + 1,
+            **{
+                counter_field: F(counter_field) + 1,
+                'last_proctoring_event_at': timezone.now(),
+            },
+        )
+        attempt.refresh_from_db(fields=[
+            'proctoring_violations',
+            'tab_switch_count',
+            'fullscreen_exit_count',
+            'restricted_shortcut_count',
+            'last_proctoring_event_at',
+        ])
+        return Response({
+            'recorded': True,
+            'proctoring_violations': attempt.proctoring_violations,
+        })
+
     @action(detail=True, methods=['post'], throttle_classes=[QuizSubmitThrottle])
     def submit(self, request, pk=None):
         """Submit quiz answers."""
@@ -1596,4 +1643,3 @@ class QuestionReportViewSet(TenantAwareViewSet):
         """Get user's question reports."""
         reports = self.get_queryset().order_by('-created_at')[:20]
         return Response(QuestionReportSerializer(reports, many=True).data)
-

@@ -424,6 +424,13 @@ class QuizAttempt(TimeStampedModel):
     # XP earned
     xp_earned = models.PositiveIntegerField(default=0)
 
+    # Proctoring
+    proctoring_violations = models.PositiveIntegerField(default=0)
+    tab_switch_count = models.PositiveIntegerField(default=0)
+    fullscreen_exit_count = models.PositiveIntegerField(default=0)
+    restricted_shortcut_count = models.PositiveIntegerField(default=0)
+    last_proctoring_event_at = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         verbose_name = 'Quiz Attempt'
         verbose_name_plural = 'Quiz Attempts'
@@ -699,4 +706,3 @@ class QuestionReport(TimeStampedModel):
     
     def __str__(self):
         return f"Report on Q{self.question_id} by {self.reported_by}"
-

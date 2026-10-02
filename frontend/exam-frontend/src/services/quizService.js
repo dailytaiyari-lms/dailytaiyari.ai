@@ -33,6 +33,13 @@ export const quizService = {
     return response.data
   },
 
+  reportProctoringEvent: async (quizId, eventType) => {
+    const response = await api.post(`/quiz/quizzes/${quizId}/proctoring_event/`, {
+      event_type: eventType,
+    })
+    return response.data
+  },
+
   // Submit quiz
   submitQuiz: async (quizId, data) => {
     const response = await api.post(`/quiz/quizzes/${quizId}/submit/`, data)
@@ -179,4 +186,3 @@ export const quizService = {
     return response.data
   },
 }
-
