@@ -343,11 +343,7 @@ class QuizViewSet(TenantAwareReadOnlyViewSet):
         
         return Response(QuizAttemptSummarySerializer(attempts, many=True).data)
 
-    @action(
-        detail=True,
-        methods=['post'],
-        throttle_classes=[ProctoringEventThrottle],
-    )
+    @action(detail=True, methods=['post'])
     def start(self, request, pk=None):
         """Start a quiz attempt."""
         quiz = self.get_object()
@@ -378,7 +374,11 @@ class QuizViewSet(TenantAwareReadOnlyViewSet):
             status=status.HTTP_201_CREATED
         )
 
-    @action(detail=True, methods=['post'])
+    @action(
+        detail=True,
+        methods=['post'],
+        throttle_classes=[ProctoringEventThrottle],
+    )
     def proctoring_event(self, request, pk=None):
         """Record a browser-detected proctoring violation for an active attempt."""
         quiz = self.get_object()
