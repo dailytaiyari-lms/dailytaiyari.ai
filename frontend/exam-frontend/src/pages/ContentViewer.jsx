@@ -197,7 +197,7 @@ const ContentViewer = () => {
         </div>
       </div>
 
-      {/* Video Player (YouTube / Vimeo / Google Drive / uploaded) */}
+      {/* Video Player (YouTube / Vimeo / Google Drive / OneDrive / uploaded) */}
       {content?.content_type === 'video' && (content?.video_url || content?.video_file) && (
         <VideoPlayer
           url={content.video_url}

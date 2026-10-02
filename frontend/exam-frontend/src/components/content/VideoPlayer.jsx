@@ -20,14 +20,86 @@ const SKIP_SECONDS = 10
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
 
 /**
+ * Turn a OneDrive link into an embeddable one.
+ *
+ * Personal OneDrive converts cleanly: short 1drv.ms links take an `embed=1`
+ * flag, and the older onedrive.live.com viewer links carry the id and auth key
+ * we need in their query string.
+ *
+ * Work/school links are different. A `:v:/g/...` share URL identifies the file
+ * by an opaque token, while the embed player needs the file's UniqueId GUID,
+ * and there is no way to get from one to the other without calling Microsoft
+ * Graph with credentials we do not have. Those links are reported back as
+ * unsupported so an author is told to paste the embed URL instead of silently
+ * publishing a lesson that shows a sign-in page.
+ *
+ * Returns an embeddable src, or a { reason } describing why there isn't one.
+ */
+const resolveOneDrive = (raw) => {
+  let u
+  try {
+    u = new URL(raw)
+  } catch {
+    return null
+  }
+  const host = u.hostname.toLowerCase()
+  const isSharePoint = host.endsWith('.sharepoint.com')
+
+  if (!/(^|\.)1drv\.ms$/.test(host) && host !== 'onedrive.live.com' && !isSharePoint) {
+    return null
+  }
+
+  // Already an embed URL from the "Embed code" dialog — leave it alone.
+  if (/\/_layouts\/15\/embed\.aspx/i.test(u.pathname) || /\/embed$/i.test(u.pathname)) {
+    return { src: u.href }
+  }
+
+  if (isSharePoint) {
+    return {
+      reason:
+        'This is a OneDrive for Work or School sharing link, which cannot be embedded directly. ' +
+        'Open the video in OneDrive, choose Share → Embed, and paste that URL instead.',
+    }
+  }
+
+  if (host === 'onedrive.live.com') {
+    const resid = u.searchParams.get('resid') || u.searchParams.get('id')
+    if (!resid) return { reason: 'This OneDrive link does not identify a file.' }
+    const out = new URL('https://onedrive.live.com/embed')
+    out.searchParams.set('resid', resid)
+    const cid = u.searchParams.get('cid') || resid.split('!')[0]
+    if (cid) out.searchParams.set('cid', cid)
+    for (const key of ['authkey', 'ithint']) {
+      const value = u.searchParams.get(key)
+      if (value) out.searchParams.set(key, value)
+    }
+    return { src: out.href }
+  }
+
+  // 1drv.ms short link — keep the existing params (notably `e`) and add embed=1.
+  u.searchParams.set('embed', '1')
+  return { src: u.href }
+}
+
+/**
  * Resolve a pasted video URL into an embeddable form.
- * Supports YouTube (watch / youtu.be / shorts / embed), Vimeo and Google Drive.
- * Returns { kind: 'iframe' | 'file' | 'none', src }.
+ * Supports YouTube (watch / youtu.be / shorts / embed), Vimeo, Google Drive
+ * and OneDrive.
+ * Returns { kind: 'iframe' | 'file' | 'none' | 'unsupported', src, reason }.
  */
 export const resolveVideo = (url = '', fileUrl = '') => {
   if (fileUrl) return { kind: 'file', src: fileUrl }
   const u = (url || '').trim()
   if (!u) return { kind: 'none', src: '' }
+
+  // OneDrive is checked first: a work/school link must be caught before the
+  // generic https fallback embeds it as-is and shows a sign-in page.
+  const oneDrive = resolveOneDrive(u)
+  if (oneDrive) {
+    return oneDrive.src
+      ? { kind: 'iframe', src: oneDrive.src }
+      : { kind: 'unsupported', src: '', reason: oneDrive.reason }
+  }
 
   // YouTube
   const yt =
@@ -794,20 +866,20 @@ const FileVideoPlayer = ({ src, hlsSrc, title, poster, optimizing, onDuration })
 
 /**
  * Unified video player for reading material videos.
- * - External providers (YouTube/Vimeo/Drive) render in a responsive iframe.
+ * - External providers (YouTube/Vimeo/Drive/OneDrive) render in a responsive iframe.
  * - Videos uploaded to our blob render in a custom player with skip controls,
  *   speed control and the download control hidden. When an adaptive HLS ladder
  *   has been published for the upload it is preferred over the progressive MP4,
  *   which then serves as the fallback.
  */
 const VideoPlayer = ({ url, fileUrl, hlsUrl, title, poster, videoStatus, onDuration }) => {
-  const { kind, src } = useMemo(() => resolveVideo(url, fileUrl), [url, fileUrl])
+  const { kind, src, reason } = useMemo(() => resolveVideo(url, fileUrl), [url, fileUrl])
 
-  if (kind === 'none') {
+  if (kind === 'none' || kind === 'unsupported') {
     return (
       <div className="card p-8 flex flex-col items-center justify-center text-center gap-2 text-surface-500">
         <AlertCircle className="w-8 h-8 text-amber-500" />
-        <p>This video link could not be recognised.</p>
+        <p className="max-w-md">{reason || 'This video link could not be recognised.'}</p>
       </div>
     )
   }
