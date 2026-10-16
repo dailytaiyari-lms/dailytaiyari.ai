@@ -14,7 +14,9 @@ import NotebookDraftPreview from '../../notebook/NotebookDraftPreview'
 import { NotebookShapeFields, defaultNotebookGenForm } from '../../notebook/NotebookGenFields'
 import ConfirmApply from './ConfirmApply'
 import DraftPreview, { collectSelectable } from './DraftPreview'
-import { Field, ListeningBar, MicButton, Pill, inputClass } from './studioParts'
+import {
+    AssignmentShapeFields, Field, ListeningBar, MicButton, Pill, inputClass,
+} from './studioParts'
 
 /* ===========================================================================
  * TopicStudio — generate material for ONE topic, in place.
@@ -167,6 +169,12 @@ const TopicStudio = ({ courseId, topic, subjectName, resumeJob = null, onClose, 
     const [model, setModel] = useState('')
     const [questionsPerQuiz, setQuestionsPerQuiz] = useState(5)
     const [depth, setDepth] = useState('standard')
+    const [assignmentOptions, setAssignmentOptions] = useState({
+        assignments_per_topic: 1,
+        assignment_difficulty: 'easy',
+        assignment_type: '',
+        assignment_instructions: '',
+    })
     const [notebookForm, setNotebookForm] = useState(defaultNotebookGenForm)
     const [refineText, setRefineText] = useState('')
 
@@ -295,6 +303,7 @@ const TopicStudio = ({ courseId, topic, subjectName, resumeJob = null, onClose, 
                 mode,
                 depth,
                 questions_per_quiz: questionsPerQuiz,
+                ...assignmentOptions,
             },
         })).then(announce)
     }
@@ -523,6 +532,14 @@ const TopicStudio = ({ courseId, topic, subjectName, resumeJob = null, onClose, 
                                         against hidden tests. It is added alongside any lab already here.
                                     </p>
                                 </div>
+                            )}
+
+                            {!isNotebook && materials.includes('assignment') && (
+                                <AssignmentShapeFields
+                                    form={assignmentOptions}
+                                    setForm={setAssignmentOptions}
+                                    maxAssignments={options?.limits?.max_assignments_per_topic || 5}
+                                />
                             )}
 
                             <Field

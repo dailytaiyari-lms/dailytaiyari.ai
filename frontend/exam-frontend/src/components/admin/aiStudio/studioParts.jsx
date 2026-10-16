@@ -75,6 +75,77 @@ export const inputClass =
     + 'outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 '
     + 'dark:border-surface-700 dark:bg-surface-800 dark:text-surface-100'
 
+export const AssignmentShapeFields = ({ form, setForm, maxAssignments = 5 }) => (
+    <div className="space-y-3 rounded-lg border border-surface-200 p-3 dark:border-surface-700">
+        <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-surface-500">
+                Shape the assignment
+            </p>
+            <p className="mt-1 text-xs text-surface-400">
+                These choices override any default AI pattern. Describe the exact task if you already know it.
+            </p>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+            <Field label="Assignments per topic">
+                <input
+                    type="number"
+                    min={1}
+                    max={maxAssignments}
+                    className={inputClass}
+                    value={form.assignments_per_topic ?? 1}
+                    onChange={(e) => setForm((current) => ({
+                        ...current,
+                        assignments_per_topic: Number(e.target.value),
+                    }))}
+                />
+            </Field>
+            <Field label="Difficulty">
+                <select
+                    className={inputClass}
+                    value={form.assignment_difficulty || 'easy'}
+                    onChange={(e) => setForm((current) => ({
+                        ...current,
+                        assignment_difficulty: e.target.value,
+                    }))}
+                >
+                    <option value="very easy">Very easy — young learners</option>
+                    <option value="easy">Easy — simple classroom task</option>
+                    <option value="medium">Medium</option>
+                    <option value="challenging">Challenging</option>
+                </select>
+            </Field>
+        </div>
+        <Field
+            label="Type or format"
+            hint="Examples: algorithm and flowchart, drawing, worksheet, oral activity, short answer."
+        >
+            <input
+                className={inputClass}
+                value={form.assignment_type || ''}
+                onChange={(e) => setForm((current) => ({
+                    ...current,
+                    assignment_type: e.target.value,
+                }))}
+                placeholder="e.g. Algorithm and flowchart — no code"
+            />
+        </Field>
+        <Field
+            label="Exact task or requirements"
+            hint="The AI must follow this and will not add harder requirements."
+        >
+            <textarea
+                className={`${inputClass} min-h-[6rem] resize-y`}
+                value={form.assignment_instructions || ''}
+                onChange={(e) => setForm((current) => ({
+                    ...current,
+                    assignment_instructions: e.target.value,
+                }))}
+                placeholder={'e.g. Ask students to write simple steps for calculating the average of 3 marks, assign a grade, and draw a flowchart. Do not write Python code.'}
+            />
+        </Field>
+    </div>
+)
+
 /** A checkbox that reads as a row, used everywhere in the review tree. */
 export const CheckRow = ({ checked, onChange, disabled, children, className = '' }) => (
     <label
