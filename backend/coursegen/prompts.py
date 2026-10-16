@@ -281,7 +281,13 @@ QUIZ RULES:
 ASSIGNMENT RULES:
 - An assignment is graded work a human reads — it must ask for something the
   learner produces, not something they tick.
-- State the deliverable, the steps, and the marking scheme, in that order.
+- The creator's requested format, difficulty and instructions are authoritative.
+  Do not replace them with a recurring template or make the task harder.
+- Keep assignments age-appropriate and simple by default. Do not require code,
+  implementation, advanced analysis or extra deliverables unless the creator
+  explicitly asks for them.
+- A marking scheme is optional. Include one only when the creator asks for it
+  or when it naturally helps; never let it dominate a simple classroom task.
 - Use "text" when the answer is written prose, "pdf" when a file or scan is the
   natural artefact, "either" when both are acceptable.
 - Never invent a due date; timing is set by the admin.
@@ -361,9 +367,28 @@ def content_user_prompt(*, brief, options, course, subject_name, topics, context
     if 'assignment' in wanted:
         count = options.get('assignments_per_topic') or 1
         settings.append(
-            f'Write {count} assignment(s) per topic, each with a clear deliverable '
-            'and a marking scheme.'
+            f'Write exactly {count} assignment(s) per topic.'
         )
+        difficulty = str(options.get('assignment_difficulty') or 'easy').strip()
+        settings.append(
+            f'Assignment difficulty: {difficulty}. Do not exceed this difficulty.'
+        )
+        assignment_type = str(options.get('assignment_type') or '').strip()
+        if assignment_type:
+            settings.append(
+                f'Assignment type / format: {assignment_type}. Preserve this format; '
+                'do not substitute a standard coding problem, essay or project.'
+            )
+        assignment_instructions = str(
+            options.get('assignment_instructions') or ''
+        ).strip()
+        if assignment_instructions:
+            settings.append(
+                'Creator-controlled assignment brief (follow this literally; do not '
+                'add harder requirements):\n"""\n'
+                + assignment_instructions
+                + '\n"""'
+            )
     if 'coding' in wanted:
         count = options.get('coding_problems_per_topic') or 1
         languages = options.get('coding_languages') or ['python']

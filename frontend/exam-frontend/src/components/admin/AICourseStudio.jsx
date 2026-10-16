@@ -14,7 +14,7 @@ import DraftPreview, { collectSelectable } from './aiStudio/DraftPreview'
 import TopicPicker from './aiStudio/TopicPicker'
 import ConfirmApply from './aiStudio/ConfirmApply'
 import {
-    Field, KIND_META, ListeningBar, MicButton, Pill, STATUS_LABEL, STATUS_PILL,
+    AssignmentShapeFields, Field, KIND_META, ListeningBar, MicButton, Pill, STATUS_LABEL, STATUS_PILL,
     formatCost, inputClass, summaryLine,
 } from './aiStudio/studioParts'
 
@@ -79,6 +79,10 @@ const AICourseStudio = ({ initialCourseId = null, onClose = null }) => {
         chapters_per_subject: 5,
         topics_per_chapter: 4,
         questions_per_quiz: 5,
+        assignments_per_topic: 1,
+        assignment_difficulty: 'easy',
+        assignment_type: '',
+        assignment_instructions: '',
         materials: ['notes', 'quiz'],
         depth: 'standard',
         language: 'English',
@@ -539,6 +543,13 @@ const AICourseStudio = ({ initialCourseId = null, onClose = null }) => {
                                             </Field>
                                         )}
                                     </div>
+                                    {options.materials.includes('assignment') && (
+                                        <AssignmentShapeFields
+                                            form={options}
+                                            setForm={setOptions}
+                                            maxAssignments={config.limits?.max_assignments_per_topic || 5}
+                                        />
+                                    )}
                                 </>
                             )}
                             <Field label="Language">

@@ -665,6 +665,49 @@ class RequestedMaterialsAreEnforcedTests(_StudioTestCase):
         self.assertEqual(len(entry['coding_problems']), 1)
 
 
+class AssignmentPromptControlTests(TestCase):
+    def test_creator_controls_assignment_shape_and_difficulty(self):
+        from coursegen.prompts import content_user_prompt
+
+        course = type('Course', (), {'name': 'Kids Python', 'description': ''})()
+        prompt = content_user_prompt(
+            brief='',
+            options={
+                'materials': ['assignment'],
+                'assignments_per_topic': 1,
+                'assignment_difficulty': 'very easy',
+                'assignment_type': 'Algorithm and flowchart — no code',
+                'assignment_instructions': (
+                    'Calculate the average of 3 marks and assign a grade. '
+                    'Do not write Python code.'
+                ),
+            },
+            course=course,
+            subject_name='Python Basics',
+            topics=[{'name': 'Functions', 'code': 'functions'}],
+        )
+
+        self.assertIn('Assignment difficulty: very easy', prompt)
+        self.assertIn('Algorithm and flowchart — no code', prompt)
+        self.assertIn('Do not write Python code.', prompt)
+        self.assertIn('do not add harder requirements', prompt)
+
+    def test_assignments_default_to_easy(self):
+        from coursegen.prompts import content_user_prompt
+
+        course = type('Course', (), {'name': 'Kids Python', 'description': ''})()
+        prompt = content_user_prompt(
+            brief='',
+            options={'materials': ['assignment']},
+            course=course,
+            subject_name='Python Basics',
+            topics=[{'name': 'Functions', 'code': 'functions'}],
+        )
+
+        self.assertIn('Assignment difficulty: easy', prompt)
+        self.assertNotIn('and a marking scheme', prompt)
+
+
 class LooseModelOutputTests(TestCase):
     """Shapes a model gets subtly wrong must degrade, not vanish."""
 
