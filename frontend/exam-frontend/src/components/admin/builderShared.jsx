@@ -417,7 +417,7 @@ export const SCHEMAS = {
             { name: 'estimated_time_minutes', label: 'Read Time (min)', type: 'number', default: 10 },
             { name: 'order', label: 'Order', type: 'number', default: 0 },
             { name: 'author_name', label: 'Author', type: 'text' },
-            { name: 'video_url', label: 'Video URL (YouTube, Vimeo or Google Drive)', type: 'text', full: true, showIf: (v) => v.content_type === 'video', hint: 'Paste a YouTube, Vimeo or Google Drive link. Leave blank if uploading a file below.' },
+            { name: 'video_url', label: 'Video URL (YouTube, Vimeo, Google Drive or OneDrive)', type: 'text', full: true, showIf: (v) => v.content_type === 'video', hint: 'Paste a YouTube, Vimeo, Google Drive or OneDrive link. For a work or school OneDrive, use the URL from Share → Embed. Leave blank if uploading a file below.' },
             { name: 'is_free', label: 'Free', type: 'checkbox' },
             { name: 'is_premium', label: 'Premium', type: 'checkbox' },
             { name: 'description', label: 'Description', type: 'textarea', full: true },
