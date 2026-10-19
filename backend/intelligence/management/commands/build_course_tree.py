@@ -8,6 +8,7 @@ import uuid
 
 from django.core.management.base import BaseCommand, CommandError
 
+from coursegen.generation import GenerationError
 from exams.models import Course
 from intelligence.services.course_tree import build_course_tree
 from intelligence.services.llm import platform_call, tenant_tagging_call
@@ -31,8 +32,11 @@ class Command(BaseCommand):
             raise CommandError('--course is not a valid id.') from exc
         if course is None:
             raise CommandError('Course not found.')
-        call = (platform_call(options['model'], course.tenant) if options['model']
-                else tenant_tagging_call(course.tenant))
+        try:
+            call = (platform_call(options['model'], course.tenant) if options['model']
+                    else tenant_tagging_call(course.tenant))
+        except GenerationError as exc:
+            raise CommandError(str(exc)) from exc
         packs = ([key.strip() for key in options['packs'].split(',') if key.strip()]
                  if options['packs'] is not None else None)
         summary = build_course_tree(course, call=call, packs=packs, dry_run=options['dry_run'])

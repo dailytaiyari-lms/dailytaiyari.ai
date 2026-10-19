@@ -61,6 +61,12 @@ def _ask_json(call, system, payload, summary):
         return None
 
 
+def _items(reply, field):
+    """``reply[field]`` when it is a list, else [] (malformed replies degrade)."""
+    value = reply.get(field) if isinstance(reply, dict) else None
+    return value if isinstance(value, list) else []
+
+
 def _unique_key(base, used):
     key, suffix = base, 2
     while key in used:
@@ -78,11 +84,12 @@ def _group_topics(subject, topics, call, summary):
     reply = _ask_json(call, GROUP_SYSTEM, payload, summary)
     by_id = {str(topic.id): topic for topic in topics}
     groups, placed = [], set()
-    for raw in (reply or {}).get('groups') or []:
+    for raw in _items(reply, 'groups'):
         if not isinstance(raw, dict) or len(groups) >= MAX_GROUPS:
             continue
         name = str(raw.get('name') or '').strip()[:300]
-        members = [by_id[tid] for tid in raw.get('topic_ids') or []
+        ids = raw.get('topic_ids')
+        members = [by_id[tid] for tid in (ids if isinstance(ids, list) else [])
                    if isinstance(tid, str) and tid in by_id and tid not in placed]
         if not name or not members:
             continue
@@ -117,7 +124,7 @@ def _ensure_groups(subject, topics, call, summary, used):
     else:
         plan = []
         for order, (name, members) in enumerate(_group_topics(subject, new_topics, call, summary)):
-            key = (f'course.{code}.all' if name is None
+            key = (_unique_key(f'course.{code}.all', used) if name is None
                    else _unique_key(f'course.{code}.group.{_slug(name)}', used))
             group = SyllabusNode.objects.create(
                 tenant=subject.tenant, subject=subject, level='sub_subject', key=key,
@@ -183,7 +190,7 @@ def _propose_subtopics(subject, node, topic, call, summary, used, before):
         'sample_questions': [(stem or '')[:STEM_CHARS] for stem in stems],
     }
     reply = _ask_json(call, SUBTOPIC_SYSTEM, payload, summary)
-    for raw in ((reply or {}).get('subtopics') or [])[:MAX_PROPOSALS]:
+    for raw in _items(reply, 'subtopics')[:MAX_PROPOSALS]:
         if not isinstance(raw, dict):
             continue
         name = ' '.join(str(raw.get('name') or '').split())[:300]
@@ -214,7 +221,7 @@ def _choose_packs(subjects, call, summary):
                'subjects': [{'id': str(subject.id), 'name': subject.name} for subject in subjects]}
     reply = _ask_json(call, PACK_SYSTEM, payload, summary)
     chosen = {}
-    for raw in (reply or {}).get('subjects') or []:
+    for raw in _items(reply, 'subjects'):
         if isinstance(raw, dict) and isinstance(raw.get('packs'), list):
             chosen[str(raw.get('id'))] = [key for key in raw['packs'] if key in packs]
     return chosen
@@ -245,7 +252,10 @@ def _build(course, call, packs, summary):
         active = set(SkillPack.objects.filter(active=True).values_list('key', flat=True))
         chosen = {str(subject.id): [key for key in packs if key in active] for subject in subjects}
     else:
-        chosen = _choose_packs(subjects, call, summary) if subjects else {}
+        existing = dict(record.skill_packs or {})
+        missing = [subject for subject in subjects if str(subject.id) not in existing]
+        chosen = _choose_packs(missing, call, summary) if missing else {}
+        chosen = {**existing, **{sid: keys for sid, keys in chosen.items() if keys}}
     record.skill_packs = {sid: keys for sid, keys in chosen.items() if keys}
     record.save()
     names = {str(subject.id): subject.name for subject in subjects}

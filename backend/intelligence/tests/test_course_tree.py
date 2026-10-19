@@ -149,3 +149,34 @@ class CourseTreeTests(TestCase):
         self.assertIn('topics created: 2', out.getvalue())
         self.assertEqual(CourseSyllabus.objects.get(course=self.course).skill_packs,
                          {str(self.subject.id): ['programming']})
+
+    def test_stored_packs_survive_a_failed_or_unneeded_pack_call(self):
+        first = FakeCall(packs=[{'id': str(self.subject.id), 'packs': ['programming']}])
+        course_tree.build_course_tree(self.course, call=first)
+        stored = {str(self.subject.id): ['programming']}
+        self.assertEqual(CourseSyllabus.objects.get(course=self.course).skill_packs, stored)
+        # Every subject has packs: no pack call at all.
+        second = FakeCall()
+        summary = course_tree.build_course_tree(self.course, call=second)
+        self.assertNotIn('pack', [kind for kind, _ in second.calls])
+        self.assertEqual(summary['packs'], {'Arrays & Hashing': ['programming']})
+        # A new subject without packs triggers a call; if it fails, old packs stay.
+        other = Subject.objects.create(tenant=self.tenant, course=self.course, name='Graphs', code='graphs')
+        third = FakeCall(fail={'pack'})
+        course_tree.build_course_tree(self.course, call=third)
+        self.assertEqual([kind for kind, _ in third.calls].count('pack'), 1)
+        self.assertEqual(CourseSyllabus.objects.get(course=self.course).skill_packs, stored)
+        self.assertNotIn(str(other.id), CourseSyllabus.objects.get(course=self.course).skill_packs)
+
+    def test_malformed_replies_degrade(self):
+        class Bad(FakeCall):
+            def __call__(self, system, user):
+                self.calls.append(('x', user))
+                if SUBTOPIC_MARKER in system:
+                    return json.dumps({'subtopics': {'oops': 1}})
+                if PACK_MARKER in system:
+                    return json.dumps({'subjects': {'oops': 1}})
+                return json.dumps({'groups': {'oops': 1}})
+        summary = course_tree.build_course_tree(self.course, call=Bad())
+        self.assertEqual(summary['proposed_subtopics'], 0)
+        self.assertEqual(CourseSyllabus.objects.get(course=self.course).skill_packs, {})
