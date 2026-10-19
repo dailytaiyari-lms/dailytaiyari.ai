@@ -114,6 +114,18 @@ class DiagnoseAttemptTests(DiagnosisTestCase):
         self.assertEqual(ResponseDiagnosis.objects.filter(attempt_id=attempt.id).count(), 4)
         self.assertIsNotNone(AttemptTimeline.objects.get(attempt_id=attempt.id).finalized_at)
 
+    def test_answered_item_with_no_answer_event_has_no_timing(self):
+        item = self.make_item()
+        attempt = self.make_attempt(minutes_ago=30)
+        self.answer(attempt, item, selected=[1])
+        key = f'item:{item.id}'
+        self.make_timeline(attempt, [[0, 'e', key], [3000, 'l', key]])
+        self.finish(attempt, after_minutes=20)
+        diagnose.diagnose_attempt('mock', str(attempt.id))
+        row = ResponseDiagnosis.objects.get(attempt_id=attempt.id, mock_item=item)
+        self.assertNotEqual(row.label, 'guess')
+        self.assertFalse(row.has_timeline)
+
     def test_unfinished_attempt_is_not_diagnosed(self):
         attempt = self.make_attempt()
         self.assertEqual(diagnose.diagnose_attempt('mock', str(attempt.id)), 0)
@@ -207,7 +219,7 @@ class DiagnoseFixRoundTests(DiagnosisTestCase):
         self.assertEqual(row.label, 'unclear')
         self.assertFalse(row.has_timeline)
 
-    def test_quiz_loader_rows_and_session_relative_answer_time(self):
+    def test_quiz_loader_rows_and_server_clock_answer_time(self):
         quiz = Quiz.objects.create(
             tenant=self.tenant, course=self.course, title='Q', quiz_type='topic',
             duration_minutes=15,
@@ -224,7 +236,7 @@ class DiagnoseFixRoundTests(DiagnosisTestCase):
         k = f'bank:{q1.id}'
         self.make_timeline(attempt, [
             [0, 'e', k], [20000, 'a', k, {'sel': [1]}], [25000, 'l', k],
-        ], clock='client', offset_ms=60000, kind='quiz')
+        ], clock='server', offset_ms=60000, kind='quiz')
         attempt.status = 'completed'
         attempt.completed_at = attempt.started_at + timedelta(minutes=10)
         attempt.save()
@@ -232,7 +244,8 @@ class DiagnoseFixRoundTests(DiagnosisTestCase):
         rows = {r.question_id: r for r in ResponseDiagnosis.objects.filter(attempt_id=attempt.id)}
         self.assertTrue(rows[q1.id].answered)
         self.assertEqual(rows[q2.id].label, 'not_seen')
-        self.assertAlmostEqual(rows[q1.id].metrics['final_answer_at_s'], 20.0, delta=1.0)
+        # server clock: the window starts at the anchor, so the 60s offset shifts it
+        self.assertAlmostEqual(rows[q1.id].metrics['final_answer_at_s'], 80.0, delta=1.0)
 
     def test_practice_loader_rows_are_untimed(self):
         q1, q2 = self.make_bank_question(1), self.make_bank_question(2)
@@ -452,3 +465,29 @@ class PracticeDiagnosisHookTests(PracticeTestCase):
         state = LearnerConceptState.objects.get(student=self.student, concept=self.concept)
         # weight 0.6 (practice) x 0.2 (guess) = 0.12; wrong answer scores 0.
         self.assertAlmostEqual(state.mastery, (0 + 1.5) / (0.12 + 3), places=3)
+
+
+class RecomputeCommandOrderTests(DiagnosisTestCase):
+    def test_bad_since_is_a_command_error(self):
+        from django.core.management.base import CommandError
+
+        with self.assertRaises(CommandError):
+            call_command('recompute_diagnoses', since='not-a-date')
+
+    def test_attempts_run_oldest_first(self):
+        from unittest import mock
+
+        newer_item, older_item = self.make_item(), self.make_item()
+        newer = self.make_attempt(minutes_ago=10)
+        self.answer(newer, newer_item, selected=[1])
+        self.finish(newer, after_minutes=5)
+        older = self.make_attempt(minutes_ago=300, student=self.other_user.profile)
+        self.answer(older, older_item, selected=[1])
+        self.finish(older, after_minutes=5)
+        record_attempt_events(newer)    # created first, but its events are newer
+        record_attempt_events(older)
+        calls = []
+        with mock.patch('intelligence.services.diagnose.diagnose_attempt',
+                        side_effect=lambda kind, attempt_id: calls.append(str(attempt_id)) or 0):
+            call_command('recompute_diagnoses', verbosity=0)
+        self.assertEqual(calls, [str(older.id), str(newer.id)])

@@ -371,3 +371,26 @@ class TimelineSyncTests(DiagnosisTestCase):
                                           attempt_id=str(practice_set.id)))
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(AttemptTimeline.objects.get(attempt_id=practice_set.id).clock, 'none')
+
+    def test_session_count_is_bounded_but_existing_ids_still_update(self):
+        attempt = self.make_attempt()
+        self.post(self.payload(attempt_id=str(attempt.id)))
+        row = AttemptTimeline.objects.get(attempt_id=attempt.id)
+        row.sessions = {f's{i}': dict(row.sessions['sess-1']) for i in range(30)}
+        row.save()
+        refused = self.post(self.payload(attempt_id=str(attempt.id), session_id='s-new'))
+        self.assertEqual(refused.status_code, 400, refused.content)
+        again = self.post(self.payload(attempt_id=str(attempt.id), session_id='s5'))
+        self.assertEqual(again.status_code, 200, again.content)
+        self.assertEqual(len(AttemptTimeline.objects.get(attempt_id=attempt.id).sessions), 30)
+
+    def test_older_snapshot_does_not_overwrite_a_newer_one(self):
+        attempt = self.make_attempt()
+        two = [[0, 'e', 'item:a'], [900, 'l', 'item:a']]
+        self.post(self.payload(attempt_id=str(attempt.id), elapsed_ms=5000, events=two))
+        response = self.post(self.payload(attempt_id=str(attempt.id), elapsed_ms=3000,
+                                          events=[[0, 'e', 'item:a']]))
+        self.assertEqual(response.status_code, 200, response.content)
+        stored = AttemptTimeline.objects.get(attempt_id=attempt.id).sessions['sess-1']
+        self.assertEqual(len(stored['events']), 2)
+        self.assertEqual(stored['elapsed_ms'], 5000.0)

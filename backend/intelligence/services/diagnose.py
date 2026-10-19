@@ -14,7 +14,7 @@ from intelligence.models import (
 )
 from intelligence.services import diagnosis as rules
 from intelligence.services.timeline import (
-    KeyTimeline, _valid_sessions, reduce_sessions, window_start_s,
+    KeyTimeline, valid_sessions, reduce_sessions, window_start_s,
 )
 from intelligence.versions import CLASSIFIER_VERSION
 
@@ -226,6 +226,11 @@ def _timing_for(ref, line, has_sessions, truncated):
     if line.visits == 0 and (ref.answered or truncated):
         # Answered but never seen on screen = lost events, not a 0s guess.
         return None
+    answered_digests = [d for _at, d in line.answers if d is not None]
+    if ref.answered and (not answered_digests or line.answers[-1][1] is None):
+        # The tail of the session never arrived (or the answer was cleared):
+        # an early visit says nothing about how long the final answer took.
+        return None
     graded = [_digest_correct(ref, digest) for _at, digest in line.answers if digest is not None]
     return rules.TimingFacts(
         active_s=line.active_s, visits=line.visits,
@@ -244,8 +249,14 @@ def diagnose_attempt(kind, attempt_id):
     tenant = loaded.student.user.tenant
 
     timeline = AttemptTimeline.objects.filter(attempt_kind=kind, attempt_id=attempt_id).first()
+    now = timezone.now()
+    if timeline is not None and timeline.finalized_at is None:
+        # Claim the timeline first, so a sync can't land after we read it.
+        AttemptTimeline.objects.filter(pk=timeline.pk, finalized_at__isnull=True).update(
+            finalized_at=now)
+        timeline.refresh_from_db()
     sessions = (timeline.sessions or {}) if timeline else {}
-    if sessions and not _valid_sessions(sessions):
+    if sessions and not valid_sessions(sessions):
         sessions = {}     # every stored session is corrupt: no usable timeline
     clock = timeline.clock if timeline else None
     keys = {ref.key for ref in loaded.refs}
@@ -266,7 +277,6 @@ def diagnose_attempt(kind, attempt_id):
         for r in ResponseSelfReport.objects.filter(attempt_kind=kind, attempt_id=attempt_id)
     }
     mastery_cache = {}
-    now = timezone.now()
     written = 0
     for ref in loaded.refs:
         mastery, confidence = _prior_mastery(
@@ -285,6 +295,7 @@ def diagnose_attempt(kind, attempt_id):
         )
         timing = _timing_for(ref, lines.get(ref.key), bool(sessions), truncated)
         result = rules.classify(facts, timing, window)
+        timed_out = loaded.timed_out or bool(result.metrics.get('ended_late'))
 
         question_id = ref.item.id if ref.arm == 'q' else None
         mock_item_id = ref.item.id if ref.arm == 'm' else None
@@ -297,21 +308,18 @@ def diagnose_attempt(kind, attempt_id):
             'answered': ref.answered,
             'is_correct': ref.is_correct,
             'score_fraction': ref.score_fraction,
-            'metrics': {**result.metrics, 'timed_out': loaded.timed_out},
+            'metrics': {**result.metrics, 'timed_out': timed_out},
             'flags': result.flags,
             'label': result.label,
             'confidence': result.confidence,
             'evidence': result.evidence,
             'self_report': self_report,
             'final_label': rules.reconcile(result.label, result.confidence, result.flags,
-                                           self_report, loaded.timed_out),
+                                           self_report, timed_out),
             'has_timeline': timing is not None,
             'classifier_version': CLASSIFIER_VERSION,
             'computed_at': now,
         })
         written += 1
 
-    if timeline is not None and timeline.finalized_at is None:
-        timeline.finalized_at = now
-        timeline.save(update_fields=['finalized_at', 'updated_at'])
     return written

@@ -93,7 +93,7 @@ def _offset_s(session):
     return float(raw) / 1000.0
 
 
-def _valid_sessions(sessions):
+def valid_sessions(sessions):
     """[(offset_s, session)] for sessions with a usable offset, in offset order."""
     valid = []
     for session in (sessions.values() if isinstance(sessions, dict) else ()):
@@ -115,7 +115,7 @@ def window_start_s(sessions, clock):
     """
     if clock == 'server':
         return 0.0
-    valid = _valid_sessions(sessions)
+    valid = valid_sessions(sessions)
     return valid[0][0] if valid else 0.0
 
 
@@ -196,7 +196,7 @@ def reduce_sessions(sessions, *, clock, known_keys=None):
     """
     out = {}
     start = window_start_s(sessions, clock)
-    for offset, session in _valid_sessions(sessions):
+    for offset, session in valid_sessions(sessions):
         try:
             events = clean_events(session.get('events') or [])
         except TimelineError:

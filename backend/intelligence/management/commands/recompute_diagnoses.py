@@ -4,7 +4,8 @@ state of each quiz/mock attempt so the new labels reach mastery. Idempotent;
 one failing attempt is reported and skipped."""
 from datetime import datetime
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
+from django.db.models import Min
 from django.utils import timezone
 
 from intelligence.models import LearningEvent
@@ -24,11 +25,17 @@ class Command(BaseCommand):
         if options.get('tenant'):
             events = events.filter(tenant_id=options['tenant'])
         if options.get('since'):
-            since = timezone.make_aware(datetime.strptime(options['since'], '%Y-%m-%d'))
+            try:
+                since = timezone.make_aware(datetime.strptime(options['since'], '%Y-%m-%d'))
+            except ValueError:
+                raise CommandError('--since must be a date like YYYY-MM-DD')
             events = events.filter(occurred_at__gte=since)
-        pairs = events.values_list('attempt_kind', 'attempt_id').distinct()
+        # Oldest first: a later attempt's prior mastery reads earlier labels.
+        pairs = (events.values('attempt_kind', 'attempt_id')
+                 .annotate(first=Min('occurred_at')).order_by('first'))
         attempts = rows = failures = 0
-        for kind, attempt_id in pairs.iterator():
+        for pair in pairs.iterator():
+            kind, attempt_id = pair['attempt_kind'], pair['attempt_id']
             try:
                 rows += diagnose.diagnose_attempt(kind, attempt_id)
                 if kind in ('quiz', 'mock'):

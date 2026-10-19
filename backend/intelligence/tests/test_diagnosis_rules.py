@@ -77,6 +77,14 @@ class LabelTests(SimpleTestCase):
         early = WindowFacts(duration_s=3600, elapsed_s=2000, timed_out=False)
         self.assertEqual(classify(item(answered=False), late, early).label, 'skipped')
 
+    def test_ended_late_is_recorded_without_timed_out(self):
+        window = WindowFacts(duration_s=3600, elapsed_s=3590, timed_out=False)
+        late = timing(20.0, first_enter_at_s=3300.0, final_answer_at_s=None)
+        d = classify(item(answered=False), late, window)
+        self.assertTrue(d.metrics['ended_late'])
+        early = WindowFacts(duration_s=3600, elapsed_s=2000, timed_out=False)
+        self.assertFalse(classify(item(answered=False), late, early).metrics['ended_late'])
+
     def test_unanswered_without_timeline_is_unclear(self):
         d = classify(item(answered=False), None, HOUR)
         self.assertEqual((d.label, d.confidence), ('unclear', 'low'))

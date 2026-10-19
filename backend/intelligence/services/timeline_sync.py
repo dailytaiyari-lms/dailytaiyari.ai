@@ -16,6 +16,7 @@ from intelligence.services.timeline import TimelineError, clean_events
 
 SYNC_GRACE = timedelta(seconds=120)  # a late flush right after submit still lands
 KINDS = ('quiz', 'mock', 'practice')
+MAX_SESSIONS_PER_ATTEMPT = 30
 
 
 class TimelineFinalized(TimelineError):
@@ -126,9 +127,15 @@ def save_session(*, kind, student, session_id, elapsed_ms, events, truncated,
         if row.finalized_at is not None:
             raise TimelineFinalized('attempt already diagnosed')
         sessions = dict(row.sessions or {})
+        existing = sessions.get(session_id)
+        if (isinstance(existing, dict) and isinstance(existing.get('elapsed_ms'), (int, float))
+                and existing['elapsed_ms'] > elapsed):
+            return row      # an older snapshot landing late must not undo a newer one
         if clock == 'client' and session_id not in sessions:
             # The client timer restarted with the page; older sessions are void.
             sessions = {}
+        if session_id not in sessions and len(sessions) >= MAX_SESSIONS_PER_ATTEMPT:
+            raise TimelineError('too many sessions for this attempt')
         sessions[session_id] = {
             'offset_ms': round(offset_ms, 1),
             'elapsed_ms': elapsed,
