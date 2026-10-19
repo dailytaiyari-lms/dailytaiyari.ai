@@ -30,6 +30,29 @@ def update_learner_state_for_attempt(kind, attempt_id):
         return 0
 
 
+@shared_task(name='intelligence.diagnose_and_update_state', max_retries=0)
+def diagnose_and_update_state(kind, attempt_id):
+    """Diagnose an attempt's responses, then recompute the states it touched.
+
+    Ordered on purpose: state reads diagnosis weights. A diagnosis failure
+    never blocks the state update (weights fall back to 1.0) and the nightly
+    sweep retries it.
+    """
+    from .services import diagnose, state
+
+    try:
+        diagnose.diagnose_attempt(kind, attempt_id)
+    except Exception:  # noqa: BLE001
+        logger.exception('intelligence.diagnose failed for %s %s', kind, attempt_id)
+    if kind not in ('quiz', 'mock'):
+        return 0
+    try:
+        return state.update_for_attempt(kind, attempt_id)
+    except Exception:  # noqa: BLE001 — the nightly refresh catches up
+        logger.exception('intelligence.update_learner_state failed for %s %s', kind, attempt_id)
+        return 0
+
+
 @shared_task(name='intelligence.refresh_learner_state', time_limit=1800)
 def refresh_learner_state():
     """Nightly: re-decay stale states and catch up on any missed enqueues.
@@ -58,14 +81,26 @@ def refresh_learner_state():
 
     caught_up = 0
     recent = timezone.now() - timedelta(hours=48)
-    from .models import LearningEvent
+    from .models import LearningEvent, ResponseDiagnosis
+    from .services import diagnose
+    from .versions import CLASSIFIER_VERSION
 
-    pairs = (
+    pairs = list(
         LearningEvent.objects.filter(created_at__gte=recent)
         .values_list('attempt_kind', 'attempt_id').distinct()
     )
     for kind, attempt_id in pairs:
-        if kind in ('quiz', 'mock') and attempt_id:
+        if not attempt_id:
+            continue
+        current = ResponseDiagnosis.objects.filter(
+            attempt_kind=kind, attempt_id=attempt_id, classifier_version=CLASSIFIER_VERSION,
+        ).exists()
+        if not current:
+            try:
+                diagnose.diagnose_attempt(kind, attempt_id)
+            except Exception:  # noqa: BLE001
+                logger.exception('nightly diagnose failed for %s %s', kind, attempt_id)
+        if kind in ('quiz', 'mock'):
             caught_up += state.update_for_attempt(kind, attempt_id)
 
     logger.info('intelligence.refresh_learner_state: %d refreshed, %d catch-up concepts',

@@ -6,6 +6,8 @@ comes out, whatever ran before. No LLM anywhere in this path.
 Pedagogical grounding, deliberately simple and inspectable:
 - mastery      recency-decayed weighted mean with a Laplace prior, so one
                lucky answer can't read as mastery and old evidence fades;
+               evidence is down-weighted by its response diagnosis (guesses,
+               slips, time pressure — diagnosis_config.LABEL_WEIGHTS);
 - retention    a spacing model — memory stability grows when recall succeeds
                after a *gap* (spacing effect) and halves on failure; predicted
                recall decays exponentially against that stability;
@@ -83,6 +85,35 @@ def _cognitive_multi(event):
     return bool(item and item.cognitive_type == 'multi_concept')
 
 
+def _diagnosis_key(event):
+    return (
+        event.attempt_kind, str(event.attempt_id),
+        str(event.question_id) if event.question_id else None,
+        str(event.mock_item_id) if event.mock_item_id else None,
+    )
+
+
+def _diagnosis_weights(events):
+    """(attempt, item) → evidence multiplier from its ResponseDiagnosis.
+
+    Guesses and slips stop counting as full evidence of not knowing; an
+    event without a diagnosis keeps weight 1.0 (v1 behaviour).
+    """
+    from intelligence.diagnosis_config import LABEL_WEIGHTS
+    from intelligence.models import ResponseDiagnosis
+
+    attempt_ids = {e.attempt_id for e in events if e.attempt_id}
+    if not attempt_ids:
+        return {}
+    rows = ResponseDiagnosis.objects.filter(attempt_id__in=attempt_ids).values_list(
+        'attempt_kind', 'attempt_id', 'question_id', 'mock_item_id', 'final_label')
+    return {
+        (kind, str(attempt_id), str(q) if q else None, str(m) if m else None):
+            LABEL_WEIGHTS.get(label, 1.0)
+        for kind, attempt_id, q, m, label in rows
+    }
+
+
 def selected_from_digest(digest):
     """Option indices a response digest picked (MCQ-like digests only)."""
     digest = digest or {}
@@ -119,6 +150,7 @@ def observations_for(student, concept):
     for event in events:
         latest[event.dedup_key.rsplit(':', 1)[0]] = event
 
+    diagnosis_weights = _diagnosis_weights(latest.values())
     observations = []
     for event in sorted(latest.values(), key=lambda e: (e.occurred_at, e.created_at)):
         if event.question_id:
@@ -133,7 +165,8 @@ def observations_for(student, concept):
         observations.append(_Observation(
             occurred_at=event.occurred_at,
             score=max(0.0, min(1.0, event.score_fraction)),
-            link_weight=weights.get(item_key, 1.0) * source_weight,
+            link_weight=(weights.get(item_key, 1.0) * source_weight
+                         * diagnosis_weights.get(_diagnosis_key(event), 1.0)),
             is_multi=multi_by_links.get(item_key, False) or _cognitive_multi(event),
             item_ref=str(item_key[1]),
             selected=_selected_indices(event) if event.score_fraction < 0.5 else [],

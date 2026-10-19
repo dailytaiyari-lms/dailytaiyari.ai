@@ -183,6 +183,13 @@ def submit_set(practice_set):
     # student is looking at the "what changed" screen right now. Derived from
     # the answered questions' links (not just target_concepts) so starter
     # sets, which target no concept, still seed learner state.
+    # Diagnose first so the synchronous state refresh below sees the labels.
+    try:
+        from intelligence.services import diagnose
+        diagnose.diagnose_attempt('practice', practice_set.id)
+    except Exception:  # noqa: BLE001 — never fail the student's submit
+        logger.exception('practice: diagnosis failed for set %s', practice_set.id)
+
     from intelligence.models import ConceptLink
     from intelligence.services import state as state_service
 

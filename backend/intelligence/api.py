@@ -48,9 +48,9 @@ def _enqueue_state_update(attempt):
     try:
         from quiz.models import QuizAttempt
 
-        from intelligence.tasks import update_learner_state_for_attempt
+        from intelligence.tasks import diagnose_and_update_state
         kind = 'quiz' if isinstance(attempt, QuizAttempt) else 'mock'
-        update_learner_state_for_attempt.delay(kind, str(attempt.pk))
+        diagnose_and_update_state.delay(kind, str(attempt.pk))
     except Exception:
         # Broker down or task missing — the nightly sweep recomputes students
         # whose events are newer than their computed state.

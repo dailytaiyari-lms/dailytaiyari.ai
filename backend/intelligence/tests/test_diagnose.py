@@ -1,15 +1,17 @@
 """Response diagnosis: schema, fact assembly, persistence and state weights."""
 from datetime import timedelta
 
+from django.core.management import call_command
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from intelligence.models import (
-    AttemptTimeline, ItemStats, ResponseDiagnosis, ResponseSelfReport,
+    AttemptTimeline, ConceptLink, ItemStats, LearnerConceptState, PracticeSet,
+    PracticeSetItem, ResponseDiagnosis, ResponseSelfReport,
 )
 from intelligence.services import diagnose, itemstats
 from intelligence.services.events import record_attempt_events
-from intelligence.models import ConceptLink, PracticeSet, PracticeSetItem
+from intelligence.services.state import recompute_state
 from intelligence.tests.diagnosis_fixtures import DiagnosisTestCase
 from quiz.models import Answer, Question, QuestionOption, Quiz, QuizAttempt, QuizQuestion
 from intelligence.versions import CLASSIFIER_VERSION, STATE_MODEL_VERSION
@@ -282,3 +284,45 @@ class DiagnoseFixRoundTests(DiagnosisTestCase):
         diagnose.diagnose_attempt('mock', str(attempt.id))
         row = ResponseDiagnosis.objects.get(attempt_id=attempt.id, mock_item=item)
         self.assertNotIn('prior_mastery', row.metrics)
+
+
+class DiagnosisWeightTests(DiagnosisTestCase):
+    def wrong_attempt(self):
+        item = self.make_item()
+        attempt = self.make_attempt()
+        self.answer(attempt, item, selected=[1])
+        self.finish(attempt)
+        record_attempt_events(attempt)
+        return attempt, item
+
+    def test_guess_weighs_less_than_an_honest_miss(self):
+        attempt, item = self.wrong_attempt()
+        recompute_state(self.student, self.concept)
+        honest = LearnerConceptState.objects.get(student=self.student, concept=self.concept)
+        # (0*1 + 3*0.5) / (1 + 3)
+        self.assertAlmostEqual(honest.mastery, 0.375, places=3)
+
+        ResponseDiagnosis.objects.create(
+            tenant=self.tenant, student=self.student, attempt_kind='mock',
+            attempt_id=attempt.id, mock_item=item, answered=True, is_correct=False,
+            label='guess', final_label='guess', confidence='high',
+        )
+        recompute_state(self.student, self.concept)
+        guessed = LearnerConceptState.objects.get(student=self.student, concept=self.concept)
+        # (0*0.2 + 3*0.5) / (0.2 + 3)
+        self.assertAlmostEqual(guessed.mastery, 0.4688, places=3)
+        self.assertEqual(guessed.model_version, '2')
+
+    def test_api_hook_diagnoses_then_updates_state(self):
+        from intelligence import api
+
+        attempt, item = self.wrong_attempt()
+        api.record_attempt_events(attempt)   # Celery is eager in tests
+        self.assertTrue(ResponseDiagnosis.objects.filter(attempt_id=attempt.id).exists())
+        self.assertTrue(LearnerConceptState.objects.filter(
+            student=self.student, concept=self.concept).exists())
+
+    def test_recompute_command(self):
+        attempt, _item = self.wrong_attempt()
+        call_command('recompute_diagnoses', verbosity=0)
+        self.assertEqual(ResponseDiagnosis.objects.filter(attempt_id=attempt.id).count(), 1)
