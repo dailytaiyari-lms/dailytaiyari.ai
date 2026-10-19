@@ -86,18 +86,18 @@ const PracticeSession = () => {
 
   const nextQuestion = () => {
     if (index + 1 >= total) {
+      // Last item: keep `review` set so the Finish button stays mounted and
+      // currentKey stays null (no fresh visit recorded during the flush).
       if (finishingRef.current) return
       finishingRef.current = true
       setFinishing(true)
+      timeline.flush({ final: true }).finally(() => submitMutation.mutate())
+      return
     }
     setReview(null)
     setSelected([])
     setNumerical('')
-    if (index + 1 < total) {
-      setIndex(index + 1)
-    } else {
-      timeline.flush({ final: true }).finally(() => submitMutation.mutate())
-    }
+    setIndex(index + 1)
   }
 
   const toggleOption = (optionIndex) => {
@@ -282,7 +282,7 @@ const PracticeSession = () => {
               disabled={finishing || submitMutation.isPending}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary-500 text-white font-medium hover:bg-primary-600 transition-colors disabled:opacity-50"
             >
-              {index + 1 < total ? 'Next question' : 'Finish set'}
+              {index + 1 < total ? 'Next question' : finishing ? 'Finishing…' : 'Finish set'}
               <ArrowRight size={16} />
             </button>
           ) : (
