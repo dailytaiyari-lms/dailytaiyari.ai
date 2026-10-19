@@ -150,3 +150,50 @@ class MasteryView(APIView):
         if course_id:
             queryset = queryset.filter(concept__subject__course_id=course_id)
         return Response(MasteryRowSerializer(queryset[:300], many=True).data)
+
+
+class TimelineThrottle(UserRateThrottle):
+    rate = '20/min'
+
+
+MAX_TIMELINE_BODY = 256 * 1024
+
+
+class TimelineSyncView(APIView):
+    """Browser → raw per-question timeline for an attempt.
+
+    Always on (no feature gate): capture accrues regardless, exactly like the
+    learning-event log, so enabling Answer Diagnosis later has history.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [TimelineThrottle]
+
+    def post(self, request):
+        from .services.timeline import TimelineError
+        from .services.timeline_sync import TimelineFinalized, save_session
+
+        try:
+            length = int(request.META.get('CONTENT_LENGTH') or 0)
+        except ValueError:
+            length = 0
+        if length > MAX_TIMELINE_BODY:
+            return Response({'error': 'Timeline too large.'},
+                            status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+        student = _student_or_none(request)
+        if student is None:
+            return Response({'error': 'Students only.'}, status=status.HTTP_403_FORBIDDEN)
+        data = request.data
+        try:
+            save_session(
+                kind=data.get('attempt_kind'), student=student,
+                attempt_id=data.get('attempt_id'), parent_id=data.get('parent_id'),
+                session_id=data.get('session_id'), elapsed_ms=data.get('elapsed_ms'),
+                events=data.get('events'), truncated=bool(data.get('truncated')),
+            )
+        except TimelineFinalized:
+            return Response({'error': 'This attempt was already diagnosed.'},
+                            status=status.HTTP_409_CONFLICT)
+        except TimelineError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'ok': True})

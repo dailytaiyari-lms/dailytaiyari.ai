@@ -1,9 +1,17 @@
 """Timeline reduction (pure) — raw browser events to per-question timing."""
-from django.test import SimpleTestCase
+from datetime import timedelta
 
+from django.core.cache import cache
+from django.test import SimpleTestCase
+from django.utils import timezone
+from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from intelligence.models import AttemptTimeline, PracticeSet
 from intelligence.services.timeline import (
     MAX_EVENTS, TimelineError, clean_events, reduce_sessions, window_start_s,
 )
+from intelligence.tests.diagnosis_fixtures import DiagnosisTestCase
 
 
 def one(events, *, offset_ms=0, clock='server', known_keys=None):
@@ -33,6 +41,10 @@ class CleanEventsTests(SimpleTestCase):
         for bad_t in (float('nan'), float('inf'), float('-inf')):
             with self.assertRaises(TimelineError, msg=repr(bad_t)):
                 clean_events([[bad_t, 'e', 'bank:a']])
+
+    def test_rejects_huge_integer_times(self):
+        with self.assertRaises(TimelineError):
+            clean_events([[10**400, 'e', 'bank:a']])
 
     def test_answer_without_a_digest_is_rejected(self):
         with self.assertRaises(TimelineError):
@@ -146,3 +158,103 @@ class ReduceTests(SimpleTestCase):
         }
         answers = reduce_sessions(sessions, clock='server')['bank:a'].answers
         self.assertEqual([a[0] for a in answers], [1.0, 4.0, 9.0])
+
+
+URL = '/api/v1/intelligence/timeline/'
+
+
+class TimelineSyncTests(DiagnosisTestCase):
+    def setUp(self):
+        cache.clear()  # the 20/min throttle must not leak between tests
+
+    def client_for(self, user):
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Bearer {RefreshToken.for_user(user).access_token}')
+        return client
+
+    def post(self, payload, user=None):
+        return self.client_for(user or self.user).post(
+            URL, payload, format='json', HTTP_X_TENANT_ID=str(self.tenant.id),
+        )
+
+    def payload(self, **overrides):
+        body = {'attempt_kind': 'mock', 'session_id': 'sess-1', 'elapsed_ms': 1000,
+                'truncated': False, 'events': [[0, 'e', 'item:a'], [900, 'l', 'item:a']]}
+        body.update(overrides)
+        return body
+
+    def test_rich_mock_sync_anchors_offset_on_the_server(self):
+        attempt = self.make_attempt(minutes_ago=30)
+        response = self.post(self.payload(attempt_id=str(attempt.id)))
+        self.assertEqual(response.status_code, 200, response.content)
+        row = AttemptTimeline.objects.get(attempt_id=attempt.id)
+        self.assertEqual(row.clock, 'server')
+        self.assertEqual(row.student, self.student)
+        offset = row.sessions['sess-1']['offset_ms']
+        self.assertAlmostEqual(offset, 30 * 60 * 1000 - 1000, delta=5000)
+
+    def test_resend_replaces_the_session(self):
+        attempt = self.make_attempt()
+        self.post(self.payload(attempt_id=str(attempt.id)))
+        self.post(self.payload(attempt_id=str(attempt.id), events=[[0, 'e', 'item:a']]))
+        row = AttemptTimeline.objects.get(attempt_id=attempt.id)
+        self.assertEqual(len(row.sessions), 1)
+        self.assertEqual(len(row.sessions['sess-1']['events']), 1)
+
+    def test_parent_id_resolves_in_progress_attempt_with_client_clock(self):
+        attempt = self.make_attempt()
+        self.post(self.payload(parent_id=str(self.mock_test.id)))
+        self.post(self.payload(parent_id=str(self.mock_test.id), session_id='sess-2'))
+        row = AttemptTimeline.objects.get(attempt_id=attempt.id)
+        self.assertEqual(row.clock, 'client')
+        # a client-timed screen restarted: only the newest session survives
+        self.assertEqual(list(row.sessions), ['sess-2'])
+
+    def test_other_students_attempt_is_rejected(self):
+        attempt = self.make_attempt(student=self.other_user.profile)
+        response = self.post(self.payload(attempt_id=str(attempt.id)))
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(AttemptTimeline.objects.exists())
+
+    def test_finished_attempt_window(self):
+        attempt = self.make_attempt(minutes_ago=30)
+        attempt.status = 'completed'
+        attempt.completed_at = timezone.now() - timedelta(seconds=30)
+        attempt.save()
+        self.assertEqual(self.post(self.payload(attempt_id=str(attempt.id))).status_code, 200)
+        attempt.completed_at = timezone.now() - timedelta(minutes=10)
+        attempt.save()
+        self.assertEqual(
+            self.post(self.payload(attempt_id=str(attempt.id), session_id='late')).status_code, 400)
+
+    def test_finalized_timeline_is_refused(self):
+        attempt = self.make_attempt()
+        row = self.make_timeline(attempt, [])
+        row.finalized_at = timezone.now()
+        row.save()
+        self.assertEqual(self.post(self.payload(attempt_id=str(attempt.id))).status_code, 409)
+
+    def test_bad_events_and_ids_are_400(self):
+        attempt = self.make_attempt()
+        self.assertEqual(self.post(self.payload(
+            attempt_id=str(attempt.id), events=[[0, 'zz', 'x']])).status_code, 400)
+        self.assertEqual(self.post(self.payload(attempt_id='not-a-uuid')).status_code, 400)
+        self.assertEqual(self.post(self.payload(attempt_kind='exam',
+                                                attempt_id=str(attempt.id))).status_code, 400)
+
+    def test_oversized_body_is_413(self):
+        attempt = self.make_attempt()
+        key = 'item:' + 'x' * 70
+        events = [[i, 'a', key, {'txt': i}] for i in range(4000)]
+        response = self.post(self.payload(attempt_id=str(attempt.id), events=events))
+        self.assertEqual(response.status_code, 413)
+
+    def test_suggested_practice_set_syncs_untimed(self):
+        practice_set = PracticeSet.objects.create(
+            tenant=self.tenant, student=self.student, course=self.course,
+            status='suggested', deficit_kind='starter', deficit_signature='starter:test',
+        )
+        response = self.post(self.payload(attempt_kind='practice',
+                                          attempt_id=str(practice_set.id)))
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(AttemptTimeline.objects.get(attempt_id=practice_set.id).clock, 'none')

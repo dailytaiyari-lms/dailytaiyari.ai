@@ -42,6 +42,16 @@ class KeyTimeline:
     answers: list = field(default_factory=list)  # [(at_s, digest | None)]; None = cleared
 
 
+def _valid_number(value):
+    """A real, finite, non-negative number (huge ints overflow float: invalid)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value) and value >= 0
+    except OverflowError:
+        return False
+
+
 def clean_events(events):
     """Validate a session's events; return (t_ms, code, key, value) sorted by t."""
     if not isinstance(events, list):
@@ -55,7 +65,7 @@ def clean_events(events):
         t, code = raw[0], raw[1]
         key = raw[2] if len(raw) > 2 else None
         value = raw[3] if len(raw) > 3 else None
-        if isinstance(t, bool) or not isinstance(t, (int, float))                 or not math.isfinite(t) or t < 0:
+        if not _valid_number(t):
             raise TimelineError(f'event {index} has a bad time')
         if code not in CODES:
             raise TimelineError(f'event {index} has an unknown code')
@@ -78,7 +88,7 @@ def _offset_s(session):
     raw = session.get('offset_ms')
     if raw is None:
         return 0.0
-    if isinstance(raw, bool) or not isinstance(raw, (int, float))             or not math.isfinite(raw) or raw < 0:
+    if not _valid_number(raw):
         return None
     return float(raw) / 1000.0
 
