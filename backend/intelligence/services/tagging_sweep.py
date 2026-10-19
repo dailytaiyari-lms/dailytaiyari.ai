@@ -50,7 +50,8 @@ class DbCache:
         return row.result if row else None
 
     def put(self, stage, payload_id, entry):
-        AITaggingResult.objects.get_or_create(**self._key(stage, payload_id), defaults={'result': entry})
+        # update_or_create: a fresh reply replaces a cached entry the core rejected as malformed.
+        AITaggingResult.objects.update_or_create(**self._key(stage, payload_id), defaults={'result': entry})
 
 
 def _arm(item):

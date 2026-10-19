@@ -1,6 +1,7 @@
 """Tagger v2 core: prompts, two stages, validation, confidence, review rule."""
 import json
 import re
+from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
@@ -231,6 +232,78 @@ class TagPayloadsTests(SimpleTestCase):
             context(), [payload('q1', hint=LAWS)], call=lambda system, user: reply)
         self.assertEqual(result.error, '')
         self.assertIn(r'\(E=hc/\lambda\)', result.skills[0]['reason'])
+
+    def _tag_one(self, cache=None, **overrides):
+        call = FakeCall(tag={'q1': tag_entry(**overrides)})
+        [result] = tagging_v2.tag_payloads(context(), [payload('q1', hint=LAWS)], call=call, cache=cache)
+        return result
+
+    def test_malformed_scalar_fields_are_invalid_not_errors(self):
+        for field_name, value in [('thinking_level', ['recall']), ('special_format', {'k': 'v'}),
+                                  ('difficulty', ['easy']), ('primary_subtopic', [FRICTION]),
+                                  ('proposed_subtopic', ['x'])]:
+            with self.subTest(field_name):
+                result = self._tag_one(**{field_name: value})
+                self.assertEqual(result.error, '')
+                self.assertIn('invalid_key', result.review_reasons)
+                self.assertNotIsInstance(getattr(result, field_name), (list, dict))
+
+    def test_malformed_list_fields_are_invalid_not_errors(self):
+        for field_name, value in [('secondary_subtopics', 7), ('skills', 3), ('skills', 'free_body_diagram')]:
+            with self.subTest(field_name, value=value):
+                result = self._tag_one(**{field_name: value})
+                self.assertEqual(result.error, '')
+                self.assertEqual(result.primary_subtopic, FRICTION)
+                self.assertIn('invalid_key', result.review_reasons)
+                self.assertEqual(getattr(result, field_name), [])
+
+    def test_malformed_skill_key_or_role_is_invalid(self):
+        result = self._tag_one(skills=[{'key': ['free_body_diagram'], 'role': 'core'},
+                                       {'key': 'formula_application', 'role': ['core']}])
+        self.assertEqual(result.error, '')
+        self.assertEqual(result.skills, [{'key': 'formula_application', 'role': 'supporting', 'reason': ''}])
+        self.assertIn('invalid_key', result.review_reasons)
+
+    def test_non_finite_numbers_do_not_raise(self):
+        reply = json.dumps({'items': [dict(tag_entry(), id='q1')]}).replace(
+            '"est_solve_seconds": 90', '"est_solve_seconds": Infinity')
+        [result] = tagging_v2.tag_payloads(
+            context(), [payload('q1', hint=LAWS)], call=lambda system, user: reply)
+        self.assertEqual(result.error, '')
+        self.assertIsNone(result.est_solve_seconds)
+
+    def test_malformed_also_topics_in_locate(self):
+        call = FakeCall(locate={'q1': {'topic_key': LAWS, 'also_topic_keys': 5, 'confidence': 0.9}},
+                        tag={'q1': tag_entry(secondary_subtopics=[])})
+        [result] = tagging_v2.tag_payloads(context(), [payload('q1')], call=call)
+        self.assertEqual((result.error, result.topic_key), ('', LAWS))
+        bad_topic = FakeCall(locate={'q1': {'topic_key': [LAWS], 'confidence': 0.9}})
+        [result] = tagging_v2.tag_payloads(context(), [payload('q1')], call=bad_topic)
+        self.assertEqual(result.error, 'no_topic')
+
+    def test_entry_that_raises_is_an_invalid_entry_and_not_cached(self):
+        cache = DictCache()
+        with patch.object(tagging_v2, '_apply_tag', side_effect=TypeError('boom')):
+            result = self._tag_one(cache=cache)
+        self.assertEqual(result.error, 'invalid_entry')
+        self.assertNotIn(('tag', 'q1'), {key[:2] for key in cache.store})
+        with patch.object(tagging_v2, '_locate', side_effect=TypeError('boom')):
+            call = FakeCall(locate={'q1': {'topic_key': LAWS, 'confidence': 0.9}})
+            [result] = tagging_v2.tag_payloads(context(), [payload('q1')], call=call, cache=cache)
+        self.assertEqual(result.error, 'invalid_entry')
+        self.assertEqual(cache.store, {})
+
+    def test_malformed_cached_entry_is_a_miss_not_a_crash(self):
+        cache = DictCache()
+        tagging_v2.tag_payloads(context(), [payload('q1')], cache=cache, call=FakeCall(
+            locate={'q1': {'topic_key': LAWS, 'confidence': 0.9}}, tag={'q1': tag_entry()}))
+        for key in cache.store:
+            cache.store[key] = ['not', 'an', 'entry']
+        fresh = FakeCall(locate={'q1': {'topic_key': LAWS, 'confidence': 0.9}}, tag={'q1': tag_entry()})
+        [result] = tagging_v2.tag_payloads(context(), [payload('q1')], call=fresh, cache=cache)
+        self.assertEqual([stage for stage, _, _ in fresh.calls], ['locate', 'tag'])
+        self.assertEqual((result.error, result.primary_subtopic), ('', FRICTION))
+        self.assertTrue(all(isinstance(entry, dict) for entry in cache.store.values()))
 
     def test_hinted_item_never_gets_stage_disagreement(self):
         call = FakeCall(tag={'q1': tag_entry(primary_subtopic=POWER, secondary_subtopics=[])})

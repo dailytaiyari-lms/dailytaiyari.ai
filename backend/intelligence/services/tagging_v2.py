@@ -10,7 +10,7 @@ picks the topic. Stage 2 (tag) runs per topic, with that topic's subtopics
 """
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from coursegen.generation import GenerationError, extract_json
 
@@ -198,7 +198,7 @@ def _confidence(value):
 def _seconds(value):
     try:
         seconds = int(round(float(value)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):  # OverflowError: JSON Infinity
         return None
     return min(MAX_SOLVE_S, max(MIN_SOLVE_S, seconds))
 
@@ -208,22 +208,44 @@ def _batches(items):
         yield items[start:start + BATCH_SIZE]
 
 
+def _text(value, reasons):
+    """``value`` if it is a string, else '' (flagged ``invalid_key`` when something was there)."""
+    if isinstance(value, str):
+        return value
+    if value is not None:
+        reasons.add('invalid_key')
+    return ''
+
+
+def _items(value, reasons):
+    """``value`` if it is a list, else [] (flagged ``invalid_key`` when something was there)."""
+    if isinstance(value, list):
+        return value
+    if value not in (None, ''):
+        reasons.add('invalid_key')
+    return []
+
+
 def _locate(entry, topic_keys):
     topic = entry.get('topic_key') if isinstance(entry.get('topic_key'), str) else ''
     if topic not in topic_keys:
         return None
     also = []
-    for key in entry.get('also_topic_keys') or []:
+    for key in _items(entry.get('also_topic_keys'), set()):
         if isinstance(key, str) and key in topic_keys and key != topic and key not in also:
             also.append(key)
     return {'topic_key': topic, 'also': also[:MAX_ALSO_TOPICS], 'located': True}
 
 
 def _apply_tag(result, entry, context, allowed, located):
-    """Validate one stage-2 entry into ``result``. ``allowed``: subtopic → topic key."""
+    """Validate one stage-2 entry into ``result``. ``allowed``: subtopic → topic key.
+
+    Every field is type-checked: a value of the wrong shape is dropped and flagged
+    ``invalid_key`` instead of raising.
+    """
     reasons = set()
-    primary = entry.get('primary_subtopic') if isinstance(entry.get('primary_subtopic'), str) else ''
-    proposed = str(entry.get('proposed_subtopic') or '').strip()[:300]
+    primary = _text(entry.get('primary_subtopic'), reasons)
+    proposed = _text(entry.get('proposed_subtopic'), reasons).strip()[:300]
     if primary and primary not in allowed:
         reasons.add('invalid_key')
         primary = ''
@@ -231,7 +253,7 @@ def _apply_tag(result, entry, context, allowed, located):
         reasons.add('invalid_key')
     result.primary_subtopic = primary
     secondaries = []
-    for key in entry.get('secondary_subtopics') or []:
+    for key in _items(entry.get('secondary_subtopics'), reasons):
         if not isinstance(key, str) or key not in allowed:
             reasons.add('invalid_key')
         elif key != primary and key not in secondaries:
@@ -239,7 +261,7 @@ def _apply_tag(result, entry, context, allowed, located):
     result.secondary_subtopics = secondaries if primary else []
 
     levels = {e['key'] for e in context['thinking_levels']}
-    level = entry.get('thinking_level') or ''
+    level = _text(entry.get('thinking_level'), reasons)
     if level in levels:
         result.thinking_level = level
     elif level:
@@ -247,30 +269,32 @@ def _apply_tag(result, entry, context, allowed, located):
 
     skill_keys = {e['key'] for e in context['skills']}
     skills, seen = [], set()
-    for raw in entry.get('skills') or []:
+    for raw in _items(entry.get('skills'), reasons):
         if isinstance(raw, str):
             raw = {'key': raw}
         if not isinstance(raw, dict):
             continue
-        key = raw.get('key')
+        key = _text(raw.get('key'), reasons)
         if key not in skill_keys:
             reasons.add('invalid_key')
             continue
         if key in seen:
             continue
         seen.add(key)
-        skills.append({'key': key, 'role': 'core' if raw.get('role') == 'core' else 'supporting',
+        role = _text(raw.get('role'), reasons)
+        skills.append({'key': key, 'role': 'core' if role == 'core' else 'supporting',
                        'reason': str(raw.get('reason') or '')[:REASON_CHARS]})
     result.skills = skills
 
     formats = {e['key'] for e in context['special_formats']}
-    special = entry.get('special_format') or ''
+    special = _text(entry.get('special_format'), reasons)
     if special in formats:
         result.special_format = special
     elif special:
         reasons.add('invalid_key')
 
-    result.difficulty = entry.get('difficulty') if entry.get('difficulty') in DIFFICULTIES else ''
+    difficulty = _text(entry.get('difficulty'), reasons)
+    result.difficulty = difficulty if difficulty in DIFFICULTIES else ''
     result.est_solve_seconds = _seconds(entry.get('est_solve_seconds'))
     result.proposed_subtopic = proposed
     if proposed:
@@ -290,6 +314,29 @@ def _apply_tag(result, entry, context, allowed, located):
         reasons.add('low_confidence')
     result.review_reasons = sorted(reasons)
     result.needs_review = bool(reasons)
+
+
+def _safe_locate(entry, topic_keys):
+    """``(found, ok)``: ``_locate`` that never raises; ``ok`` is False when the entry broke it."""
+    try:
+        return _locate(entry, topic_keys), True
+    except Exception:  # noqa: BLE001 — a malformed model entry must never escape the sweep
+        return None, False
+
+
+def _safe_apply(result, entry, context, allowed, located):
+    """``_apply_tag`` on a scratch copy; on success copy it into ``result`` and return True.
+
+    Any exception (a reply shape the validation did not foresee) leaves ``result``
+    untouched and returns False, so the caller can mark it and skip caching.
+    """
+    trial = replace(result, secondary_subtopics=[], skills=[], review_reasons=[])
+    try:
+        _apply_tag(trial, entry, context, allowed, located)
+    except Exception:  # noqa: BLE001 — a malformed model entry must never escape the sweep
+        return False
+    vars(result).update(vars(trial))
+    return True
 
 
 def tag_payloads(context, payloads, *, call, cache=None):
@@ -312,8 +359,8 @@ def tag_payloads(context, payloads, *, call, cache=None):
             results[pid].topic_key = p['topic_hint']
             continue
         cached = cache.get('locate', pid)
-        found = _locate(cached, topic_keys) if cached is not None else None
-        if found:
+        found = _safe_locate(cached, topic_keys)[0] if cached is not None else None
+        if found:  # a malformed or unusable cached entry is a miss
             located[pid] = found
             results[pid].topic_key = located[pid]['topic_key']
             results[pid].raw['locate'] = cached
@@ -329,11 +376,14 @@ def tag_payloads(context, payloads, *, call, cache=None):
                 results[pid].error = error or 'missing_from_reply'
                 continue
             results[pid].raw['locate'] = entry
-            found = _locate(entry, topic_keys)
+            found, ok = _safe_locate(entry, topic_keys)
+            if not ok:
+                results[pid].error = 'invalid_entry'
+                continue
             if found is None:
                 results[pid].error = 'no_topic'
                 continue
-            cache.put('locate', pid, entry)
+            cache.put('locate', pid, entry)  # only after validation succeeded
             located[pid] = found
             results[pid].topic_key = found['topic_key']
 
@@ -352,12 +402,12 @@ def tag_payloads(context, payloads, *, call, cache=None):
         for p in group:
             pid = str(p['id'])
             cached = cache.get('tag', pid)
-            if cached is not None:
-                keys = [topic_key] + located[pid]['also']
+            keys = [topic_key] + located[pid]['also']
+            if cached is not None and _safe_apply(results[pid], cached, context, allowed_for(keys),
+                                                  located[pid]):
                 results[pid].raw['tag'] = cached
-                _apply_tag(results[pid], cached, context, allowed_for(keys), located[pid])
             else:
-                todo.append(p)
+                todo.append(p)  # a miss, or a malformed cached entry: ask the model again
         for batch in _batches(todo):
             prompt_topics = [topic_key] + sorted(
                 {key for p in batch for key in located[str(p['id'])]['also']} - {topic_key})
@@ -370,7 +420,9 @@ def tag_payloads(context, payloads, *, call, cache=None):
                     results[pid].error = error or 'missing_from_reply'
                     continue
                 results[pid].raw['tag'] = entry
-                cache.put('tag', pid, entry)
-                _apply_tag(results[pid], entry, context,
-                           allowed_for([topic_key] + located[pid]['also']), located[pid])
+                if not _safe_apply(results[pid], entry, context,
+                                   allowed_for([topic_key] + located[pid]['also']), located[pid]):
+                    results[pid].error = 'invalid_entry'
+                    continue
+                cache.put('tag', pid, entry)  # only after validation succeeded
     return [results[str(p['id'])] for p in payloads]

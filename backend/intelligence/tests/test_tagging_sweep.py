@@ -10,7 +10,7 @@ from django.test import TestCase
 from core.models import Tenant
 from coursegen.generation import GenerationError
 from exams.models import Course, Subject, Topic
-from intelligence.models import ConceptLink, ItemSkillTag, ItemTagging, SyllabusNode
+from intelligence.models import AITaggingResult, ConceptLink, ItemSkillTag, ItemTagging, SyllabusNode
 from intelligence.services import llm, syllabus, tagging, tagging_sweep, taxonomy
 from intelligence.services.tagging_v2 import LOCATE_MARKER
 from intelligence.tests.taxonomy_fixtures import mini_tree, sync_mini_vocabulary
@@ -124,6 +124,25 @@ class SweepTests(TestCase):
         cached = FakeCall()
         self.assertEqual(self.run_v2(cached), 1)
         self.assertEqual(cached.calls, [])  # same content → cached reply
+
+    def test_malformed_cached_reply_is_replaced_not_raised(self):
+        self.run_v2(FakeCall(tag={str(self.question.id): tag_entry()}))
+        AITaggingResult.objects.filter(stage='tag').update(result=['not', 'an', 'entry'])
+        Question.objects.filter(id=self.question.id).update(tagging_status='stale')
+        fresh = FakeCall(tag={str(self.question.id): tag_entry()})
+        self.assertEqual(self.run_v2(fresh), 1)
+        self.assertEqual(fresh.calls, ['tag'])
+        self.assertIsInstance(AITaggingResult.objects.get(stage='tag').result, dict)
+
+    def test_malformed_fresh_reply_is_not_cached(self):
+        self.run_v2(FakeCall(tag={str(self.question.id): tag_entry(thinking_level=['recall'])}))
+        tagging_row = ItemTagging.objects.get(question=self.question)
+        self.assertIn('invalid_key', tagging_row.review_reasons)  # coerced, not raised
+        Question.objects.filter(id=self.question.id).update(tagging_status='stale')
+        with patch('intelligence.services.tagging_v2._apply_tag', side_effect=TypeError('boom')):
+            AITaggingResult.objects.all().delete()
+            self.assertEqual(self.run_v2(FakeCall(tag={str(self.question.id): tag_entry()})), 0)
+        self.assertFalse(AITaggingResult.objects.filter(stage='tag').exists())
 
     def test_manual_tags_are_never_overwritten(self):
         ItemTagging.objects.create(tenant=self.tenant, question=self.question, source='manual',
