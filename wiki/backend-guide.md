@@ -340,8 +340,9 @@ state with guesses and slips down-weighted.
 ## Question tagging v2 (intelligence)
 
 A two-stage, tree-bound tagger: stage 1 picks a topic from the subject's
-syllabus tree, stage 2 picks a subtopic, thinking level, skills and
-difficulty within it. Results go to `ItemTagging` and `ItemSkillTag`; the
+syllabus tree (only when the item's topic is unknown, e.g. mock items),
+stage 2 picks subtopics, thinking level, skills, format and difficulty
+within that topic. Results go to `ItemTagging` and `ItemSkillTag`; the
 subtopic Concept is the mastery unit. The nightly `intelligence.tagging_sweep`
 runs v2 for subjects with an active syllabus tree and v1 for the rest (mock
 items are owned by v2 through one ownership rule).
@@ -408,7 +409,7 @@ python manage.py evaluate_tagger --gold ../data_dumps/trackb/gold_x.jsonl \
 
 `make_gold` also takes `--eval-jee <file>` instead of `--course`;
 `evaluate_tagger` takes `--exam <key>` instead of `--course`, and `--limit N`.
-`--mode anchored` mirrors the bank path (the subject is known); `--mode blind`
+`--mode anchored` mirrors the bank path (the topic is known); `--mode blind`
 mirrors the mock path (the tagger must choose the topic). Gold files and
 reports must live under `data_dumps/` (the commands enforce it); saved items
 hold ids and keys only. On Windows set `PYTHONIOENCODING=utf-8` when
