@@ -24,3 +24,7 @@ ONTOLOGY_VERSION = '1'
 # Response diagnosis rules + thresholds (services/diagnosis.py,
 # diagnosis_config.py). Bump, then run ``recompute_diagnoses``.
 CLASSIFIER_VERSION = '1'
+
+# Tagger v2 prompts (services/tagging_v2.py). Part of the v2 cache key; v1's
+# TAGGER_PROMPT_VERSION stays as is while v1 still tags subjects with no tree.
+TAGGER_V2_PROMPT_VERSION = '2'
