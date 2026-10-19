@@ -126,6 +126,44 @@ class DiagnoseAttemptTests(DiagnosisTestCase):
         self.assertNotEqual(row.label, 'guess')
         self.assertFalse(row.has_timeline)
 
+    def test_answered_item_whose_last_change_is_a_clear_has_no_timing(self):
+        item = self.make_item()
+        attempt = self.make_attempt(minutes_ago=30)
+        self.answer(attempt, item, selected=[1])
+        k = f'item:{item.id}'
+        self.make_timeline(attempt, [
+            [0, 'e', k], [5000, 'a', k, {'sel': [1]}], [9000, 'c', k], [12000, 'l', k],
+        ])
+        self.finish(attempt, after_minutes=20)
+        diagnose.diagnose_attempt('mock', str(attempt.id))
+        row = ResponseDiagnosis.objects.get(attempt_id=attempt.id, mock_item=item)
+        self.assertFalse(row.has_timeline)
+        self.assertNotIn(row.label, ('guess', 'rushed', 'overthought', 'careless_slip'))
+
+    def test_row_writes_are_atomic(self):
+        from unittest import mock
+
+        from intelligence.services import diagnosis as rules
+
+        first, second = self.make_item(), self.make_item()
+        attempt = self.make_attempt(minutes_ago=30)
+        self.answer(attempt, first, selected=[1])
+        self.answer(attempt, second, selected=[1])
+        self.finish(attempt, after_minutes=20)
+        real = rules.classify
+        calls = {'n': 0}
+
+        def flaky(*args, **kwargs):
+            calls['n'] += 1
+            if calls['n'] > 1:
+                raise RuntimeError('boom')
+            return real(*args, **kwargs)
+
+        with mock.patch('intelligence.services.diagnosis.classify', side_effect=flaky):
+            with self.assertRaises(RuntimeError):
+                diagnose.diagnose_attempt('mock', str(attempt.id))
+        self.assertEqual(ResponseDiagnosis.objects.filter(attempt_id=attempt.id).count(), 0)
+
     def test_unfinished_attempt_is_not_diagnosed(self):
         attempt = self.make_attempt()
         self.assertEqual(diagnose.diagnose_attempt('mock', str(attempt.id)), 0)

@@ -235,6 +235,16 @@ class TimelineSyncTests(DiagnosisTestCase):
         self.assertLessEqual(stored['elapsed_ms'], 30 * 60 * 1000 + 10000)
         self.assertGreaterEqual(stored['offset_ms'], 0)
 
+    def test_resend_with_equal_elapsed_is_accepted(self):
+        attempt = self.make_attempt()
+        self.post(self.payload(attempt_id=str(attempt.id), elapsed_ms=5000,
+                               events=[[0, 'e', 'item:a']]))
+        response = self.post(self.payload(attempt_id=str(attempt.id), elapsed_ms=5000,
+                                          events=[[0, 'e', 'item:a'], [900, 'l', 'item:a']]))
+        self.assertEqual(response.status_code, 200, response.content)
+        row = AttemptTimeline.objects.get(attempt_id=attempt.id)
+        self.assertEqual(len(row.sessions['sess-1']['events']), 2)
+
     def test_resend_replaces_the_session(self):
         attempt = self.make_attempt()
         self.post(self.payload(attempt_id=str(attempt.id)))

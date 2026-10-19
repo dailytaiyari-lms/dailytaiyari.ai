@@ -5,6 +5,7 @@ item statistics — and writes results. Idempotent: a rerun overwrites.
 """
 from dataclasses import dataclass
 
+from django.db import transaction
 from django.utils import timezone
 
 from intelligence.diagnosis_config import THRESHOLDS
@@ -278,48 +279,51 @@ def diagnose_attempt(kind, attempt_id):
     }
     mastery_cache = {}
     written = 0
-    for ref in loaded.refs:
-        mastery, confidence = _prior_mastery(
-            loaded.student, _primary_concept(ref), loaded.cutoff, mastery_cache)
-        facts = rules.ItemFacts(
-            item_type=ref.item_type,
-            difficulty=getattr(ref.item, 'difficulty', '') or 'medium',
-            usual_s=_usual_from_stats(ref),
-            answered=ref.answered, score_fraction=ref.score_fraction,
-            numeric_value=ref.numeric,
-            numeric_correct=_f(getattr(ref.item, 'numerical_answer', None)),
-            numeric_tolerance=float(getattr(ref.item, 'numerical_tolerance', 0) or 0),
-            misconception_pick=_misconception_pick(loaded.student, ref, loaded.cutoff),
-            prior_mastery=mastery, prior_confidence=confidence,
-            pending_grade=ref.pending,
-        )
-        timing = _timing_for(ref, lines.get(ref.key), bool(sessions), truncated)
-        result = rules.classify(facts, timing, window)
-        timed_out = loaded.timed_out or bool(result.metrics.get('ended_late'))
+    # All-or-nothing: a crash mid-loop must not leave a claimed timeline with
+    # partial rows (the nightly sweep treats any row as "done").
+    with transaction.atomic():
+        for ref in loaded.refs:
+            mastery, confidence = _prior_mastery(
+                loaded.student, _primary_concept(ref), loaded.cutoff, mastery_cache)
+            facts = rules.ItemFacts(
+                item_type=ref.item_type,
+                difficulty=getattr(ref.item, 'difficulty', '') or 'medium',
+                usual_s=_usual_from_stats(ref),
+                answered=ref.answered, score_fraction=ref.score_fraction,
+                numeric_value=ref.numeric,
+                numeric_correct=_f(getattr(ref.item, 'numerical_answer', None)),
+                numeric_tolerance=float(getattr(ref.item, 'numerical_tolerance', 0) or 0),
+                misconception_pick=_misconception_pick(loaded.student, ref, loaded.cutoff),
+                prior_mastery=mastery, prior_confidence=confidence,
+                pending_grade=ref.pending,
+            )
+            timing = _timing_for(ref, lines.get(ref.key), bool(sessions), truncated)
+            result = rules.classify(facts, timing, window)
+            timed_out = loaded.timed_out or bool(result.metrics.get('ended_late'))
 
-        question_id = ref.item.id if ref.arm == 'q' else None
-        mock_item_id = ref.item.id if ref.arm == 'm' else None
-        self_report = reports.get((question_id, mock_item_id), '')
-        lookup = {'attempt_kind': kind, 'attempt_id': attempt_id}
-        lookup['question_id' if ref.arm == 'q' else 'mock_item_id'] = ref.item.id
-        ResponseDiagnosis.objects.update_or_create(**lookup, defaults={
-            'tenant': tenant,
-            'student': loaded.student,
-            'answered': ref.answered,
-            'is_correct': ref.is_correct,
-            'score_fraction': ref.score_fraction,
-            'metrics': {**result.metrics, 'timed_out': timed_out},
-            'flags': result.flags,
-            'label': result.label,
-            'confidence': result.confidence,
-            'evidence': result.evidence,
-            'self_report': self_report,
-            'final_label': rules.reconcile(result.label, result.confidence, result.flags,
-                                           self_report, timed_out),
-            'has_timeline': timing is not None,
-            'classifier_version': CLASSIFIER_VERSION,
-            'computed_at': now,
-        })
-        written += 1
+            question_id = ref.item.id if ref.arm == 'q' else None
+            mock_item_id = ref.item.id if ref.arm == 'm' else None
+            self_report = reports.get((question_id, mock_item_id), '')
+            lookup = {'attempt_kind': kind, 'attempt_id': attempt_id}
+            lookup['question_id' if ref.arm == 'q' else 'mock_item_id'] = ref.item.id
+            ResponseDiagnosis.objects.update_or_create(**lookup, defaults={
+                'tenant': tenant,
+                'student': loaded.student,
+                'answered': ref.answered,
+                'is_correct': ref.is_correct,
+                'score_fraction': ref.score_fraction,
+                'metrics': {**result.metrics, 'timed_out': timed_out},
+                'flags': result.flags,
+                'label': result.label,
+                'confidence': result.confidence,
+                'evidence': result.evidence,
+                'self_report': self_report,
+                'final_label': rules.reconcile(result.label, result.confidence, result.flags,
+                                               self_report, timed_out),
+                'has_timeline': timing is not None,
+                'classifier_version': CLASSIFIER_VERSION,
+                'computed_at': now,
+            })
+            written += 1
 
     return written
