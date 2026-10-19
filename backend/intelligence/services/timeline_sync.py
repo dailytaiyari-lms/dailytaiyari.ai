@@ -108,7 +108,9 @@ def save_session(*, kind, student, session_id, elapsed_ms, events, truncated,
     resolved_id, anchor, clock = resolve_attempt(
         kind, student, attempt_id=attempt_id, parent_id=parent_id, now=now,
     )
-    offset_ms = max(0.0, (now - anchor).total_seconds() * 1000.0 - elapsed)
+    since_anchor_ms = max(0.0, (now - anchor).total_seconds() * 1000.0)
+    elapsed = min(elapsed, since_anchor_ms)  # a session can't outlast its attempt
+    offset_ms = max(0.0, since_anchor_ms - elapsed)
     stored_events = [
         [t, code, key] + ([value] if value is not None else [])
         for t, code, key, value in cleaned

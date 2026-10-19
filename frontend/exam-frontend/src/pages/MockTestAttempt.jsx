@@ -98,7 +98,7 @@ const MockTestAttempt = () => {
     setIsSubmitting(true)
 
     try {
-      await timeline.flush()
+      await timeline.flush({ final: true })
       const response = await quizService.submitMockTest(testId, {
         answers: Object.values(answers).map((a) => ({
           ...a,

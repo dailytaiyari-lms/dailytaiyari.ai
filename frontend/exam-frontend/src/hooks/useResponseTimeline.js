@@ -23,6 +23,7 @@ const MAX_EVENT_BYTES = 200000  // leaves headroom for the envelope under the 25
 const COALESCE_MS = 1500        // rapid re-answers (toggling) collapse
 const TYPING_COALESCE_MS = 10000 // free-text / code keystrokes collapse harder
 const KEEPALIVE_LIMIT = 60000   // fetch keepalive bodies must stay small
+const FINAL_WAIT_MS = 4000      // the pre-submit flush never holds the attempt longer than this
 
 const typingKind = (digest) =>
   (digest && typeof digest === 'object') ? (('txt' in digest) ? 'txt' : (('code' in digest) ? 'code' : null)) : null
@@ -61,9 +62,18 @@ export default function useResponseTimeline({ attemptKind, attemptId, parentId, 
       const windowMs = (kind && kind === typingKind(last[3])) ? TYPING_COALESCE_MS : COALESCE_MS
       if (t - last[0] < windowMs) {
         const before = JSON.stringify(last).length
+        const delta = JSON.stringify([t, last[1], last[2], value]).length - before
+        if (s.bytes + delta > MAX_EVENT_BYTES) {
+          // the rewrite would outgrow the budget: keep the old digest, flag it
+          if (!s.truncated) {
+            s.truncated = true
+            s.dirty = true
+          }
+          return
+        }
         last[0] = t
         last[3] = value
-        s.bytes += JSON.stringify(last).length - before
+        s.bytes += delta
         s.dirty = true
         return
       }
@@ -118,10 +128,16 @@ export default function useResponseTimeline({ attemptKind, attemptId, parentId, 
   // Syncs run one at a time, each building its payload when it starts, so an
   // older snapshot can never land after a newer one and an awaited flush()
   // sends the latest state after any in-flight sync.
-  const flush = useCallback(() => {
+  // flush({ final: true }) is the pre-submit call: it sends even when nothing
+  // is dirty (time passing never marks the session dirty, and the server needs
+  // the final elapsed_ms to credit the last reading time) and resolves after at
+  // most FINAL_WAIT_MS so a stalled request can never hold up the submit; the
+  // sync itself keeps running.
+  const flush = useCallback((options) => {
+    const final = Boolean(options && options.final)
     const run = async () => {
       const s = sessionRef.current
-      if (!targetRef.current.enabled || !s || s.dead || !s.dirty) return
+      if (!targetRef.current.enabled || !s || s.dead || (!final && !s.dirty)) return
       s.dirty = false
       try {
         await timelineService.sync(payload())
@@ -129,9 +145,14 @@ export default function useResponseTimeline({ attemptKind, attemptId, parentId, 
         syncFailed(s, error)
       }
     }
-    const next = inflightRef.current.then(run)
+    // then(run, run): a rejected earlier link can never poison the chain.
+    const next = inflightRef.current.then(run, run)
     inflightRef.current = next
-    return next
+    if (!final) return next
+    return new Promise((resolve) => {
+      const timer = setTimeout(resolve, FINAL_WAIT_MS)
+      next.then(() => { clearTimeout(timer); resolve() }, () => { clearTimeout(timer); resolve() })
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

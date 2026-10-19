@@ -202,8 +202,10 @@ def reduce_sessions(sessions, *, clock, known_keys=None):
         except TimelineError:
             logger.warning('timeline: skipping a corrupt stored session')
             continue
-        _fold_session(events, offset - start, out, known_keys,
-                      end_ms=session.get('elapsed_ms'))
+        # A truncated session dropped its closing events, so elapsed_ms would
+        # credit the open question with everything after the cut: no end close.
+        end_ms = None if session.get('truncated') else session.get('elapsed_ms')
+        _fold_session(events, offset - start, out, known_keys, end_ms=end_ms)
     for kt in out.values():
         kt.answers.sort(key=lambda answer: answer[0])  # stable: ties keep order
     return out

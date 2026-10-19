@@ -85,7 +85,7 @@ const PracticeSession = () => {
     if (index + 1 < total) {
       setIndex(index + 1)
     } else {
-      timeline.flush().finally(() => submitMutation.mutate())
+      timeline.flush({ final: true }).finally(() => submitMutation.mutate())
     }
   }
 

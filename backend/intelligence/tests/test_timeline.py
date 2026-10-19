@@ -88,6 +88,13 @@ class ReduceTests(SimpleTestCase):
         line = reduce_sessions({'s': session}, clock='server')['bank:a']
         self.assertAlmostEqual(line.active_s, 300.0)
 
+    def test_truncated_session_does_not_close_at_the_session_end(self):
+        base = {'offset_ms': 0, 'elapsed_ms': 300000, 'events': [[0, 'e', 'bank:a']]}
+        cut = reduce_sessions({'s': dict(base, truncated=True)}, clock='server')['bank:a']
+        self.assertAlmostEqual(cut.active_s, 0.0)
+        full = reduce_sessions({'s': dict(base, truncated=False)}, clock='server')['bank:a']
+        self.assertAlmostEqual(full.active_s, 300.0)
+
     def test_open_hidden_interval_counts_up_to_the_session_end(self):
         session = {'offset_ms': 0, 'elapsed_ms': 300000,
                    'events': [[0, 'e', 'bank:a'], [100000, 'h', None]]}
@@ -218,6 +225,15 @@ class TimelineSyncTests(DiagnosisTestCase):
         offset = row.sessions['sess-1']['offset_ms']
         self.assertAlmostEqual(offset, 30 * 60 * 1000 - 1000, delta=5000)
         self.assertEqual(row.sessions['sess-1']['elapsed_ms'], 1000.0)
+
+    def test_elapsed_is_clamped_to_the_time_since_the_anchor(self):
+        attempt = self.make_attempt(minutes_ago=30)
+        response = self.post(self.payload(attempt_id=str(attempt.id), elapsed_ms=1e12))
+        self.assertEqual(response.status_code, 200, response.content)
+        row = AttemptTimeline.objects.get(attempt_id=attempt.id)
+        stored = row.sessions['sess-1']
+        self.assertLessEqual(stored['elapsed_ms'], 30 * 60 * 1000 + 10000)
+        self.assertGreaterEqual(stored['offset_ms'], 0)
 
     def test_resend_replaces_the_session(self):
         attempt = self.make_attempt()
