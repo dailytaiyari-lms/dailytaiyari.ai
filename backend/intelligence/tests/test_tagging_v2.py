@@ -246,6 +246,31 @@ class TagPayloadsTests(SimpleTestCase):
         self.assertEqual(result.error, '')
         self.assertIn(r'\(E=hc/\lambda\)', result.skills[0]['reason'])
 
+    def _reason_from_raw_reply(self, raw_reason):
+        """Tag q1 with a reply whose first skill reason is spliced in verbatim (unescaped)."""
+        reply = json.dumps({'items': [dict(tag_entry(), id='q1')]}).replace('forces on the block', raw_reason)
+        [result] = tagging_v2.tag_payloads(
+            context(), [payload('q1', hint=LAWS)], call=lambda system, user: reply)
+        self.assertEqual(result.error, '')
+        return result.skills[0]['reason']
+
+    def test_latex_u_commands_are_repaired(self):
+        reason = self._reason_from_raw_reply(r'mark \underline{x}, \upsilon and \uparrow')
+        self.assertIn(r'\underline{x}', reason)
+        self.assertIn(r'\upsilon', reason)
+        self.assertIn(r'\uparrow', reason)
+
+    def test_latex_commands_that_look_like_escapes_are_kept(self):
+        reason = self._reason_from_raw_reply(r'\frac{a}{b} with \theta, \nu, \beta, \rho')
+        for command in (r'\frac', r'\theta', r'\nu', r'\beta', r'\rho'):
+            self.assertIn(command, reason)
+        self.assertNotIn('\f', reason)
+        self.assertNotIn('\t', reason)
+
+    def test_valid_json_escapes_round_trip(self):
+        reason = self._reason_from_raw_reply(r'say \"hi\" \\ a\/b line\n2 café \\frac')
+        self.assertEqual(reason, 'say "hi" \\ a/b line\n2 café \\frac')
+
     def _tag_one(self, cache=None, **overrides):
         call = FakeCall(tag={'q1': tag_entry(**overrides)})
         [result] = tagging_v2.tag_payloads(context(), [payload('q1', hint=LAWS)], call=call, cache=cache)

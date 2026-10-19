@@ -24,6 +24,14 @@ DISAGREEMENT_FACTOR = 0.8
 DIFFICULTIES = ('easy', 'medium', 'hard')
 REASON_CHARS = 200
 
+# Models put LaTeX (\(E=hc/\lambda\), \frac, \nu, \underline) in reason strings
+# without escaping the backslash. Each match is one backslash plus, when present,
+# the valid JSON escape it starts (group 1): \" \\ \/, \u + 4 hex digits, or one of
+# \b \f \n \r \t NOT followed by another ASCII letter (so \n stays a newline but
+# \nu and \frac are LaTeX). A match without group 1 is a bare backslash and is
+# doubled. Matching \\ as a pair keeps an already-escaped \\frac intact.
+LATEX_BACKSLASH = re.compile(r'\\(["\\/]|u[0-9a-fA-F]{4}|[bfnrt](?![A-Za-z]))?')
+
 LOCATE_MARKER = 'syllabus locator'
 TAG_MARKER = 'assessment tagger'
 
@@ -171,12 +179,13 @@ def build_tag_prompt(context, topic_keys, payloads):
     return _system(TAG_SYSTEM, context), '\n'.join(lines) + '\n\n' + _questions_block(context, payloads)
 
 
+def _repair_backslash(match):
+    return match.group(0) if match.group(1) else '\\\\'
+
+
 def _parse_reply(content):
-    try:
-        return extract_json(content)
-    except GenerationError:
-        # Models put LaTeX (e.g. \(E=hc/\lambda\)) in reason strings; double invalid escapes.
-        return extract_json(re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', content))
+    # Always repaired first, so LaTeX such as \frac is kept rather than parsed as \f.
+    return extract_json(LATEX_BACKSLASH.sub(_repair_backslash, content))
 
 
 def _ask(call, system, user):
