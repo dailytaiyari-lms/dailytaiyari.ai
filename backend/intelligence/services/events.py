@@ -43,19 +43,23 @@ def _bank_event_fields(answer):
     }
 
 
+def item_score_fraction(item_answer):
+    """Mastery signal in [0, 1] for an inline answer (partial credit kept;
+    an ungraded subjective answer carries no signal yet)."""
+    item = item_answer.item
+    max_marks = item_answer.max_marks or item.marks
+    if item_answer.needs_manual_grading:
+        return 0.0
+    if max_marks and float(max_marks) > 0:
+        return _clamp01(float(item_answer.marks_obtained) / float(max_marks))
+    return 1.0 if item_answer.is_correct else 0.0
+
+
 def _item_event_fields(item_answer):
     """Common fields for an inline MockTestAnswer row."""
     item = item_answer.item
     max_marks = item_answer.max_marks or item.marks
-    if item_answer.needs_manual_grading:
-        # Ungraded subjective answer: no mastery signal yet; the regrade
-        # event will supersede this row.
-        score = 0.0
-    elif max_marks and float(max_marks) > 0:
-        # Partial credit (coding, graded subjective).
-        score = _clamp01(float(item_answer.marks_obtained) / float(max_marks))
-    else:
-        score = 1.0 if item_answer.is_correct else 0.0
+    score = item_score_fraction(item_answer)
     digest = {'selected': item_answer.selected_options or []}
     if item_answer.numerical_answer is not None:
         digest['numerical'] = str(item_answer.numerical_answer)

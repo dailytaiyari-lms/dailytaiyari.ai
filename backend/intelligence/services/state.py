@@ -83,17 +83,20 @@ def _cognitive_multi(event):
     return bool(item and item.cognitive_type == 'multi_concept')
 
 
+def selected_from_digest(digest):
+    """Option indices a response digest picked (MCQ-like digests only)."""
+    digest = digest or {}
+    if isinstance(digest.get('selected'), list):
+        return [i for i in digest['selected'] if isinstance(i, int)]
+    raw = digest.get('selected_option')
+    if isinstance(raw, str) and raw.strip().isdigit():
+        return [int(raw.strip())]
+    return []
+
+
 def _selected_indices(event):
     """Wrong-pick option indices from the response digest, if MCQ-like."""
-    digest = event.response_digest or {}
-    picks = []
-    if isinstance(digest.get('selected'), list):
-        picks = [i for i in digest['selected'] if isinstance(i, int)]
-    else:
-        raw = digest.get('selected_option')
-        if isinstance(raw, str) and raw.strip().isdigit():
-            picks = [int(raw.strip())]
-    return picks
+    return selected_from_digest(event.response_digest)
 
 
 def observations_for(student, concept):

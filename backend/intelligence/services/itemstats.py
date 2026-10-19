@@ -5,11 +5,12 @@ difficulty divergence n ≥ 20 — at low volumes the fields stay null/false
 rather than radiating noise.
 """
 import math
+import statistics
 from collections import defaultdict
 
 from django.utils import timezone
 
-from intelligence.models import ItemStats, LearningEvent
+from intelligence.models import ItemStats, LearningEvent, ResponseDiagnosis
 from intelligence.versions import ITEM_STATS_VERSION
 
 DISCRIMINATION_MIN_N = 30
@@ -96,6 +97,13 @@ def recompute_for_item(item, *, now=None):
     correct_count = sum(1 for e in events if e.score_fraction >= 0.5)
     p_value = correct_count / attempts_count
     times = [e.time_taken_seconds for e in events if e.time_taken_seconds]
+    active_times = [
+        float(m['active_s'])
+        for m in ResponseDiagnosis.objects.filter(
+            **{f'{arm}_id': item.id}, has_timeline=True, answered=True,
+        ).exclude(label__in=('guess', 'correct_lucky')).values_list('metrics', flat=True)
+        if isinstance(m, dict) and m.get('active_s')
+    ]
     option_distribution = defaultdict(int)
     for event in events:
         for index in _selected_indices(event):
@@ -128,6 +136,10 @@ def recompute_for_item(item, *, now=None):
             'correct_count': correct_count,
             'p_value': round(p_value, 4),
             'avg_time_seconds': round(sum(times) / len(times), 2) if times else None,
+            'median_active_seconds': (
+                round(statistics.median(active_times), 2) if active_times else None
+            ),
+            'active_time_n': len(active_times),
             'option_distribution': dict(option_distribution),
             'discrimination': discrimination,
             'predicted_difficulty': predicted,
