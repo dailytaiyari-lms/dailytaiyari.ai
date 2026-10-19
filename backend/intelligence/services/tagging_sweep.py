@@ -204,31 +204,38 @@ def _mock_item_subject(item):
 
 
 def _single_subject_test_ids(tenant, subject_ids):
-    """Mock tests whose courses have exactly one subject, and it is in ``subject_ids``."""
+    """{subject_id: [mock test ids]} for tests whose courses have exactly one subject."""
     from quiz.models import MockTest
 
-    ids = []
+    by_subject = defaultdict(list)
     for test in (MockTest.objects.filter(tenant=tenant).select_related('course')
                  .prefetch_related('courses__subjects')):
         courses = list(test.courses.all()) or ([test.course] if test.course_id else [])
         subjects = [subject for course in courses for subject in course.subjects.all()]
         if len(subjects) == 1 and subjects[0].id in subject_ids:
-            ids.append(test.id)
-    return ids
+            by_subject[subjects[0].id].append(test.id)
+    return by_subject
+
+
+def _mock_owned_by(subject_id, test_ids):
+    return (
+        Q(subject_id=subject_id)
+        | Q(subject__isnull=True, topic__subject_id=subject_id)
+        | Q(subject__isnull=True, topic__isnull=True, mock_test_id__in=test_ids)
+    )
 
 
 def v2_mock_item_filter(tenant, subject_ids):
     """Q selecting the mock items the v2 sweep owns (v1 must skip these)."""
     subject_ids = set(subject_ids)
-    return (
-        Q(subject_id__in=subject_ids)
-        | Q(subject__isnull=True, topic__subject_id__in=subject_ids)
-        | Q(subject__isnull=True, topic__isnull=True,
-            mock_test_id__in=_single_subject_test_ids(tenant, subject_ids))
-    )
+    test_ids = _single_subject_test_ids(tenant, subject_ids)
+    query = Q(pk__in=[])
+    for subject_id in subject_ids:
+        query |= _mock_owned_by(subject_id, test_ids.get(subject_id, []))
+    return query
 
 
-def _candidate_q():
+def _base_candidate_q():
     release = taxonomy.current_release()
     version = release.version if release else ''
     return (Q(tagging__isnull=True) | Q(tagging_status__in=['', 'stale'])
@@ -237,12 +244,12 @@ def _candidate_q():
 
 def tag_v2_for_tenant(tenant, subject_ids, call, *, limit=200):
     """Tag up to ``limit`` not-current items of these (treed) subjects."""
+    from exams.models import Subject
     from quiz.models import MockTestItem, Question
 
     subject_ids = set(subject_ids)
     contexts, subjects = {}, {}
     picked = defaultdict(list)
-    candidates = _candidate_q()
 
     def context_for(subject):
         if subject.id not in contexts:
@@ -256,31 +263,38 @@ def tag_v2_for_tenant(tenant, subject_ids, call, *, limit=200):
         subjects[subject.id] = subject
         return True
 
+    base = _base_candidate_q()
+    test_ids = _single_subject_test_ids(tenant, subject_ids)
+    question_q, mock_q = Q(pk__in=[]), Q(pk__in=[])
+    for subject in Subject.objects.filter(id__in=subject_ids):
+        stale_tree = base | ~Q(tagging__tree_version=context_for(subject)['tree_version'])
+        question_q |= Q(subject_id=subject.id) & stale_tree
+        mock_q |= _mock_owned_by(subject.id, test_ids.get(subject.id, [])) & stale_tree
+
     taken = 0
     questions = (
-        Question.objects.filter(tenant=tenant, subject_id__in=subject_ids).exclude(status='archived')
-        .exclude(tagging__source='manual').filter(candidates)
+        Question.objects.filter(tenant=tenant).filter(question_q).exclude(status='archived')
+        .exclude(tagging__source='manual')
         .select_related('subject__course', 'topic', 'tagging').order_by('created_at')
     )
-    for question in questions.iterator():
+    for question in questions[:limit]:
         if taken >= limit:
             break
         taken += take('question', question, question.subject, getattr(question, 'tagging', None))
 
     items = (
-        MockTestItem.objects.filter(tenant=tenant).filter(v2_mock_item_filter(tenant, subject_ids))
-        .exclude(tagging__source='manual').filter(candidates)
+        MockTestItem.objects.filter(tenant=tenant).filter(mock_q)
+        .exclude(tagging__source='manual')
         .select_related('mock_test__course', 'subject__course', 'topic__subject__course', 'tagging')
         .prefetch_related('mock_test__courses__subjects')
         .order_by('created_at')
     )
-    for item in items:
-        if taken >= limit:
-            break
-        subject = _mock_item_subject(item)
-        if subject is None or subject.id not in subject_ids:
-            continue
-        taken += take('mock_item', item, subject, getattr(item, 'tagging', None))
+    if taken < limit:
+        for item in items[:limit - taken]:
+            subject = _mock_item_subject(item)
+            if subject is None or subject.id not in subject_ids:
+                continue
+            taken += take('mock_item', item, subject, getattr(item, 'tagging', None))
 
     tagged = 0
     for (arm, subject_id), group in picked.items():

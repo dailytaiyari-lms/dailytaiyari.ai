@@ -224,6 +224,28 @@ class SweepTests(TestCase):
         self.assertEqual(ItemTagging.objects.filter(mock_item=item).count(), 1)
 
 
+    def test_tree_change_retags_current_items(self):
+        self.run_v2(FakeCall(tag={str(self.question.id): tag_entry()}))
+        old = ItemTagging.objects.get(question=self.question).tree_version
+        SyllabusNode.objects.filter(key=FRICTION).update(name='Kinetic friction')
+        call = FakeCall(tag={str(self.question.id): tag_entry()})
+        self.assertEqual(self.run_v2(call), 1)
+        self.assertNotEqual(call.calls, [])
+        new = ItemTagging.objects.get(question=self.question).tree_version
+        self.assertNotEqual(new, old)
+        self.assertEqual(new, syllabus.compute_tree_version(self.subject))
+
+    def test_no_topic_item_is_retried_after_a_tree_change(self):
+        item = self._blind_item()
+        self.run_v2(FakeCall(locate={str(item.id): {'topic_key': 'mini.physics.nope', 'confidence': 0.9}}))
+        SyllabusNode.objects.filter(key=FRICTION).update(name='Kinetic friction')
+        again = FakeCall(locate={str(item.id): {'topic_key': LAWS, 'confidence': 0.9}},
+                         tag={str(item.id): tag_entry()})
+        self.run_v2(again)
+        self.assertIn('locate', again.calls)
+        row = ItemTagging.objects.get(mock_item=item)
+        self.assertEqual(row.primary_node.key, FRICTION)
+
 class LlmTests(TestCase):
     def test_unknown_platform_model_raises(self):
         with self.assertRaises(GenerationError):
