@@ -252,7 +252,10 @@ A duration of 0 means untimed.
 
 Unknown difficulty → medium.
 
-### 4.4 Slip transforms (numerical; tolerance = the item's own tolerance, min 1e-9 relative)
+Subjective and coding items never get time rules, even once `ItemStats` has
+timings for them.
+
+### 4.4 Slip transforms (numerical; the item's absolute tolerance, scaled by each candidate's size relative to the correct value, min 1e-9 relative)
 
 The student's value equals the correct value under one of:
 
@@ -294,8 +297,10 @@ Applied only when the correct value is not 0 and the student's value is not
    - prior mastery < 0.5 at confidence ≥ medium;
    - `misconception_pick`;
    - `too_long`.
-6. `unclear` — nothing matched, or signals conflict (rule 4 by mastery and
-   `too_long` both true).
+6. `unclear` — nothing matched, or signals conflict. The conflict case is
+   prior mastery ≥ 0.75 at confidence ≥ medium with no `misconception_pick`
+   (strong on paper), yet `too_long` (struggled). It is checked before
+   rule 4's mastery clause.
 
 **No timeline** (historic attempts, or sync lost): time-based flags are not
 computed. The rules still run with only `slip_match`, `misconception_pick`
@@ -313,8 +318,9 @@ A subjective answer still awaiting a grade (`needs_manual_grading`) is
 - *high* — `not_seen`, plain `correct`, `second_guess`, `slip_match`, or
   `too_fast` on an item with `usual_source == 'stats'`.
 - *medium* — other time-based or mastery-based rules.
-- *low* — `unclear`, or any rule on a default usual time with
-  `rel_speed` within 20% of a threshold.
+- *low* — `unclear`, or any time-decided rule on a default usual time with
+  `rel_speed` within 20% of a threshold. Time-decided rules include the
+  mastery slip's 0.5–2.5 speed window and the unanswered 0.5 × usual rule.
 
 **Prior mastery:** `compute_state_fields` over the student's observations
 for the item's primary concept, restricted to events with `occurred_at <
