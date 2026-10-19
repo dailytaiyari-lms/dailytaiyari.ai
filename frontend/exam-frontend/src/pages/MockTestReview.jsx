@@ -250,7 +250,7 @@ const MockTestReview = () => {
             const isCorrect = questionStatus === 'correct'
             const isSkipped = questionStatus === 'skipped'
             const reviewKey = `bank:${question?.id}`
-            const showWhatHappened = selfReports.enabled && !isCorrect && question?.id &&
+            const showWhatHappened = selfReports.enabled && selfReports.ready && !isCorrect && question?.id &&
               !selfReports.notSeen.has(reviewKey)
             const selectedOption = userAnswer?.selected_option
 

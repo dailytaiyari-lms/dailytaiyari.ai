@@ -274,3 +274,25 @@ class RichReviewRefTests(DiagnosisTestCase):
         entries = build_review(attempt)
         self.assertEqual(entries[0]['kind'], 'item')
         self.assertEqual(entries[0]['ref_id'], str(item.id))
+
+    def test_bank_question_entry_carries_ref_id(self):
+        from quiz.mock_grading import build_review
+        from quiz.models import Answer, MockTestQuestion
+
+        q = Question.objects.create(
+            tenant=self.tenant, topic=self.topic, subject=self.subject,
+            question_text='Bank question?', question_type='mcq',
+            difficulty='medium', status='published', correct_answer='0', marks=1,
+        )
+        for i in range(3):
+            QuestionOption.objects.create(
+                tenant=self.tenant, question=q, option_text=f'Option {i}',
+                is_correct=(i == 0), order=i,
+            )
+        MockTestQuestion.objects.create(mock_test=self.mock_test, question=q, order=0)
+        attempt = self.finish(self.make_attempt())
+        Answer.objects.create(mock_test_attempt=attempt, question=q, selected_option='1')
+        entries = build_review(attempt)
+        bank = [e for e in entries if e['kind'] == 'bank']
+        self.assertEqual(len(bank), 1)
+        self.assertEqual(bank[0]['ref_id'], str(q.id))

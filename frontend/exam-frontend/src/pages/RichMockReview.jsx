@@ -176,7 +176,7 @@ function ReviewCard({ q, index, attemptId, selfReports }) {
         </details>
       )}
 
-      {selfReports.enabled && !pending && !correct && q.ref_id &&
+      {selfReports.enabled && selfReports.ready && !pending && !correct && q.ref_id &&
         !selfReports.notSeen.has(`${q.kind}:${q.ref_id}`) && (
         <WhatHappened
           attemptKind="mock"

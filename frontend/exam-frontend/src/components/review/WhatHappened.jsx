@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { timelineService } from '../../services/timelineService'
 import { useTenantStore } from '../../context/tenantStore'
@@ -14,16 +14,18 @@ const CHOICES = [
 /** Existing self-reports + never-seen items for one attempt (feature-gated). */
 export function useSelfReports(attemptKind, attemptId) {
   const enabled = useTenantStore((s) => s.isFeatureEnabled)('response_diagnosis') && !!attemptId
-  const { data } = useQuery({
+  const { data, isSuccess } = useQuery({
     queryKey: ['selfReports', attemptKind, attemptId],
     queryFn: () => timelineService.getSelfReports(attemptKind, attemptId),
     enabled,
     staleTime: Infinity,
   })
+  const notSeen = useMemo(() => new Set(data?.not_seen || []), [data])
   return {
     enabled,
+    ready: isSuccess,
     reports: data?.reports || {},
-    notSeen: new Set(data?.not_seen || []),
+    notSeen,
   }
 }
 
@@ -31,14 +33,20 @@ export function useSelfReports(attemptKind, attemptId) {
 export default function WhatHappened({ attemptKind, attemptId, itemKind, itemId, initial }) {
   const [choice, setChoice] = useState(initial || null)
   const [saving, setSaving] = useState(false)
+  const savingRef = useRef(false)
+  const queryClient = useQueryClient()
 
-  useEffect(() => { setChoice(initial || null) }, [initial])
+  // Don't let a server-state sync clobber a choice that is mid-save.
+  useEffect(() => {
+    if (!savingRef.current) setChoice(initial || null)
+  }, [initial])
 
   const pick = async (value) => {
     if (saving || value === choice) return
     const previous = choice
     setChoice(value)
     setSaving(true)
+    savingRef.current = true
     try {
       await timelineService.saveSelfReport({
         attempt_kind: attemptKind,
@@ -47,22 +55,29 @@ export default function WhatHappened({ attemptKind, attemptId, itemKind, itemId,
         item_id: itemId,
         choice: value,
       })
+      queryClient.setQueryData(['selfReports', attemptKind, attemptId], (d) => ({
+        ...(d || {}),
+        reports: { ...(d?.reports || {}), [`${itemKind}:${itemId}`]: value },
+        not_seen: d?.not_seen || [],
+      }))
     } catch {
       setChoice(previous)
       toast.error('Could not save that — try again.')
     } finally {
+      savingRef.current = false
       setSaving(false)
     }
   }
 
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-2">
+    <div role="group" aria-label="What happened?" className="mt-3 flex flex-wrap items-center gap-2">
       <span className="text-xs text-surface-500">What happened?</span>
       {CHOICES.map(([value, label]) => (
         <button
           key={value}
           type="button"
-          disabled={saving}
+          aria-pressed={choice === value}
+          aria-disabled={saving}
           onClick={() => pick(value)}
           className={`text-xs px-3 py-1 rounded-full border transition-colors ${
             choice === value
