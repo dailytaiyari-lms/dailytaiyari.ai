@@ -334,3 +334,90 @@ state with guesses and slips down-weighted.
   `client_max_body_size`).
 - Throttle: the timeline endpoint allows 20 requests/min/user on its own
   `timeline` scope.
+
+---
+
+## Question tagging v2 (intelligence)
+
+A two-stage, tree-bound tagger: stage 1 picks a topic from the subject's
+syllabus tree, stage 2 picks a subtopic, thinking level, skills and
+difficulty within it. Results go to `ItemTagging` and `ItemSkillTag`; the
+subtopic Concept is the mastery unit. The nightly `intelligence.tagging_sweep`
+runs v2 for subjects with an active syllabus tree and v1 for the rest (mock
+items are owned by v2 through one ownership rule).
+
+- Never overwritten: manual tags (`ItemTagging.source='manual'`) are not
+  re-tagged, and bank question difficulty is not touched.
+- Items are re-tagged when the taxonomy version or the subject's tree changes.
+- If stage 1 names no valid topic, the item is saved as `needs_review` with
+  reason `invalid_key`.
+
+**Editing tags.** Edit `backend/intelligence/taxonomy/tags.yaml`, then:
+
+```bash
+python manage.py sync_taxonomy --check                 # validate only
+python manage.py sync_taxonomy                         # load into the DB
+python manage.py sync_taxonomy --retag-subjects <id,id>
+```
+
+| Edit | Effect |
+|---|---|
+| Change a label | Display only; nothing is re-tagged |
+| Add a tag | Run `--retag-subjects` for the subjects it affects |
+| Change a meaning | Bump `version`, then re-tag |
+| Remove a tag | Set `active: false`; history is kept |
+
+**Exam-mapped courses** (tree from `taxonomy/exams/<exam>.yaml`):
+
+```bash
+python manage.py map_course_to_exam --course <id> --exam jee_main \
+    --subject-map physics=<id>,chemistry=<id>,maths=<id>
+```
+
+If it reports merged concepts, run `manage.py recompute_learner_state`.
+
+**Custom courses** (tree built by the model from the course content):
+
+```bash
+python manage.py build_course_tree --course <id> [--model <platform model>] \
+    [--packs programming] [--dry-run]
+```
+
+Only question text, topic names and objectives are sent to the model.
+
+**Running the sweep:**
+
+```bash
+python manage.py tag_items --tenant <id> [--model <platform model>] [--limit N]
+```
+
+**Review.** Items that need a human get `ItemTagging.review_status='needs_review'`
+with reasons `low_confidence`, `invalid_key`, `proposed_subtopic` or
+`stage_disagreement`. The confidence threshold is
+`review_confidence_threshold` in `tags.yaml` (default 0.6); reset it from the
+threshold `evaluate_tagger` suggests (the lowest confidence floor at which
+items at or above it reach 80% subtopic accuracy). The review UI is plan 2B.
+
+**Evaluating:**
+
+```bash
+python manage.py make_gold --course <id> --out ../data_dumps/trackb/gold_x.jsonl --n 30 --seed 7
+python manage.py evaluate_tagger --gold ../data_dumps/trackb/gold_x.jsonl \
+    --models <model> --mode anchored --course <id> --out ../data_dumps/trackb/report_x.json
+```
+
+`make_gold` also takes `--eval-jee <file>` instead of `--course`;
+`evaluate_tagger` takes `--exam <key>` instead of `--course`, and `--limit N`.
+`--mode anchored` mirrors the bank path (the subject is known); `--mode blind`
+mirrors the mock path (the tagger must choose the topic). Gold files and
+reports must live under `data_dumps/` (the commands enforce it); saved items
+hold ids and keys only. On Windows set `PYTHONIOENCODING=utf-8` when
+redirecting output (it contains non-ASCII).
+
+**Data rules:**
+
+- `eval_jee` has no licence and is local-only. `import_eval_jee` refuses
+  unless DEBUG is on, the tenant subdomain starts with `lab-`, and the
+  database is local.
+- Production keys are never used for experiments.
+- Only question text goes to the model.
