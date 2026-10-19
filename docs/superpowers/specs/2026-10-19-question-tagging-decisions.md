@@ -135,6 +135,58 @@ The lists are accepted "for now" and must stay easy to change (D4).
 3. Then one small follow-up in diagnosis: prefer the item's
    estimated solve time over `DEFAULT_USUAL_S` while `ItemStats` is thin.
 
+## D10 — Two test tracks (decided 2026-10-19)
+
+A production copy audit found that real content is mostly skill and
+programming courses:
+
+| Course | Questions |
+|---|---|
+| DSA sheet | 210 |
+| Aptitude | 156 |
+| Pygame | 155 |
+| Python, AI/ML | (several courses) |
+| Class XI PCM (board) | 129 |
+| "JEE Mains" | 0 |
+
+All 1,260 bank questions are single-answer MCQs, 664 have no tags, and
+`TopicCourseRelevance` is empty. So tagging is built and tested on two
+separate tracks.
+
+**Track A — JEE, on generated dummy data.**
+- A dev-only, seeded generator builds a synthetic tenant, a JEE Main course
+  mapped to the shipped tree, and questions across every JEE format:
+  - single and multi-correct;
+  - integer/numerical;
+  - assertion–reason;
+  - paragraph-based;
+  - matrix-match.
+- Each question is generated *with* its intended tags, so the output doubles
+  as a gold set. It is biased towards easy cases, because the same model
+  family writes and tags it. A hand-checked subset guards against that.
+- Synthetic students with known per-concept ability and scripted behaviour
+  (guessing, slipping, running out of time) give end-to-end ground truth for
+  tagging, diagnosis labels, mastery and recommendations.
+
+**Track B — existing courses, against the production copy.**
+- Separate instrumentation for the course-built trees that real courses need:
+  - LLM-proposed sub-subjects and subtopics on top of their existing 86
+    subjects and 532 topics;
+  - skill packs for programming, aptitude and AI/ML content (proposed below,
+    not yet approved).
+- Tested against `dt_prod_work`. The gold set is a hand-verified sample of
+  real questions from the largest courses.
+- Production AI provider keys are blanked in `dt_prod_work`. LLM runs need a
+  dedicated local key.
+
+**Proposed skill packs for Track B (pending approval):**
+
+| Pack | Skills |
+|---|---|
+| Programming | `code_tracing`, `debugging`, `syntax_recall`, `algorithm_design`, `complexity_analysis`, `data_structure_choice`, `edge_case_reasoning`, `api_library_usage` |
+| Aptitude | `quantitative_shortcut`, `logical_deduction`, `verbal_reasoning`, `data_sufficiency` (with the universal `numerical_computation`, `data_analysis` and `pattern_recognition`) |
+| AI/ML | `model_selection`, `metric_interpretation`, `data_preprocessing`, `prompt_design` |
+
 ## Still to decide in the full spec
 
 - Data model: whether tree nodes are a new `SyllabusNode` table with
