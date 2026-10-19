@@ -32,9 +32,10 @@ apps keep reaching them only through `intelligence.api`.
 ### 2.1 Tag vocabulary (platform-wide, `tenant = NULL`)
 
 - **`TaxonomyRelease`**
-  - Fields: `version`, `file_sha256`, `synced_at`.
+  - Fields: `sequence` (unique, increasing), `version`, `file_sha256`,
+    `review_confidence_threshold`.
   - One row per `sync_taxonomy` run that changed anything. The current
-    version is the newest row.
+    release is the highest `sequence`.
 - **`SkillPack`**
   - Fields: `key`, `label`, `applies_to` (JSON list of subject names or
     aliases, matched case-insensitively against `Subject.name` and
@@ -82,8 +83,10 @@ apps keep reaching them only through `intelligence.api`.
     - `build_course_tree --packs programming` fills it for every subject of
       the course. Without the flag, one LLM call picks packs per subject
       from the pack labels.
-  - `tree_version`: a hash of the active node keys, names and definitions
-    per subject. It is part of the tagging cache key.
+  - The tree version is not stored. `compute_tree_version(subject)` hashes
+    the subject's non-archived node keys, names, descriptions, levels and
+    syllabus flags at tagging time, and that hash is part of the tagging
+    cache key.
 
 **Decided here (data model):** a separate `SyllabusNode` tree whose
 subtopic leaves own a `Concept`. The alternative, giving `Concept` itself
@@ -177,6 +180,9 @@ skills:
     # chemistry, maths, biology, plus the D10 programming, aptitude and ai_ml packs
 ```
 
+- `pattern_recognition` moves from the Maths pack to the universal list,
+  because the aptitude pack needs it too and skill keys are unique across
+  packs.
 - `statement_pair` and `match_list` are added to D1's special formats. The
   JEE Main bank has 263 and 163 of them respectively, and they are the
   forms JEE Main actually uses.
@@ -364,14 +370,20 @@ confidence bucket whose subtopic accuracy is at least 80%.
 - **Cache key:** `AITaggingResult` gains `stage`, `taxonomy_version` and
   `tree_version`. Its unique key becomes (tenant, content_hash,
   prompt_version, taxonomy_version, tree_version, stage, model_ref).
-- **Prompt version:** `TAGGER_PROMPT_VERSION` becomes `'2'`.
+- **Prompt version:** a new `TAGGER_V2_PROMPT_VERSION = '2'`. v1's `TAGGER_PROMPT_VERSION` stays `'1'` while v1 still tags untreed subjects.
 - **Which items the sweep picks:** items with no `ItemTagging`, or with
   `tagging_status = 'stale'`, or whose `ItemTagging` versions are older
   than current. Manual items are excluded.
 - **Budget:** the existing `_check_budget` monthly gate and `AIUsageRecord`
   metering (feature `item_tagging`) are unchanged.
-- **Old tagger:** v1 stays importable until 2B, for the generators'
-  `set_item_tags` path, but the nightly sweep calls v2 only.
+- **Old tagger:** v1 stays until 2B. The nightly sweep runs v2 for every
+  subject that has a syllabus tree, then v1 for the remaining subjects
+  only, so untreed production courses keep today's tagging.
+- **Mock items with no resolvable subject** (no `subject`, several
+  subjects across the test's courses, and no topic) are skipped and
+  counted. Plan 2B handles them when generators emit v2 tags.
+- **Module layout:** the pure core is `services/tagging_v2.py`. The
+  database shell is `services/tagging_sweep.py`.
 
 ## 6. Evaluation
 
@@ -454,7 +466,7 @@ these papers, Track B results are read alongside.
 
 - **Refusals:** it refuses unless all three hold:
   - `DEBUG` is true;
-  - the tenant slug starts with `lab-`;
+  - the tenant `subdomain` starts with `lab-`;
   - the default database is local: SQLite, or `HOST` is one of `localhost`,
     `127.0.0.1` or `::1`.
 - **What it creates:**
