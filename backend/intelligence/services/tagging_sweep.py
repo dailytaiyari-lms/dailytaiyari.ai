@@ -4,6 +4,8 @@ DB shell around the pure core in ``tagging_v2``: it picks items, builds their
 payloads and the subject context, caches each stage's reply per item content,
 and writes ItemTagging / ItemSkillTag / ConceptLink rows.
 """
+import hashlib
+import json
 import logging
 from collections import defaultdict
 
@@ -25,8 +27,22 @@ logger = logging.getLogger(__name__)
 LINK_VERSION_CHARS = 60  # ConceptLink.tagger_version max_length
 
 
+FINGERPRINT_FIELDS = ('exam_label', 'audience', 'subject', 'thinking_levels', 'skills', 'special_formats',
+                      'tree_version')
+FINGERPRINT_CHARS = 16
+CACHE_TREE_VERSION_CHARS = 64  # AITaggingResult.tree_version max_length
+
+
+def prompt_fingerprint(context, variant=''):
+    """Hash of everything prompt-relevant in ``context`` (plus the stage's ``variant``)."""
+    body = {name: context.get(name) for name in FINGERPRINT_FIELDS}
+    body['variant'] = variant
+    digest = hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode('utf-8'))
+    return digest.hexdigest()[:FINGERPRINT_CHARS]
+
+
 class DbCache:
-    """AITaggingResult-backed cache: one row per (content, stage, versions, model)."""
+    """AITaggingResult-backed cache: one row per (content, stage, versions, prompt, model)."""
 
     def __init__(self, tenant, context, model_ref, hashes):
         self.tenant = tenant
@@ -34,24 +50,30 @@ class DbCache:
         self.model_ref = model_ref
         self.hashes = hashes
 
-    def _key(self, stage, payload_id):
+    def _key(self, stage, payload_id, variant=''):
+        # The cache row's tree_version column holds "<tree version>:<prompt fingerprint>":
+        # the fingerprint covers the exam label, audience, tag definitions and the
+        # stage-2 topic set, so a vocabulary or audience change misses the cache.
+        # (ItemTagging.tree_version stays the bare tree version; it drives re-selection.)
+        tree_and_prompt = f'{self.context["tree_version"]}:{prompt_fingerprint(self.context, variant)}'
         return {
             'tenant': self.tenant,
             'content_hash': self.hashes[payload_id],
             'prompt_version': TAGGER_V2_PROMPT_VERSION,
             'taxonomy_version': self.context['taxonomy_version'],
-            'tree_version': self.context['tree_version'],
+            'tree_version': tree_and_prompt[:CACHE_TREE_VERSION_CHARS],
             'stage': stage,
             'model_ref': self.model_ref,
         }
 
-    def get(self, stage, payload_id):
-        row = AITaggingResult.objects.filter(**self._key(stage, payload_id)).first()
+    def get(self, stage, payload_id, variant=''):
+        row = AITaggingResult.objects.filter(**self._key(stage, payload_id, variant)).first()
         return row.result if row else None
 
-    def put(self, stage, payload_id, entry):
+    def put(self, stage, payload_id, entry, variant=''):
         # update_or_create: a fresh reply replaces a cached entry the core rejected as malformed.
-        AITaggingResult.objects.update_or_create(**self._key(stage, payload_id), defaults={'result': entry})
+        AITaggingResult.objects.update_or_create(**self._key(stage, payload_id, variant),
+                                                 defaults={'result': entry})
 
 
 def _arm(item):

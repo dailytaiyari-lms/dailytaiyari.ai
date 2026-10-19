@@ -76,11 +76,11 @@ class DictCache:
     def __init__(self):
         self.store = {}
 
-    def get(self, stage, payload_id):
-        return self.store.get((stage, payload_id))
+    def get(self, stage, payload_id, variant=''):
+        return self.store.get((stage, payload_id, variant))
 
-    def put(self, stage, payload_id, entry):
-        self.store[(stage, payload_id)] = entry
+    def put(self, stage, payload_id, entry, variant=''):
+        self.store[(stage, payload_id, variant)] = entry
 
 
 class TagPayloadsTests(SimpleTestCase):
@@ -185,6 +185,19 @@ class TagPayloadsTests(SimpleTestCase):
         [result] = tagging_v2.tag_payloads(context(), [payload('q1')], call=second, cache=cache)
         self.assertEqual(second.calls, [])
         self.assertEqual(result.primary_subtopic, FRICTION)
+
+    def test_stage_two_cache_is_keyed_by_the_prompt_topic_set(self):
+        cache = DictCache()
+        first = FakeCall(locate={'q1': {'topic_key': LAWS, 'also_topic_keys': [WORK], 'confidence': 0.9}},
+                         tag={'q1': tag_entry(secondary_subtopics=[POWER])})
+        tagging_v2.tag_payloads(context(), [payload('q1')], call=first, cache=cache)
+        self.assertIn(('locate', 'q1', ''), cache.store)
+        self.assertIn(('tag', 'q1', f'{LAWS}|{WORK}'), cache.store)
+        # Same item, anchored to LAWS only: a different prompt topic set → the model is asked.
+        second = FakeCall(tag={'q1': tag_entry(secondary_subtopics=[])})
+        tagging_v2.tag_payloads(context(), [payload('q1', hint=LAWS)], call=second, cache=cache)
+        self.assertEqual([stage for stage, _, _ in second.calls], ['tag'])
+        self.assertIn(('tag', 'q1', LAWS), cache.store)
 
     def test_format_hint_reaches_the_prompt(self):
         call = FakeCall(tag={'q1': tag_entry(special_format='statement_pair')})

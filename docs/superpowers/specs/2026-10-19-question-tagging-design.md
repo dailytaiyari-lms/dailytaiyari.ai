@@ -374,6 +374,21 @@ calibration table (§6.3).
 - **Cache key:** `AITaggingResult` gains `stage`, `taxonomy_version` and
   `tree_version`. Its unique key becomes (tenant, content_hash,
   prompt_version, taxonomy_version, tree_version, stage, model_ref).
+  - The cache row's `tree_version` column holds
+    `<tree version>:<prompt fingerprint>`, cut to 64 characters. No
+    migration is needed.
+  - The fingerprint is the first 16 hex characters of a sha256 over the
+    context's exam label, audience, subject, thinking levels, skills, special
+    formats and tree version. So adding a tag to `tags.yaml`, changing a
+    subject's skill packs or changing the audience misses the cache.
+  - Stage 2 also folds in its prompt topic set: the located topic plus its
+    "also" topics. The core passes it as the cache protocol's `variant`
+    (`get(stage, id, variant)` / `put(stage, id, entry, variant)`). Stage 1
+    passes `''`.
+  - `ItemTagging.tree_version` keeps the bare tree version, because it drives
+    re-selection.
+  - A reply is cached only after it validated. A malformed cached entry
+    counts as a miss and is replaced.
 - **Prompt version:** a new `TAGGER_V2_PROMPT_VERSION = '2'`. v1's `TAGGER_PROMPT_VERSION` stays `'1'` while v1 still tags untreed subjects.
 - **Which items the sweep picks:** items with no `ItemTagging`, or with
   `tagging_status = 'stale'`, or whose `ItemTagging` versions are older

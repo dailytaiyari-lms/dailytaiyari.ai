@@ -88,11 +88,19 @@ class TagResult:
 
 
 class _NoCache:
-    def get(self, stage, payload_id):
+    """The cache protocol. ``variant`` is the stage's prompt-specific part of the key:
+    '' for stage 1, the prompt topic set (``topic_variant``) for stage 2."""
+
+    def get(self, stage, payload_id, variant=''):
         return None
 
-    def put(self, stage, payload_id, entry):
+    def put(self, stage, payload_id, entry, variant=''):
         return None
+
+
+def topic_variant(topic_key, also):
+    """Stage-2 cache variant: the located topic plus its "also" topics."""
+    return '|'.join([topic_key] + sorted(also))
 
 
 def cognitive_projection(thinking_level):
@@ -401,7 +409,8 @@ def tag_payloads(context, payloads, *, call, cache=None):
         todo = []
         for p in group:
             pid = str(p['id'])
-            cached = cache.get('tag', pid)
+            variant = topic_variant(topic_key, located[pid]['also'])
+            cached = cache.get('tag', pid, variant)
             keys = [topic_key] + located[pid]['also']
             if cached is not None and _safe_apply(results[pid], cached, context, allowed_for(keys),
                                                   located[pid]):
@@ -424,5 +433,6 @@ def tag_payloads(context, payloads, *, call, cache=None):
                                    allowed_for([topic_key] + located[pid]['also']), located[pid]):
                     results[pid].error = 'invalid_entry'
                     continue
-                cache.put('tag', pid, entry)  # only after validation succeeded
+                # only after validation succeeded
+                cache.put('tag', pid, entry, topic_variant(topic_key, located[pid]['also']))
     return [results[str(p['id'])] for p in payloads]

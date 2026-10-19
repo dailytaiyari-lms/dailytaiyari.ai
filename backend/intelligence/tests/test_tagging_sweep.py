@@ -10,7 +10,9 @@ from django.test import TestCase
 from core.models import Tenant
 from coursegen.generation import GenerationError
 from exams.models import Course, Subject, Topic
-from intelligence.models import AITaggingResult, ConceptLink, ItemSkillTag, ItemTagging, SyllabusNode
+from intelligence.models import (
+    AITaggingResult, ConceptLink, CourseSyllabus, ItemSkillTag, ItemTagging, SyllabusNode, TagDefinition,
+)
 from intelligence.services import llm, syllabus, tagging, tagging_sweep, taxonomy
 from intelligence.services.tagging_v2 import LOCATE_MARKER
 from intelligence.tests.taxonomy_fixtures import mini_tree, sync_mini_vocabulary
@@ -124,6 +126,36 @@ class SweepTests(TestCase):
         cached = FakeCall()
         self.assertEqual(self.run_v2(cached), 1)
         self.assertEqual(cached.calls, [])  # same content → cached reply
+
+    def test_a_changed_tag_vocabulary_misses_the_cache(self):
+        self.run_v2(FakeCall(tag={str(self.question.id): tag_entry()}))
+        Question.objects.filter(id=self.question.id).update(tagging_status='stale')
+        TagDefinition.objects.create(kind=TagDefinition.KIND_SKILL, key='unit_analysis',
+                                     label='Unit analysis', definition='Checks units.')
+        call = FakeCall(tag={str(self.question.id): tag_entry()})
+        self.assertEqual(self.run_v2(call), 1)
+        self.assertEqual(call.calls, ['tag'])  # new skill in the prompt → model asked again
+        Question.objects.filter(id=self.question.id).update(tagging_status='stale')
+        unchanged = FakeCall()
+        self.assertEqual(self.run_v2(unchanged), 1)
+        self.assertEqual(unchanged.calls, [])  # same context → cached reply
+
+    def test_a_changed_audience_misses_the_cache(self):
+        self.run_v2(FakeCall(tag={str(self.question.id): tag_entry()}))
+        Question.objects.filter(id=self.question.id).update(tagging_status='stale')
+        CourseSyllabus.objects.filter(course=self.course).update(audience='Olympiad finalists')
+        call = FakeCall(tag={str(self.question.id): tag_entry()})
+        self.assertEqual(self.run_v2(call), 1)
+        self.assertEqual(call.calls, ['tag'])
+
+    def test_cache_row_records_the_prompt_fingerprint(self):
+        self.run_v2(FakeCall(tag={str(self.question.id): tag_entry()}))
+        row = AITaggingResult.objects.get(stage='tag')
+        tree, _, fingerprint = row.tree_version.partition(':')
+        self.assertEqual(tree, syllabus.compute_tree_version(self.subject))
+        self.assertRegex(fingerprint, r'^[0-9a-f]{16}$')
+        # ItemTagging keeps the bare tree version (it drives re-selection).
+        self.assertEqual(ItemTagging.objects.get(question=self.question).tree_version, tree)
 
     def test_malformed_cached_reply_is_replaced_not_raised(self):
         self.run_v2(FakeCall(tag={str(self.question.id): tag_entry()}))
