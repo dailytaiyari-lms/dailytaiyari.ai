@@ -109,10 +109,20 @@ await tl.flush()               // before submit; never throws
 - **Sync:** every 30 s; on `visibilitychange→hidden` (`fetch` with
   `keepalive: true`); and on `flush()`. Each sync sends the session's full
   event list, so a resend is harmless.
-- **Caps:** 5,000 events per session. Past the cap, only `a`/`c` events are
-  kept, and the session is marked `truncated`.
-- **Failure:** sync errors are swallowed and retried at the next tick.
-  Capture never blocks or breaks an attempt.
+- **Budget:** at most 5,000 events and about 200 KB of serialized events per
+  session, applied to every event code. Past the budget, events are dropped
+  and the session is marked `truncated`. The server then treats an answered
+  item with no surviving answer event as having no timing. Typing digests
+  (`txt`/`code`) coalesce within 10 s; other answer changes coalesce within
+  1.5 s.
+- **Final flush:** before submit, `flush({ final: true })` always sends, even
+  if nothing changed, so the server learns the true session end. It waits at
+  most 4 s.
+- **Failure:**
+  - Network and 5xx errors, plus 401/429, retry at the next tick.
+  - Any other 4xx marks the session dead, so it is not retried.
+  - Syncs are serialized, one in flight at a time.
+  - Capture never blocks or breaks an attempt.
 
 Screens also replace their fabricated per-answer `time_taken_seconds` with
 `Math.round(tl.activeSeconds(key))`.
@@ -138,6 +148,14 @@ Screens also replace their fabricated per-answer `time_taken_seconds` with
     late flush must not be lost).
   - Practice set: `suggested` or `in_progress`, or completed less than
     120 s ago. A set is still `suggested` until its first answer.
+- **Session hygiene:**
+  - `elapsed_ms` is stored per session and clamped to the time since the
+    anchor.
+  - An open visit is closed at `max(last event, elapsed_ms)`, except on
+    truncated sessions.
+  - A resend with a smaller `elapsed_ms` than the stored one is ignored, so a
+    stale snapshot never overwrites a newer one.
+  - At most 30 sessions per attempt; a new session past that gets a 400.
 - **Clock anchoring:** the server computes the session's offset from the
   attempt's anchor as `received_at − elapsed_ms − anchor`. This needs no
   client clock trust and no clock sync. The anchor is `started_at`, or
@@ -183,7 +201,10 @@ Screens also replace their fabricated per-answer `time_taken_seconds` with
 - `evidence` JSON list of `{code, detail}`.
 - `self_report` (copied in for querying), `final_label`.
 - `has_timeline` bool, `classifier_version`, `computed_at`.
-- Indexes: (`student`, `computed_at`), (`tenant`, `label`).
+- Indexes: (`student`, `computed_at`), (`tenant`, `final_label`),
+  (`tenant`, `computed_at`), (`attempt_kind`, `attempt_id`). The last one is
+  also on `ResponseSelfReport`. Partial unique indexes can't serve
+  attempt-only filters.
 
 **`ItemStats`** gains `median_active_seconds` and `active_time_n`. Computed
 from `ResponseDiagnosis` rows with `has_timeline`, `answered`, and a label
@@ -383,15 +404,21 @@ unaffected. After deploy, `recompute_learner_state` is re-run.
 
 ## 6. Calibration & operations
 
-- `GET /api/v1/admin/intelligence/diagnosis-calibration/?days=30` (tenant
-  admin) returns:
+- `GET /api/v1/tenant-admin/intelligence/diagnosis/calibration/?days=30`
+  (tenant admins and instructors) returns:
   - label distribution;
   - a classifier-label × self-report confusion matrix;
   - per-label agreement rate;
   - the share of rows with a timeline and the share with
     `usual_source == 'stats'`.
 - Management command
-  `recompute_diagnoses [--tenant] [--since YYYY-MM-DD]`.
+  `recompute_diagnoses [--tenant] [--since YYYY-MM-DD]`:
+  - processes attempts oldest first, because prior mastery reads earlier
+    labels;
+  - refreshes learner state for quiz and mock attempts;
+  - survives individual bad attempts.
+- `diagnose_attempt` claims the timeline (sets `finalized_at`) before reading
+  it, so no sync can land unseen between the read and the freeze.
 - Nightly catch-up: the existing `refresh_learner_state` sweep also
   diagnoses any finalized attempt from the last 48 h that has no diagnosis
   rows at the current `CLASSIFIER_VERSION`.
@@ -403,9 +430,10 @@ unaffected. After deploy, `recompute_learner_state` is re-run.
 - Attempt ids on the client:
   - `QuizAttempt.jsx` and `MockTestAttempt.jsx` never hold an attempt id, so
     they sync by `parent_id` (§3.2).
-  - `QuizAttempt.jsx` also calls the idempotent `startQuiz` on mount. Quiz
-    submit get-or-creates its attempt, so a deep-linked quiz would otherwise
-    have no attempt to attach a timeline to until submit.
+  - `QuizAttempt.jsx` does **not** start the attempt on mount. That would
+    start the server-anchored proctored clock while the student reads the
+    instructions. `beginProctoredQuiz` creates the attempt, and the timeline
+    activates only once `proctoringStarted` is true.
   - Rich mock and practice already hold their ids.
 
 ## 7. Error handling

@@ -311,8 +311,16 @@ state with guesses and slips down-weighted.
   `manage.py recompute_diagnoses` (optionally `--tenant`, `--since`). The
   command also refreshes learner state for quiz and mock attempts, survives
   individual bad attempts, and reports the count of failures.
-- After first deploy, run `manage.py recompute_learner_state`
-  (`STATE_MODEL_VERSION` 2).
+- After first deploy:
+  1. Optionally run `manage.py recompute_diagnoses` to label history.
+     Historic attempts have no timelines, so only non-time rules apply to
+     them.
+  2. Then run `manage.py recompute_learner_state` (`STATE_MODEL_VERSION` 2).
+     It also covers practice-only states, which `recompute_diagnoses` doesn't
+     refresh.
+
+  Running `recompute_learner_state` alone changes nothing about weights,
+  because no diagnoses exist yet.
 - Students' "What happened?" taps on review pages need the opt-in tenant
   feature `response_diagnosis`. Capture and classification run regardless.
 - Calibration: `GET /api/v1/tenant-admin/intelligence/diagnosis/calibration/?days=30`
