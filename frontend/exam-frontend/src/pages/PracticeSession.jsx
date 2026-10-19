@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { practiceService } from '../services/practiceService'
+import useResponseTimeline from '../hooks/useResponseTimeline'
 import Loading from '../components/common/Loading'
 import { DeficitChip } from './Practice'
 import { ArrowRight, CheckCircle2, XCircle, PartyPopper, TrendingUp } from 'lucide-react'
@@ -19,7 +20,6 @@ const PracticeSession = () => {
   const [selected, setSelected] = useState([])
   const [numerical, setNumerical] = useState('')
   const [review, setReview] = useState(null) // grading payload for current item
-  const [startedAt, setStartedAt] = useState(Date.now())
   const [summary, setSummary] = useState(null)
 
   const { data: set, isLoading } = useQuery({
@@ -34,6 +34,13 @@ const PracticeSession = () => {
     [set?.id],
   )
   const item = items[index]
+  const timeline = useResponseTimeline({
+    attemptKind: 'practice',
+    attemptId: setId,
+    // While the explanation is showing, the student is no longer answering.
+    currentKey: item && !review ? `bank:${item.question_id}` : null,
+    active: Boolean(set) && !summary,
+  })
 
   const answerMutation = useMutation({
     mutationFn: (payload) => practiceService.answerItem(setId, payload),
@@ -56,14 +63,17 @@ const PracticeSession = () => {
   const answeredCount = review ? index + 1 : index
 
   const submitAnswer = () => {
+    const key = `bank:${item.question_id}`
     const payload = {
       item_id: item.id,
-      time_taken_seconds: Math.round((Date.now() - startedAt) / 1000),
+      time_taken_seconds: Math.round(timeline.activeSeconds(key)),
     }
     if (item.question_type === 'numerical') {
       payload.numerical_answer = numerical
+      timeline.recordAnswer(key, { num: String(numerical) })
     } else {
       payload.selected_options = selected
+      timeline.recordAnswer(key, { sel: selected.map(Number) })
     }
     answerMutation.mutate(payload)
   }
@@ -72,11 +82,10 @@ const PracticeSession = () => {
     setReview(null)
     setSelected([])
     setNumerical('')
-    setStartedAt(Date.now())
     if (index + 1 < total) {
       setIndex(index + 1)
     } else {
-      submitMutation.mutate()
+      timeline.flush().finally(() => submitMutation.mutate())
     }
   }
 

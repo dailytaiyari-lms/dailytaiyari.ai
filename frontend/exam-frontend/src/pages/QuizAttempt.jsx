@@ -19,6 +19,7 @@ import {
   Maximize2
 } from 'lucide-react'
 import { quizService } from '../services/quizService'
+import useResponseTimeline from '../hooks/useResponseTimeline'
 import { useAuthStore } from '../context/authStore'
 import Loading from '../components/common/Loading'
 import toast from 'react-hot-toast'
@@ -71,6 +72,20 @@ const QuizAttempt = () => {
   const { data: quiz, isLoading } = useQuery({
     queryKey: ['quizDetail', quizId],
     queryFn: () => quizService.getQuizDetails(quizId),
+  })
+
+  // Make sure an in-progress attempt exists for the timeline to attach to
+  // (idempotent: returns the existing one when Quiz.jsx already started it).
+  useEffect(() => {
+    quizService.startQuiz(quizId).catch(() => {})
+  }, [quizId])
+
+  const currentQ = quiz?.questions?.[currentQuestion]
+  const timeline = useResponseTimeline({
+    attemptKind: 'quiz',
+    parentId: quizId,
+    currentKey: currentQ ? `bank:${currentQ.id}` : null,
+    active: Boolean(quiz) && !result,
   })
 
   const enterFullscreen = useCallback(async () => {
@@ -193,12 +208,12 @@ const QuizAttempt = () => {
   }
 
   const handleAnswerSelect = (questionId, optionIndex) => {
+    timeline.recordAnswer(`bank:${questionId}`, { sel: [Number(optionIndex)] })
     setAnswers((prev) => ({
       ...prev,
       [questionId]: {
         question_id: questionId,
         selected_option: optionIndex.toString(),
-        time_taken_seconds: Math.floor((quiz.duration_minutes * 60 - timeLeft) / quiz.questions.length),
       },
     }))
   }
@@ -209,8 +224,12 @@ const QuizAttempt = () => {
     setIsSubmitting(true)
 
     try {
+      await timeline.flush()
       const response = await quizService.submitQuiz(quizId, {
-        answers: Object.values(answers),
+        answers: Object.values(answers).map((a) => ({
+          ...a,
+          time_taken_seconds: Math.round(timeline.activeSeconds(`bank:${a.question_id}`)),
+        })),
         time_taken_seconds: quiz.duration_minutes * 60 - timeLeft,
       })
 

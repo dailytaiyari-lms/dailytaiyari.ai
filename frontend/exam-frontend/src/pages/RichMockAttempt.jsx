@@ -6,6 +6,7 @@ import {
   Loader2, Play, CheckCircle2, XCircle, Send, ListChecks,
 } from 'lucide-react'
 import { mockTestBuilderService } from '../services/mockTestBuilderService'
+import useResponseTimeline from '../hooks/useResponseTimeline'
 import { useFeatureLabel } from '../context/tenantStore'
 import CodeEditor from '../components/coding/CodeEditor'
 import MathRenderer from '../components/chat/MathRenderer'
@@ -190,7 +191,29 @@ export default function RichMockAttempt() {
 
   /* ------------------------- answer helpers ------------------------- */
   const q = questions[current]
-  const setAns = (patch) => setAnswers((a) => ({ ...a, [qKey(q)]: { ...(a[qKey(q)] || {}), ...patch } }))
+  const timeline = useResponseTimeline({
+    attemptKind: 'mock',
+    attemptId,
+    currentKey: q ? qKey(q) : null,
+    active: phase === 'attempt' && !result,
+  })
+  const answerDigest = (patch) => {
+    if (patch.selected !== undefined) return { sel: (patch.selected || []).map(Number) }
+    if (patch.numerical_answer !== undefined) return { num: String(patch.numerical_answer ?? '') }
+    if (patch.answer_text !== undefined) return { txt: (patch.answer_text || '').length }
+    if (patch.code !== undefined) return { code: (patch.code || '').length }
+    return null
+  }
+  const setAns = (patch) => {
+    const digest = answerDigest(patch)
+    if (digest) {
+      const empty = (digest.sel && digest.sel.length === 0) || digest.num === '' ||
+        digest.txt === 0 || digest.code === 0
+      if (empty) timeline.clearAnswer(qKey(q))
+      else timeline.recordAnswer(qKey(q), digest)
+    }
+    setAnswers((a) => ({ ...a, [qKey(q)]: { ...(a[qKey(q)] || {}), ...patch } }))
+  }
   const cur = q ? (answers[qKey(q)] || {}) : {}
 
   const isAnswered = (question) => {
@@ -228,12 +251,14 @@ export default function RichMockAttempt() {
       if (!a) return
       const marked = !!flagged[qKey(question)]
       if (question.kind === 'bank') {
-        const entry = { question_id: question.ref_id, is_marked_for_review: marked }
+        const entry = { question_id: question.ref_id, is_marked_for_review: marked,
+          time_taken_seconds: Math.round(timeline.activeSeconds(qKey(question))) }
         if (question.item_type === 'numerical') entry.numerical_answer = a.numerical_answer
         else entry.selected_option = a.selected != null && a.selected.length ? String(a.selected[0]) : ''
         bank_answers.push(entry)
       } else {
-        const entry = { item_id: question.ref_id, is_marked_for_review: marked }
+        const entry = { item_id: question.ref_id, is_marked_for_review: marked,
+          time_taken_seconds: Math.round(timeline.activeSeconds(qKey(question))) }
         if (['mcq', 'mcq_multi'].includes(question.item_type)) entry.selected_options = a.selected || []
         if (question.item_type === 'numerical') entry.numerical_answer = a.numerical_answer
         if (question.item_type === 'subjective') entry.answer_text = a.answer_text || ''
@@ -250,6 +275,7 @@ export default function RichMockAttempt() {
     submittedRef.current = true
     setSubmitting(true)
     try {
+      await timeline.flush()
       const r = await mockTestBuilderService.submitRich(testId, buildPayload())
       setResult(r)
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {})

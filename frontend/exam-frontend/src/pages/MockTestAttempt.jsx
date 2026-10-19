@@ -16,6 +16,7 @@ import {
   ChevronRight
 } from 'lucide-react'
 import { quizService } from '../services/quizService'
+import useResponseTimeline from '../hooks/useResponseTimeline'
 import { useAuthStore } from '../context/authStore'
 import Loading from '../components/common/Loading'
 import toast from 'react-hot-toast'
@@ -42,6 +43,14 @@ const MockTestAttempt = () => {
   const { data: test, isLoading } = useQuery({
     queryKey: ['mockTestDetail', testId],
     queryFn: () => quizService.getMockTestDetails(testId),
+  })
+
+  const currentQ = test?.questions?.[currentQuestion]
+  const timeline = useResponseTimeline({
+    attemptKind: 'mock',
+    parentId: testId,
+    currentKey: currentQ ? `bank:${currentQ.id}` : null,
+    active: Boolean(test) && !result,
   })
 
   useEffect(() => {
@@ -74,12 +83,12 @@ const MockTestAttempt = () => {
   }
 
   const handleAnswerSelect = (questionId, optionIndex) => {
+    timeline.recordAnswer(`bank:${questionId}`, { sel: [Number(optionIndex)] })
     setAnswers((prev) => ({
       ...prev,
       [questionId]: {
         question_id: questionId,
         selected_option: optionIndex.toString(),
-        time_taken_seconds: 0,
       },
     }))
   }
@@ -89,8 +98,12 @@ const MockTestAttempt = () => {
     setIsSubmitting(true)
 
     try {
+      await timeline.flush()
       const response = await quizService.submitMockTest(testId, {
-        answers: Object.values(answers),
+        answers: Object.values(answers).map((a) => ({
+          ...a,
+          time_taken_seconds: Math.round(timeline.activeSeconds(`bank:${a.question_id}`)),
+        })),
         time_taken_seconds: test.duration_minutes * 60 - timeLeft,
       })
       setResult(response)
