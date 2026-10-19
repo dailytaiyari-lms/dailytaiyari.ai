@@ -225,12 +225,9 @@ reports read $0 until real prices are filled in.
 | Aptitude | `quantitative_shortcut`, `logical_deduction`, `verbal_reasoning`, `data_sufficiency` (with the universal `numerical_computation`, `data_analysis` and `pattern_recognition`) |
 | AI/ML | `model_selection`, `metric_interpretation`, `data_preprocessing`, `prompt_design` |
 
-## Still to decide in the full spec
+## Settled in the full spec
 
-- Data model: whether tree nodes are a new `SyllabusNode` table with
-  subtopics linked to `Concept` rows, or `Concept` itself gains tree levels.
-  Also how platform-scoped (cross-tenant) nodes coexist with tenant-scoped
-  `Concept.subject` foreign keys.
-- Who hand-tags the gold set, and its exact size.
-- The review-queue UI and its confidence threshold.
-- Migration of existing flat concepts onto the trees for exam-mapped courses.
+All four open points (the data model, the gold sets, the review threshold and
+the migration of flat concepts) are settled in
+[`2026-10-19-question-tagging-design.md`](2026-10-19-question-tagging-design.md).
+Look for its **Decided here** notes.
