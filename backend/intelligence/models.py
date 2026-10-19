@@ -17,7 +17,7 @@ from django.db import models
 from django.db.models import Q
 
 from core.models import TimeStampedModel
-from exams.models import Subject, Topic
+from exams.models import Course, Subject, Topic
 
 from .versions import (
     CLASSIFIER_VERSION, EVENT_SCHEMA_VERSION, ONTOLOGY_VERSION, STATE_MODEL_VERSION,
@@ -45,6 +45,7 @@ class Concept(TimeStampedModel):
         ('mockgen', 'Mock test builder'),
         ('coursegen', 'Course builder'),
         ('backfill', 'Backfill'),
+        ('syllabus', 'Syllabus tree'),
     ]
 
     STATUS_CHOICES = [
@@ -635,6 +636,11 @@ class AITaggingResult(TimeStampedModel):
     prompt_version = models.CharField(max_length=20)
     ontology_version = models.CharField(max_length=20, default=ONTOLOGY_VERSION)
     model_ref = models.CharField(max_length=240)  # "provider:model"
+    # Tagging v2 cache dimensions ('' for v1 rows): which stage produced the
+    # payload, and the vocabulary/tree versions it was produced against.
+    stage = models.CharField(max_length=10, blank=True, default='')
+    taxonomy_version = models.CharField(max_length=20, blank=True, default='')
+    tree_version = models.CharField(max_length=64, blank=True, default='')
     # One item's raw payload: {"concepts": [...], "difficulty": ..., "cognitive_type": ...}
     result = models.JSONField(default=dict)
 
@@ -643,8 +649,9 @@ class AITaggingResult(TimeStampedModel):
         verbose_name_plural = 'AI Tagging Results'
         constraints = [
             models.UniqueConstraint(
-                fields=['tenant', 'content_hash', 'prompt_version', 'model_ref'],
-                name='uniq_tagging_cache_entry',
+                fields=['tenant', 'content_hash', 'prompt_version', 'taxonomy_version',
+                        'tree_version', 'stage', 'model_ref'],
+                name='uniq_tagging_cache_entry_v2',
             ),
         ]
 
@@ -825,3 +832,261 @@ class ResponseDiagnosis(TimeStampedModel):
 
     def __str__(self):
         return f'{self.attempt_kind}:{self.attempt_id} {self.final_label}'
+
+
+# ─── Tagging v2: vocabulary, syllabus trees, item tags ───────────────────────
+
+
+def _exactly_one_item(name):
+    return models.CheckConstraint(
+        name=name,
+        check=(
+            (Q(question__isnull=False) & Q(mock_item__isnull=True))
+            | (Q(question__isnull=True) & Q(mock_item__isnull=False))
+        ),
+    )
+
+
+class TaxonomyRelease(TimeStampedModel):
+    """One synced version of ``taxonomy/tags.yaml`` (platform-wide, tenant NULL).
+
+    The current release is the highest ``sequence``; ``sync_taxonomy`` writes a
+    new row only when the file's content changed.
+    """
+
+    sequence = models.PositiveIntegerField(unique=True)
+    version = models.CharField(max_length=20)
+    file_sha256 = models.CharField(max_length=64)
+    review_confidence_threshold = models.FloatField(default=0.6)
+
+    class Meta:
+        verbose_name = 'Taxonomy Release'
+        verbose_name_plural = 'Taxonomy Releases'
+        ordering = ['-sequence']
+
+    def __str__(self):
+        return f'tags v{self.version} (#{self.sequence})'
+
+
+class SkillPack(TimeStampedModel):
+    """A subject-specific group of skills (physics, programming, …)."""
+
+    key = models.CharField(max_length=50, unique=True)
+    label = models.CharField(max_length=100)
+    # Subject names/aliases this pack applies to, matched as whole words.
+    applies_to = models.JSONField(default=list, blank=True)
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = 'Skill Pack'
+        verbose_name_plural = 'Skill Packs'
+        ordering = ['key']
+
+    def __str__(self):
+        return self.label
+
+
+class TagDefinition(TimeStampedModel):
+    """One editable tag the v2 tagger may assign (loaded from tags.yaml)."""
+
+    KIND_THINKING = 'thinking_level'
+    KIND_SKILL = 'skill'
+    KIND_FORMAT = 'special_format'
+    KIND_CHOICES = [
+        (KIND_THINKING, 'Thinking level'),
+        (KIND_SKILL, 'Skill'),
+        (KIND_FORMAT, 'Special format'),
+    ]
+
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES)
+    key = models.CharField(max_length=60)
+    label = models.CharField(max_length=120)
+    definition = models.TextField()
+    pack = models.ForeignKey(
+        SkillPack, on_delete=models.SET_NULL, null=True, blank=True, related_name='skills',
+    )
+    active = models.BooleanField(default=True)
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        verbose_name = 'Tag Definition'
+        verbose_name_plural = 'Tag Definitions'
+        ordering = ['kind', 'order', 'key']
+        constraints = [
+            models.UniqueConstraint(fields=['kind', 'key'], name='uniq_tag_definition'),
+        ]
+
+    def __str__(self):
+        return f'{self.kind}:{self.key}'
+
+
+class SyllabusNode(TimeStampedModel):
+    """One node of a subject's syllabus tree (sub-subject, topic or subtopic).
+
+    The subject level is the ``exams.Subject`` itself. Every subtopic owns one
+    Concept, so mastery keeps living at the leaves; topic and sub-subject
+    figures are rolled up from the tree, never stored as evidence.
+    """
+
+    LEVEL_SUB_SUBJECT = 'sub_subject'
+    LEVEL_TOPIC = 'topic'
+    LEVEL_SUBTOPIC = 'subtopic'
+    LEVEL_CHOICES = [
+        (LEVEL_SUB_SUBJECT, 'Sub-subject'),
+        (LEVEL_TOPIC, 'Topic'),
+        (LEVEL_SUBTOPIC, 'Subtopic'),
+    ]
+    SOURCE_CHOICES = [
+        ('exam_tree', 'Exam tree'),
+        ('course', 'Course'),
+        ('llm_proposed', 'LLM proposed'),
+        ('manual', 'Manual'),
+    ]
+    STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('proposed', 'Proposed'),
+        ('archived', 'Archived'),
+    ]
+
+    subject = models.ForeignKey(Subject, on_delete=models.CASCADE, related_name='syllabus_nodes')
+    parent = models.ForeignKey(
+        'self', on_delete=models.CASCADE, null=True, blank=True, related_name='children',
+    )
+    level = models.CharField(max_length=12, choices=LEVEL_CHOICES)
+    key = models.CharField(max_length=255)
+    name = models.CharField(max_length=300)
+    description = models.TextField(blank=True, default='')
+    # Share within the parent; siblings sum to 1, or are all 0 (unweighted).
+    weightage = models.FloatField(default=0.0)
+    in_syllabus = models.BooleanField(default=True)
+    source = models.CharField(max_length=15, choices=SOURCE_CHOICES, default='course')
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='active')
+    order = models.PositiveIntegerField(default=0)
+    course_topic = models.ForeignKey(
+        Topic, on_delete=models.SET_NULL, null=True, blank=True, related_name='syllabus_nodes',
+    )
+    concept = models.OneToOneField(
+        Concept, on_delete=models.SET_NULL, null=True, blank=True, related_name='syllabus_node',
+    )
+
+    class Meta:
+        verbose_name = 'Syllabus Node'
+        verbose_name_plural = 'Syllabus Nodes'
+        ordering = ['order', 'name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'subject', 'key'], name='uniq_syllabus_node_key',
+            ),
+        ]
+        indexes = [models.Index(fields=['subject', 'level', 'status'])]
+
+    def __str__(self):
+        return f'{self.level}:{self.key}'
+
+
+class CourseSyllabus(TimeStampedModel):
+    """How a course is tagged: against an exam tree, or its own built tree."""
+
+    course = models.OneToOneField(Course, on_delete=models.CASCADE, related_name='syllabus')
+    exam_tree = models.CharField(max_length=40, blank=True, default='')
+    audience = models.CharField(max_length=200, blank=True, default='')
+    # {subject_id: tree_subject_key} for exam-mapped courses.
+    subject_map = models.JSONField(default=dict, blank=True)
+    # {subject_id: [pack_key, …]} — explicit packs; unlisted subjects fall
+    # back to SkillPack.applies_to name matching.
+    skill_packs = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        verbose_name = 'Course Syllabus'
+        verbose_name_plural = 'Course Syllabi'
+
+    def __str__(self):
+        return f'{self.course_id} → {self.exam_tree or "course tree"}'
+
+
+class ItemTagging(TimeStampedModel):
+    """The v2 tag set for one assessment item (bank Question or MockTestItem)."""
+
+    REVIEW_AUTO = 'auto'
+    REVIEW_NEEDED = 'needs_review'
+    REVIEW_DONE = 'reviewed'
+    REVIEW_CHOICES = [
+        (REVIEW_AUTO, 'Auto-accepted'),
+        (REVIEW_NEEDED, 'Needs review'),
+        (REVIEW_DONE, 'Reviewed'),
+    ]
+    SOURCE_CHOICES = [
+        ('llm_tagger', 'LLM tagger'),
+        ('generator', 'Generator'),
+        ('manual', 'Manual'),
+    ]
+
+    question = models.OneToOneField(
+        'quiz.Question', on_delete=models.CASCADE, null=True, blank=True, related_name='tagging',
+    )
+    mock_item = models.OneToOneField(
+        'quiz.MockTestItem', on_delete=models.CASCADE, null=True, blank=True, related_name='tagging',
+    )
+    primary_node = models.ForeignKey(
+        SyllabusNode, on_delete=models.SET_NULL, null=True, blank=True, related_name='primary_items',
+    )
+    secondary_nodes = models.ManyToManyField(SyllabusNode, blank=True, related_name='secondary_items')
+    thinking_level = models.CharField(max_length=30, blank=True, default='')
+    special_format = models.CharField(max_length=30, blank=True, default='')
+    difficulty_prior = models.CharField(max_length=10, blank=True, default='')
+    est_solve_seconds = models.PositiveIntegerField(null=True, blank=True)
+    confidence = models.FloatField(default=0.0)
+    review_status = models.CharField(max_length=15, choices=REVIEW_CHOICES, default=REVIEW_AUTO)
+    review_reasons = models.JSONField(default=list, blank=True)
+    proposed_subtopic = models.CharField(max_length=300, blank=True, default='')
+    source = models.CharField(max_length=15, choices=SOURCE_CHOICES, default='llm_tagger')
+    tagger_version = models.CharField(max_length=120, blank=True, default='')
+    taxonomy_version = models.CharField(max_length=20, blank=True, default='')
+    tree_version = models.CharField(max_length=64, blank=True, default='')
+    raw = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        verbose_name = 'Item Tagging'
+        verbose_name_plural = 'Item Taggings'
+        constraints = [_exactly_one_item('itemtagging_exactly_one_item')]
+        indexes = [models.Index(fields=['tenant', 'review_status'])]
+
+    def __str__(self):
+        return f'tagging {self.question_id or self.mock_item_id}'
+
+
+class ItemSkillTag(TimeStampedModel):
+    """One skill an item exercises, core (weight 1.0) or supporting (0.5)."""
+
+    ROLE_CORE = 'core'
+    ROLE_SUPPORTING = 'supporting'
+    ROLE_CHOICES = [(ROLE_CORE, 'Core'), (ROLE_SUPPORTING, 'Supporting')]
+
+    question = models.ForeignKey(
+        'quiz.Question', on_delete=models.CASCADE, null=True, blank=True, related_name='skill_tags',
+    )
+    mock_item = models.ForeignKey(
+        'quiz.MockTestItem', on_delete=models.CASCADE, null=True, blank=True, related_name='skill_tags',
+    )
+    skill = models.ForeignKey(TagDefinition, on_delete=models.PROTECT, related_name='item_tags')
+    role = models.CharField(max_length=12, choices=ROLE_CHOICES, default=ROLE_SUPPORTING)
+    reason = models.CharField(max_length=200, blank=True, default='')
+    source = models.CharField(max_length=15, choices=ItemTagging.SOURCE_CHOICES, default='llm_tagger')
+
+    class Meta:
+        verbose_name = 'Item Skill Tag'
+        verbose_name_plural = 'Item Skill Tags'
+        constraints = [
+            _exactly_one_item('itemskilltag_exactly_one_item'),
+            models.UniqueConstraint(
+                fields=['skill', 'question'], condition=Q(question__isnull=False),
+                name='uniq_skilltag_question',
+            ),
+            models.UniqueConstraint(
+                fields=['skill', 'mock_item'], condition=Q(mock_item__isnull=False),
+                name='uniq_skilltag_mock_item',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.skill_id} on {self.question_id or self.mock_item_id}'
