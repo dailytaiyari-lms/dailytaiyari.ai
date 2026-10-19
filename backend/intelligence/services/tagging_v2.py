@@ -269,6 +269,9 @@ def _apply_tag(result, entry, context, allowed, located):
         reasons.add('proposed_subtopic')
 
     confidence = _confidence(entry.get('confidence'))
+    # topic_key is only reassigned when there is a primary; otherwise it stays the
+    # hinted/located topic (nothing persists a topic without a subtopic, and
+    # blind evaluation scores topic accuracy from it).
     if primary:
         result.topic_key = allowed[primary]
         if located.get('located') and allowed[primary] != located['topic_key']:
@@ -301,8 +304,9 @@ def tag_payloads(context, payloads, *, call, cache=None):
             results[pid].topic_key = p['topic_hint']
             continue
         cached = cache.get('locate', pid)
-        if cached is not None and _locate(cached, topic_keys):
-            located[pid] = _locate(cached, topic_keys)
+        found = _locate(cached, topic_keys) if cached is not None else None
+        if found:
+            located[pid] = found
             results[pid].topic_key = located[pid]['topic_key']
             results[pid].raw['locate'] = cached
         else:
@@ -350,7 +354,6 @@ def tag_payloads(context, payloads, *, call, cache=None):
             prompt_topics = [topic_key] + sorted(
                 {key for p in batch for key in located[str(p['id'])]['also']} - {topic_key})
             system, user = build_tag_prompt(context, prompt_topics, batch)
-            allowed = allowed_for(prompt_topics)
             entries, error = _ask(call, system, user)
             for p in batch:
                 pid = str(p['id'])
@@ -360,5 +363,6 @@ def tag_payloads(context, payloads, *, call, cache=None):
                     continue
                 results[pid].raw['tag'] = entry
                 cache.put('tag', pid, entry)
-                _apply_tag(results[pid], entry, context, allowed, located[pid])
+                _apply_tag(results[pid], entry, context,
+                           allowed_for([topic_key] + located[pid]['also']), located[pid])
     return [results[str(p['id'])] for p in payloads]

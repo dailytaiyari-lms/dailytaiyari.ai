@@ -6,7 +6,7 @@ from django.test import SimpleTestCase
 
 from coursegen.generation import GenerationError
 from intelligence.services import tagging_v2
-from intelligence.services.tagging_v2 import LOCATE_MARKER, TAG_MARKER
+from intelligence.services.tagging_v2 import LOCATE_MARKER
 
 LAWS = 'mini.physics.mechanics.laws_of_motion'
 WORK = 'mini.physics.mechanics.work_energy'
@@ -148,6 +148,8 @@ class TagPayloadsTests(SimpleTestCase):
             context(), [payload('q1', hint=LAWS), payload('q2', hint=LAWS)], call=call)
         self.assertEqual((results[0].primary_subtopic, results[0].secondary_subtopics), ('', []))
         self.assertIn('invalid_key', results[0].review_reasons)
+        self.assertEqual(results[0].topic_key, LAWS)  # hinted topic is kept
+        self.assertIs(results[0].needs_review, True)
         self.assertEqual(results[1].proposed_subtopic, 'Pseudo forces')
         self.assertEqual(results[1].review_reasons, ['proposed_subtopic'])
 
@@ -201,3 +203,29 @@ class TagPayloadsTests(SimpleTestCase):
         self.assertEqual(tagging_v2.cognitive_projection('multi_concept'), 'multi_concept')
         self.assertEqual(tagging_v2.cognitive_projection('analytical'), 'application')
         self.assertEqual(tagging_v2.cognitive_projection(''), '')
+
+    def test_subtopics_validated_per_item_not_per_batch(self):
+        call = FakeCall(
+            locate={'a': {'topic_key': LAWS, 'also_topic_keys': [WORK], 'confidence': 0.9},
+                    'b': {'topic_key': LAWS, 'also_topic_keys': [], 'confidence': 0.9}},
+            tag={'a': tag_entry(secondary_subtopics=[POWER]),
+                 'b': tag_entry(secondary_subtopics=[POWER])},
+        )
+        a, b = tagging_v2.tag_payloads(context(), [payload('a'), payload('b')], call=call)
+        self.assertEqual(len([c for c in call.calls if c[0] == 'tag']), 1)  # one shared batch
+        self.assertEqual(a.secondary_subtopics, [POWER])
+        self.assertEqual(b.secondary_subtopics, [])
+        self.assertIn('invalid_key', b.review_reasons)
+        self.assertNotIn('invalid_key', a.review_reasons)
+
+    def test_unparseable_reply_is_an_error(self):
+        [result] = tagging_v2.tag_payloads(
+            context(), [payload('q1', hint=LAWS)], call=lambda system, user: 'not json')
+        self.assertEqual(result.error, 'unparseable_reply')
+
+    def test_hinted_item_never_gets_stage_disagreement(self):
+        call = FakeCall(tag={'q1': tag_entry(primary_subtopic=POWER, secondary_subtopics=[])})
+        [result] = tagging_v2.tag_payloads(context(), [payload('q1', hint=LAWS)], call=call)
+        self.assertNotIn('stage_disagreement', result.review_reasons)
+        self.assertEqual(result.primary_subtopic, '')  # POWER is outside the hinted topic
+        self.assertEqual(result.topic_key, LAWS)
