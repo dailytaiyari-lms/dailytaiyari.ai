@@ -21,6 +21,8 @@ THRESHOLDS = {
     'slip_speed_max': 2.5,
     'stats_min_n': 20,              # ItemStats median trusted from this many timings
     'near_threshold_band': 0.2,     # default-usual call within 20% of a cut → low
+    'correct_score': 0.5,           # score_fraction at or above this counts as correct
+    'slip_rel_tolerance': 1e-9,     # relative floor on the numeric slip-match tolerance
 }
 
 # Seconds a question usually takes, until ItemStats has enough timings.
@@ -37,6 +39,7 @@ DEFAULT_USUAL_S = {
 }
 TIMELESS_TYPES = {'subjective', 'coding'}   # time rules never apply
 MCQ_TYPES = {'mcq', 'mcq_multi', 'true_false'}
+MASTERY_CONFIDENT = {'medium', 'high'}      # prior-mastery confidences the rules trust
 
 # Mastery evidence multiplier by final label (services/state.py).
 LABEL_WEIGHTS = {

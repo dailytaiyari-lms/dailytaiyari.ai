@@ -174,3 +174,40 @@ class ReconcileTests(SimpleTestCase):
 
     def test_no_report(self):
         self.assertEqual(reconcile('unclear', 'low', [], '', False), 'unclear')
+
+
+class FixRound1Tests(SimpleTestCase):
+    def test_timeless_ignores_stats(self):
+        self.assertEqual(usual_seconds(ItemFacts(item_type='subjective', usual_s=300.0)),
+                         (None, 'none'))
+        d = classify(item(item_type='subjective', usual_s=300.0), timing(10.0), HOUR)
+        self.assertNotEqual(d.label, 'guess')
+        self.assertNotIn('too_fast', d.flags)
+
+    def test_mastery_slip_near_threshold_downgrades(self):
+        facts = item(prior_mastery=0.85, prior_confidence='high')
+        d = classify(facts, timing(36.0), HOUR)
+        self.assertEqual((d.label, d.confidence), ('careless_slip', 'low'))
+        d = classify(facts, timing(60.0), HOUR)
+        self.assertEqual((d.label, d.confidence), ('careless_slip', 'medium'))
+
+    def test_unanswered_short_rule_near_threshold_downgrades(self):
+        window = WindowFacts(duration_s=3600, elapsed_s=3600, timed_out=True)
+        t = timing(29.0, first_enter_at_s=1000.0, final_answer_at_s=None)
+        d = classify(item(answered=False), t, window)
+        self.assertEqual((d.label, d.confidence), ('time_pressure', 'low'))
+
+    def test_slip_tolerance_scales_with_candidate(self):
+        self.assertFalse(slip_match(0.3, 5.0, 0.5))
+        self.assertFalse(slip_match(0.01, 9.81, 0.01))
+        self.assertFalse(slip_match(-0.005, 9.81, 0.01))
+
+    def test_zero_visit_answered_is_no_timeline(self):
+        d = classify(item(), TimingFacts(), HOUR)
+        self.assertNotEqual(d.label, 'guess')
+        self.assertIn('no_timeline', [e['code'] for e in d.evidence])
+
+    def test_time_left_metric_clamped(self):
+        d = classify(item(), timing(30.0, final_answer_at_s=3700.0), HOUR)
+        self.assertEqual(d.metrics['time_left_s'], 0.0)
+        self.assertIn('last_minute', d.flags)

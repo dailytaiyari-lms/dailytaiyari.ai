@@ -9,7 +9,7 @@ import math
 from dataclasses import dataclass, field
 
 from intelligence.diagnosis_config import (
-    DEFAULT_USUAL_S, MCQ_TYPES, SELF_REPORT_LABEL, THRESHOLDS as T, TIMELESS_TYPES,
+    DEFAULT_USUAL_S, MASTERY_CONFIDENT, MCQ_TYPES, SELF_REPORT_LABEL, THRESHOLDS as T, TIMELESS_TYPES,
 )
 
 
@@ -58,10 +58,10 @@ class Diagnosis:
 
 def usual_seconds(facts):
     """(seconds this item usually takes, where that number came from)."""
-    if facts.usual_s:
-        return float(facts.usual_s), 'stats'
     if facts.item_type in TIMELESS_TYPES:
         return None, 'none'
+    if facts.usual_s:
+        return float(facts.usual_s), 'stats'
     table = DEFAULT_USUAL_S.get(facts.item_type, DEFAULT_USUAL_S['mcq'])
     return table.get(facts.difficulty or 'medium', table['medium']), 'default'
 
@@ -83,8 +83,10 @@ def slip_match(value, correct, tolerance):
         rounded = _round_sig(correct, digits)
         if rounded != correct:
             candidates.append(rounded)
+    # the item tolerance is absolute on the correct value; scale it per candidate
     return any(
-        abs(value - candidate) <= max(abs(tolerance), abs(candidate) * 1e-9)
+        abs(value - candidate) <= max(abs(tolerance) * abs(candidate / correct),
+                                      abs(candidate) * T['slip_rel_tolerance'])
         for candidate in candidates
     )
 
@@ -94,7 +96,7 @@ def _r(value):
 
 
 def _mastery_known(facts):
-    return facts.prior_mastery is not None and facts.prior_confidence in ('medium', 'high')
+    return facts.prior_mastery is not None and facts.prior_confidence in MASTERY_CONFIDENT
 
 
 def _near_threshold(rel, usual):
@@ -102,14 +104,17 @@ def _near_threshold(rel, usual):
         max(T['too_fast_floor_s'] / usual, T['too_fast_ratio']),
         T['too_long_ratio'],
         T['rushed_ratio'],
+        T['slip_speed_min'],
+        T['slip_speed_max'],
+        T['unanswered_short_ratio'],
     )
     return any(abs(rel - cut) <= T['near_threshold_band'] * cut for cut in cuts)
 
 
-def _label(facts, timing, window, flags, rel, zone):
+def _label(facts, timing, window, flags, rel, zone, source):
     """(label, confidence, decided_by_time) — first matching rule wins."""
     has = set(flags).__contains__
-    fast_confidence = 'high' if facts.usual_s else 'medium'
+    fast_confidence = 'high' if source == 'stats' else 'medium'
 
     if facts.pending_grade:
         return 'unclear', 'low', False
@@ -132,7 +137,7 @@ def _label(facts, timing, window, flags, rel, zone):
                 return 'time_pressure', 'medium', True
         return 'skipped', 'medium', False
 
-    if facts.score_fraction >= 0.5:
+    if facts.score_fraction >= T['correct_score']:
         if facts.item_type in MCQ_TYPES and has('too_fast'):
             return 'correct_lucky', fast_confidence, True
         if has('too_long'):
@@ -153,7 +158,7 @@ def _label(facts, timing, window, flags, rel, zone):
     if strong and has('too_long'):
         return 'unclear', 'low', False   # strong on paper, yet struggled: conflict
     if strong and (rel is None or T['slip_speed_min'] <= rel <= T['slip_speed_max']):
-        return 'careless_slip', 'medium', False
+        return 'careless_slip', 'medium', rel is not None
     if (known and facts.prior_mastery < T['gap_mastery']) or has('misconception_pick'):
         return 'concept_gap', 'medium', False
     if has('too_long'):
@@ -164,6 +169,8 @@ def _label(facts, timing, window, flags, rel, zone):
 def classify(facts, timing, window):
     """Facts → Diagnosis. ``timing`` is None when there is no usable timeline."""
     flags, evidence = [], []
+    if facts.answered and timing is not None and timing.visits == 0:
+        timing = None   # answered but never on screen: lost events, not a 0s guess
     usual, source = usual_seconds(facts)
     metrics = {'usual_s': usual, 'usual_source': source}
     zone = None
@@ -193,7 +200,7 @@ def classify(facts, timing, window):
                 flag('too_long', f'{timing.active_s:.0f}s on screen; usually {usual:.0f}s')
         if zone is not None and timing.final_answer_at_s is not None:
             time_left = window.duration_s - timing.final_answer_at_s
-            metrics['time_left_s'] = _r(time_left)
+            metrics['time_left_s'] = _r(max(0.0, time_left))
             if time_left <= zone:
                 flag('last_minute', f'answered with {max(0.0, time_left):.0f}s left')
                 if rel is not None and rel < T['rushed_ratio']:
@@ -201,7 +208,7 @@ def classify(facts, timing, window):
         graded = timing.answer_correctness
         if facts.answered and len(graded) >= 2:
             earlier = graded[:-1]
-            final_correct = facts.score_fraction >= 0.5
+            final_correct = facts.score_fraction >= T['correct_score']
             if not final_correct and any(earlier):
                 flag('right_to_wrong', 'changed a correct answer to a wrong one')
             if final_correct and not all(earlier):
@@ -214,7 +221,7 @@ def classify(facts, timing, window):
             if third >= 3:
                 flag('late_third', 'answered in the last third of the attempt')
 
-    wrong = facts.answered and facts.score_fraction < 0.5 and not facts.pending_grade
+    wrong = facts.answered and facts.score_fraction < T['correct_score'] and not facts.pending_grade
     if wrong and slip_match(facts.numeric_value, facts.numeric_correct, facts.numeric_tolerance):
         flag('slip_match', f'{facts.numeric_value:g} vs {facts.numeric_correct:g}')
     if wrong and facts.misconception_pick:
@@ -224,7 +231,7 @@ def classify(facts, timing, window):
         evidence.append({'code': 'prior_mastery',
                          'detail': f'{facts.prior_mastery:.2f} ({facts.prior_confidence})'})
 
-    label, confidence, by_time = _label(facts, timing, window, flags, rel, zone)
+    label, confidence, by_time = _label(facts, timing, window, flags, rel, zone, source)
     if by_time and confidence != 'low' and source == 'default' and rel is not None \
             and _near_threshold(rel, usual):
         confidence = 'low'
