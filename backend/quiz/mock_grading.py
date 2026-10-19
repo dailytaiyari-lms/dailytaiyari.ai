@@ -315,6 +315,7 @@ def _bank_review(answer):
         sel_idx = int(answer.selected_option)
     return {
         'kind': 'bank',
+        'ref_id': str(answer.question_id),
         'item_type': q.question_type,
         'question_text': q.question_text,
         'question_html': getattr(q, 'question_html', '') or '',
@@ -340,6 +341,7 @@ def _item_review(ans):
     item = ans.item
     data = {
         'kind': 'item',
+        'ref_id': str(ans.item_id),
         'item_type': item.item_type,
         'question_text': item.question_text,
         'question_html': item.question_html or '',

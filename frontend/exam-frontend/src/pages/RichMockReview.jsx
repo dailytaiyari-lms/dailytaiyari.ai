@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { mockTestBuilderService } from '../services/mockTestBuilderService'
 import MathRenderer from '../components/chat/MathRenderer'
+import WhatHappened, { useSelfReports } from '../components/review/WhatHappened'
 
 export default function RichMockReview() {
   const { attemptId } = useParams()
@@ -17,6 +18,8 @@ export default function RichMockReview() {
     queryKey: ['richReview', attemptId],
     queryFn: () => mockTestBuilderService.richReview(attemptId),
   })
+
+  const selfReports = useSelfReports('mock', attemptId)
 
   const { data: lb } = useQuery({
     queryKey: ['richReviewLb', data?.mock_test_id],
@@ -78,7 +81,7 @@ export default function RichMockReview() {
 
       {tab === 'review' ? (
         <div className="space-y-4">
-          {data.questions.map((q, i) => <ReviewCard key={i} q={q} index={i} />)}
+          {data.questions.map((q, i) => <ReviewCard key={i} q={q} index={i} attemptId={attemptId} selfReports={selfReports} />)}
         </div>
       ) : (
         <LeaderboardTable lb={lb} />
@@ -94,7 +97,7 @@ const Stat = ({ label, value }) => (
   </div>
 )
 
-function ReviewCard({ q, index }) {
+function ReviewCard({ q, index, attemptId, selfReports }) {
   const pending = q.needs_manual_grading
   const correct = q.is_correct
   const TypeIcon = q.item_type === 'coding' ? Code2 : q.item_type === 'subjective' ? FileText : HelpCircle
@@ -171,6 +174,17 @@ function ReviewCard({ q, index }) {
           <summary className="cursor-pointer text-surface-500 font-medium">Explanation</summary>
           <div className="mt-1 text-surface-600 dark:text-surface-300"><MathRenderer content={q.explanation} className="prose-sm" /></div>
         </details>
+      )}
+
+      {selfReports.enabled && !pending && !correct && q.ref_id &&
+        !selfReports.notSeen.has(`${q.kind}:${q.ref_id}`) && (
+        <WhatHappened
+          attemptKind="mock"
+          attemptId={attemptId}
+          itemKind={q.kind}
+          itemId={q.ref_id}
+          initial={selfReports.reports[`${q.kind}:${q.ref_id}`]}
+        />
       )}
     </div>
   )

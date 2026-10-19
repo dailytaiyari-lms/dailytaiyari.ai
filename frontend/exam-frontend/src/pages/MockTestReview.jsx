@@ -5,6 +5,7 @@ import { useQuery, useMutation } from '@tanstack/react-query'
 import { quizService } from '../services/quizService'
 import Loading from '../components/common/Loading'
 import toast from 'react-hot-toast'
+import WhatHappened, { useSelfReports } from '../components/review/WhatHappened'
 import {
   XCircle,
   HelpCircle,
@@ -47,6 +48,8 @@ const MockTestReview = () => {
     queryKey: ['mockAttemptReview', attemptId],
     queryFn: () => quizService.getMockAttemptReview(attemptId),
   })
+
+  const selfReports = useSelfReports('mock', attemptId)
 
   const reportMutation = useMutation({
     mutationFn: (data) => quizService.reportQuestion(data),
@@ -246,6 +249,9 @@ const MockTestReview = () => {
             const questionStatus = item.status
             const isCorrect = questionStatus === 'correct'
             const isSkipped = questionStatus === 'skipped'
+            const reviewKey = `bank:${question?.id}`
+            const showWhatHappened = selfReports.enabled && !isCorrect && question?.id &&
+              !selfReports.notSeen.has(reviewKey)
             const selectedOption = userAnswer?.selected_option
 
             let borderClass = ''
@@ -399,6 +405,15 @@ const MockTestReview = () => {
                       </span>
                     )}
                   </div>
+                )}
+                {showWhatHappened && (
+                  <WhatHappened
+                    attemptKind="mock"
+                    attemptId={attemptId}
+                    itemKind="bank"
+                    itemId={question.id}
+                    initial={selfReports.reports[reviewKey]}
+                  />
                 )}
               </motion.div>
             )

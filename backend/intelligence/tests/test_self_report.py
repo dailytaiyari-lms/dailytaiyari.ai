@@ -262,3 +262,15 @@ class CalibrationTests(DiagnosisTestCase):
         client.credentials(HTTP_AUTHORIZATION=f'Bearer {RefreshToken.for_user(self.user).access_token}')
         response = client.get(CALIBRATION, HTTP_X_TENANT_ID=str(self.tenant.id))
         self.assertEqual(response.status_code, 403)
+
+
+class RichReviewRefTests(DiagnosisTestCase):
+    def test_review_entries_carry_ref_ids(self):
+        from quiz.mock_grading import build_review
+
+        item = self.make_item()
+        attempt = self.finish(self.make_attempt())
+        self.answer(attempt, item, selected=[1])
+        entries = build_review(attempt)
+        self.assertEqual(entries[0]['kind'], 'item')
+        self.assertEqual(entries[0]['ref_id'], str(item.id))
