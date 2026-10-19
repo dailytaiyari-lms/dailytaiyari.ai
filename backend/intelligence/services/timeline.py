@@ -119,9 +119,11 @@ def window_start_s(sessions, clock):
     return valid[0][0] if valid else 0.0
 
 
-def _fold_session(events, base_s, out, known_keys):
+def _fold_session(events, base_s, out, known_keys, end_ms=None):
     """Fold one session's cleaned events into ``out`` (key → KeyTimeline).
-    ``base_s`` is this session's start relative to the window start."""
+    ``base_s`` is this session's start relative to the window start. A visit
+    still open at the end closes at ``max(last event, end_ms)`` — the final
+    pre-submit snapshot has an ``e`` but no ``l`` for the question on screen."""
     current = None        # key on screen
     entered = None        # t (ms) the current visit began
     visit_hidden = 0.0    # hidden ms already closed inside this visit
@@ -183,7 +185,7 @@ def _fold_session(events, base_s, out, known_keys):
             kt.answers.append((at_s, value if code == 'a' else None))
             if kt.final_answer_at_s is None or at_s > kt.final_answer_at_s:
                 kt.final_answer_at_s = at_s
-    close(last_t)
+    close(max(last_t, end_ms) if _valid_number(end_ms) else last_t)
 
 
 def reduce_sessions(sessions, *, clock, known_keys=None):
@@ -200,7 +202,8 @@ def reduce_sessions(sessions, *, clock, known_keys=None):
         except TimelineError:
             logger.warning('timeline: skipping a corrupt stored session')
             continue
-        _fold_session(events, offset - start, out, known_keys)
+        _fold_session(events, offset - start, out, known_keys,
+                      end_ms=session.get('elapsed_ms'))
     for kt in out.values():
         kt.answers.sort(key=lambda answer: answer[0])  # stable: ties keep order
     return out

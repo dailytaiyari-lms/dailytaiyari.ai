@@ -8,12 +8,24 @@ import { timelineService } from '../services/timelineService'
  *
  * Event tuples: [t_ms, code, key, value?] — e/l enter/leave a question,
  * h/s tab hidden/shown, a answer set (value = digest), c answer cleared.
- * Never throws and never blocks the attempt: sync failures retry next tick.
+ * Never throws and never blocks the attempt: network/5xx failures retry next
+ * tick; a 4xx (the server will never accept this session) stops syncing it.
+ *
+ * Budget: the server rejects >5000 events or a body >256 KB, so the hook
+ * counts events and an estimate of their serialized size and drops anything
+ * past MAX_EVENTS / MAX_EVENT_BYTES (answers and clears included), marking the
+ * session `truncated`. The server then treats items that were answered but
+ * never seen in the timeline as having no timing.
  */
 const SYNC_MS = 30000
 const MAX_EVENTS = 5000
-const COALESCE_MS = 1500        // rapid re-answers (typing, toggling) collapse
+const MAX_EVENT_BYTES = 200000  // leaves headroom for the envelope under the 256 KB cap
+const COALESCE_MS = 1500        // rapid re-answers (toggling) collapse
+const TYPING_COALESCE_MS = 10000 // free-text / code keystrokes collapse harder
 const KEEPALIVE_LIMIT = 60000   // fetch keepalive bodies must stay small
+
+const typingKind = (digest) =>
+  (digest && typeof digest === 'object') ? (('txt' in digest) ? 'txt' : (('code' in digest) ? 'code' : null)) : null
 
 const newSessionId = () =>
   (typeof crypto !== 'undefined' && crypto.randomUUID)
@@ -25,7 +37,8 @@ export default function useResponseTimeline({ attemptKind, attemptId, parentId, 
   const targetRef = useRef({})
   targetRef.current = { attemptKind, attemptId, parentId, enabled }
 
-  const sessionRef = useRef(null)     // { id, t0, events, truncated, dirty }
+  const sessionRef = useRef(null)     // { id, t0, events, bytes, truncated, dirty, dead }
+  const inflightRef = useRef(Promise.resolve()) // tail of the serialized sync chain
   const currentRef = useRef(null)     // key on screen
   const visibleSinceRef = useRef(null) // perf time the current visible stretch began
   const activeMsRef = useRef({})      // key → visible ms so far
@@ -34,7 +47,7 @@ export default function useResponseTimeline({ attemptKind, attemptId, parentId, 
 
   const session = () => {
     if (!sessionRef.current) {
-      sessionRef.current = { id: newSessionId(), t0: now(), events: [], truncated: false, dirty: false }
+      sessionRef.current = { id: newSessionId(), t0: now(), events: [], bytes: 0, truncated: false, dirty: false, dead: false }
     }
     return sessionRef.current
   }
@@ -43,17 +56,29 @@ export default function useResponseTimeline({ attemptKind, attemptId, parentId, 
     const s = session()
     const t = Math.round(now() - s.t0)
     const last = s.events[s.events.length - 1]
-    if (code === 'a' && last && last[1] === 'a' && last[2] === key && t - last[0] < COALESCE_MS) {
-      last[0] = t
-      last[3] = value
-      s.dirty = true
+    if (code === 'a' && last && last[1] === 'a' && last[2] === key) {
+      const kind = typingKind(value)
+      const windowMs = (kind && kind === typingKind(last[3])) ? TYPING_COALESCE_MS : COALESCE_MS
+      if (t - last[0] < windowMs) {
+        const before = JSON.stringify(last).length
+        last[0] = t
+        last[3] = value
+        s.bytes += JSON.stringify(last).length - before
+        s.dirty = true
+        return
+      }
+    }
+    const event = value === undefined ? [t, code, key] : [t, code, key, value]
+    const size = JSON.stringify(event).length + 1
+    if (s.events.length >= MAX_EVENTS || s.bytes + size > MAX_EVENT_BYTES) {
+      if (!s.truncated) {
+        s.truncated = true
+        s.dirty = true // let the truncated flag reach the server once
+      }
       return
     }
-    if (s.events.length >= MAX_EVENTS && code !== 'a' && code !== 'c') {
-      s.truncated = true
-      return
-    }
-    s.events.push(value === undefined ? [t, code, key] : [t, code, key, value])
+    s.events.push(event)
+    s.bytes += size
     s.dirty = true
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -83,27 +108,42 @@ export default function useResponseTimeline({ attemptKind, attemptId, parentId, 
     }
   }
 
-  const flush = useCallback(async () => {
-    const s = sessionRef.current
-    if (!targetRef.current.enabled || !s || !s.dirty) return
-    s.dirty = false
-    try {
-      await timelineService.sync(payload())
-    } catch {
-      s.dirty = true
+  // Only network errors, 5xx, 401 (token refresh) and 429 can succeed later.
+  const syncFailed = (s, error) => {
+    const status = error?.response?.status
+    if (!error?.response || status >= 500 || status === 401 || status === 429) s.dirty = true
+    else s.dead = true // 400/403/404/409/413…: this session will never be accepted
+  }
+
+  // Syncs run one at a time, each building its payload when it starts, so an
+  // older snapshot can never land after a newer one and an awaited flush()
+  // sends the latest state after any in-flight sync.
+  const flush = useCallback(() => {
+    const run = async () => {
+      const s = sessionRef.current
+      if (!targetRef.current.enabled || !s || s.dead || !s.dirty) return
+      s.dirty = false
+      try {
+        await timelineService.sync(payload())
+      } catch (error) {
+        syncFailed(s, error)
+      }
     }
+    const next = inflightRef.current.then(run)
+    inflightRef.current = next
+    return next
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const flushOnHide = () => {
     const s = sessionRef.current
-    if (!targetRef.current.enabled || !s || !s.dirty) return
-    const body = payload()
-    s.dirty = false
-    if (JSON.stringify(body).length < KEEPALIVE_LIMIT) {
-      timelineService.syncOnUnload(body)
+    if (!targetRef.current.enabled || !s || s.dead || !s.dirty) return
+    const json = JSON.stringify(payload())
+    if (json.length < KEEPALIVE_LIMIT) {
+      s.dirty = false
+      timelineService.syncOnUnload(json) // fire-and-forget keepalive fetch
     } else {
-      timelineService.sync(body).catch(() => { s.dirty = true })
+      flush()
     }
   }
 

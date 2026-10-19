@@ -129,6 +129,7 @@ def save_session(*, kind, student, session_id, elapsed_ms, events, truncated,
             sessions = {}
         sessions[session_id] = {
             'offset_ms': round(offset_ms, 1),
+            'elapsed_ms': elapsed,
             'events': stored_events,
             'received_at': now.isoformat(),
             'truncated': bool(truncated),

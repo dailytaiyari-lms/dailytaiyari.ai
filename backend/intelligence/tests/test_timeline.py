@@ -83,6 +83,30 @@ class ReduceTests(SimpleTestCase):
         self.assertEqual(lines['bank:b'].answers, [(6.0, {'sel': [1]})])
         self.assertAlmostEqual(lines['bank:b'].final_answer_at_s, 6.0)
 
+    def test_open_visit_closes_at_the_session_elapsed_time(self):
+        session = {'offset_ms': 0, 'elapsed_ms': 300000, 'events': [[0, 'e', 'bank:a']]}
+        line = reduce_sessions({'s': session}, clock='server')['bank:a']
+        self.assertAlmostEqual(line.active_s, 300.0)
+
+    def test_open_hidden_interval_counts_up_to_the_session_end(self):
+        session = {'offset_ms': 0, 'elapsed_ms': 300000,
+                   'events': [[0, 'e', 'bank:a'], [100000, 'h', None]]}
+        line = reduce_sessions({'s': session}, clock='server')['bank:a']
+        self.assertAlmostEqual(line.active_s, 100.0)
+        self.assertAlmostEqual(line.hidden_s, 200.0)
+
+    def test_session_without_elapsed_keeps_closing_at_the_last_event(self):
+        session = {'offset_ms': 0, 'events': [[0, 'e', 'bank:a'], [100000, 'h', None]]}
+        line = reduce_sessions({'s': session}, clock='server')['bank:a']
+        self.assertAlmostEqual(line.active_s, 100.0)
+        self.assertAlmostEqual(line.hidden_s, 0.0)
+
+    def test_bad_elapsed_is_ignored(self):
+        for bad in ('x', -5, float('nan'), True):
+            session = {'offset_ms': 0, 'elapsed_ms': bad, 'events': [[0, 'e', 'bank:a'], [2000, 'a', 'bank:a', {'sel': [1]}]]}
+            line = reduce_sessions({'s': session}, clock='server')['bank:a']
+            self.assertAlmostEqual(line.active_s, 2.0, msg=repr(bad))
+
     def test_clear_is_recorded_as_none(self):
         lines = one([[0, 'e', 'bank:a'], [1000, 'a', 'bank:a', {'sel': [0]}],
                      [2000, 'c', 'bank:a'], [3000, 'l', 'bank:a']])
@@ -193,6 +217,7 @@ class TimelineSyncTests(DiagnosisTestCase):
         self.assertEqual(row.student, self.student)
         offset = row.sessions['sess-1']['offset_ms']
         self.assertAlmostEqual(offset, 30 * 60 * 1000 - 1000, delta=5000)
+        self.assertEqual(row.sessions['sess-1']['elapsed_ms'], 1000.0)
 
     def test_resend_replaces_the_session(self):
         attempt = self.make_attempt()
@@ -220,6 +245,8 @@ class TimelineSyncTests(DiagnosisTestCase):
         attempt = QuizAttempt.objects.create(
             tenant=self.tenant, student=self.student, quiz=quiz, status='in_progress',
         )
+        QuizAttempt.objects.filter(pk=attempt.pk).update(
+            started_at=timezone.now() - timedelta(minutes=30))
         body = self.payload(attempt_kind='quiz', parent_id=str(quiz.id))
         self.assertEqual(self.post(body).status_code, 200)
         self.assertEqual(self.post({**body, 'session_id': 'sess-2'}).status_code, 200)
@@ -227,6 +254,9 @@ class TimelineSyncTests(DiagnosisTestCase):
         # the quiz timer is anchored to started_at, so it never restarts
         self.assertEqual(row.clock, 'server')
         self.assertEqual(sorted(row.sessions), ['sess-1', 'sess-2'])
+        # offset is anchored to the attempt's started_at (30 min ago - elapsed)
+        self.assertAlmostEqual(row.sessions['sess-1']['offset_ms'],
+                               30 * 60 * 1000 - 1000, delta=5000)
 
     def test_other_students_attempt_is_rejected(self):
         attempt = self.make_attempt(student=self.other_user.profile)

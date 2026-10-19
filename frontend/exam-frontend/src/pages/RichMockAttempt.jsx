@@ -200,8 +200,8 @@ export default function RichMockAttempt() {
   const answerDigest = (patch) => {
     if (patch.selected !== undefined) return { sel: (patch.selected || []).map(Number) }
     if (patch.numerical_answer !== undefined) return { num: String(patch.numerical_answer ?? '') }
-    if (patch.answer_text !== undefined) return { txt: (patch.answer_text || '').length }
-    if (patch.code !== undefined) return { code: (patch.code || '').length }
+    if (patch.answer_text !== undefined) return { txt: String(patch.answer_text || '').trim().length }
+    if (patch.code !== undefined) return { code: String(patch.code || '').trim().length }
     return null
   }
   const setAns = (patch) => {

@@ -18,7 +18,8 @@ export const timelineService = {
   // payload: { attempt_kind, attempt_id | parent_id, session_id, elapsed_ms, truncated, events }
   sync: (payload) => api.post(TIMELINE_URL, payload),
 
-  syncOnUnload: (payload) => {
+  // body: the already-serialized JSON payload string
+  syncOnUnload: (body) => {
     try {
       fetch(`${API_BASE_URL}${TIMELINE_URL}`, {
         method: 'POST',
@@ -28,7 +29,7 @@ export const timelineService = {
           ...(TENANT_ID ? { 'X-Tenant-ID': TENANT_ID } : {}),
           ...authHeaders(),
         },
-        body: JSON.stringify(payload),
+        body,
       }).catch(() => {})
     } catch {
       /* best effort */
