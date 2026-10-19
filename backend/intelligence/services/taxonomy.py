@@ -322,7 +322,15 @@ def sync_vocabulary(tags, file_sha256):
 
 
 def mark_subjects_stale(subject_ids):
-    """Flip tagged items of these subjects to 'stale' so the sweep re-tags them."""
+    """Flip tagged items of these subjects to 'stale' so the sweep re-tags them.
+
+    Mock items follow the v2 sweep's ownership rule (own subject, else the
+    topic's subject, else a single-subject test), applied per tenant.
+    """
+    from collections import defaultdict
+
+    from exams.models import Subject
+    from intelligence.services.tagging_sweep import v2_mock_item_filter  # lazy: avoids a cycle
     from quiz.models import MockTestItem, Question
 
     ids = []
@@ -333,6 +341,13 @@ def mark_subjects_stale(subject_ids):
             raise TaxonomyError([f'not a subject id: {raw!r}']) from exc
     marked = Question.objects.filter(subject_id__in=ids, tagging_status='tagged').update(
         tagging_status='stale')
-    marked += MockTestItem.objects.filter(subject_id__in=ids, tagging_status='tagged').update(
-        tagging_status='stale')
+    by_tenant = defaultdict(set)
+    for subject_id, tenant_id in Subject.objects.filter(id__in=ids).values_list('id', 'tenant_id'):
+        by_tenant[tenant_id].add(subject_id)
+    for tenant_id, tenant_subject_ids in by_tenant.items():
+        marked += (
+            MockTestItem.objects.filter(tenant_id=tenant_id, tagging_status='tagged')
+            .filter(v2_mock_item_filter(tenant_id, tenant_subject_ids))
+            .update(tagging_status='stale')
+        )
     return marked

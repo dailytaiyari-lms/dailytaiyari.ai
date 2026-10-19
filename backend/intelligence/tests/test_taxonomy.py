@@ -11,7 +11,7 @@ from intelligence.models import SkillPack, TagDefinition, TaxonomyRelease
 from intelligence.services import taxonomy
 from intelligence.services.taxonomy import TaxonomyError
 from intelligence.tests.taxonomy_fixtures import mini_tags, mini_tree
-from quiz.models import Question
+from quiz.models import MockTest, MockTestItem, Question
 
 
 def _entry(entries, key):
@@ -134,6 +134,36 @@ class SyncCommandTests(TestCase):
         call_command('sync_taxonomy', '--retag-subjects', str(subject.id), stdout=StringIO())
         question.refresh_from_db()
         self.assertEqual(question.tagging_status, 'stale')
+
+    def test_retag_subjects_uses_the_v2_mock_item_ownership_rule(self):
+        tenant = Tenant.objects.create(name='Retag Mock Academy', is_active=True)
+        course = Course.objects.create(tenant=tenant, name='C', code='retag-m', course_type='skill')
+        subject = Subject.objects.create(tenant=tenant, course=course, name='Python', code='python')
+        topic = Topic.objects.create(tenant=tenant, subject=subject, name='Loops', code='loops')
+        other_course = Course.objects.create(tenant=tenant, name='D', code='retag-d', course_type='skill')
+        other = Subject.objects.create(tenant=tenant, course=other_course, name='Java', code='java')
+        single = MockTest.objects.create(tenant=tenant, title='Python paper', duration_minutes=30,
+                                         total_marks=8)
+        single.courses.set([course])
+        elsewhere = MockTest.objects.create(tenant=tenant, title='Java paper', duration_minutes=30,
+                                            total_marks=4)
+        elsewhere.courses.set([other_course])
+
+        def item(test, **fields):
+            return MockTestItem.objects.create(tenant=tenant, mock_test=test, item_type='mcq',
+                                               question_text='What prints?', marks=4,
+                                               tagging_status='tagged', **fields)
+
+        by_topic = item(elsewhere, topic=topic)  # no subject; its topic is in the subject
+        by_test = item(single)  # no subject, no topic; a single-subject test
+        not_ours = item(elsewhere)
+        java = item(single, subject=other)
+        taxonomy.mark_subjects_stale([str(subject.id)])
+        statuses = {row.id: row.tagging_status for row in MockTestItem.objects.all()}
+        self.assertEqual(statuses[by_topic.id], 'stale')
+        self.assertEqual(statuses[by_test.id], 'stale')
+        self.assertEqual(statuses[not_ours.id], 'tagged')
+        self.assertEqual(statuses[java.id], 'tagged')
 
     def test_bad_subject_id_is_a_command_error(self):
         with self.assertRaises(CommandError):
