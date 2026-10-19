@@ -15,6 +15,9 @@ echo "Database is ready."
 echo "Running migrations..."
 python manage.py migrate --noinput
 
+echo "Loading the tagging vocabulary..."
+python manage.py sync_taxonomy
+
 echo "Collecting static files..."
 python manage.py collectstatic --noinput
 

@@ -128,10 +128,16 @@ docker compose restart web
 docker compose up -d --build web
 
 # 2c. Migration in the release:
-#     entrypoint.sh auto-runs migrate + collectstatic on web start,
-#     so a rebuild/restart applies them. To run manually:
+#     entrypoint.sh auto-runs migrate + sync_taxonomy + collectstatic on
+#     web start, so a rebuild/restart applies them. To run manually:
 docker compose exec -T web python manage.py migrate
+docker compose exec -T web python manage.py sync_taxonomy
 ```
+
+`sync_taxonomy` loads the question-tagging vocabulary
+(`intelligence/taxonomy/tags.yaml`) into the database. It is idempotent, so
+running it on every start is safe. Without it the tagging sweep skips v2 for
+subjects with a syllabus tree.
 
 Deploy **pre-prod from `main`** first; deploy **prod from `production`** only
 after promotion (see branching doc). The canonical, secret-aware runbook lives

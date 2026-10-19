@@ -335,7 +335,16 @@ def run_sweep(tenant, *, limit=200, call=None):
         SyllabusNode.objects.filter(tenant=tenant, level='topic', status='active')
         .values_list('subject_id', flat=True)
     )
-    v2 = tag_v2_for_tenant(tenant, treed, call or tenant_tagging_call(tenant), limit=limit) if treed else 0
+    if treed and taxonomy.current_release() is None:
+        # No vocabulary loaded (sync_taxonomy never ran): v2 cannot tag, but the
+        # treed subjects stay excluded from v1 so it never writes flat tags there.
+        logger.warning('tagging sweep: tenant %s has syllabus trees but no taxonomy release; '
+                       'skipping v2 (run manage.py sync_taxonomy)', tenant.id)
+        v2 = 0
+    elif treed:
+        v2 = tag_v2_for_tenant(tenant, treed, call or tenant_tagging_call(tenant), limit=limit)
+    else:
+        v2 = 0
     v1 = tagging_v1.run_tagging_for_tenant(
         tenant, limit=limit, exclude_subject_ids=treed, check_budget=False,
         exclude_mock_q=v2_mock_item_filter(tenant, treed) if treed else None,

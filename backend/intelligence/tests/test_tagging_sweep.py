@@ -12,6 +12,7 @@ from coursegen.generation import GenerationError
 from exams.models import Course, Subject, Topic
 from intelligence.models import (
     AITaggingResult, ConceptLink, CourseSyllabus, ItemSkillTag, ItemTagging, SyllabusNode, TagDefinition,
+    TaxonomyRelease,
 )
 from intelligence.services import llm, syllabus, tagging, tagging_sweep, taxonomy
 from intelligence.services.tagging_v2 import LOCATE_MARKER
@@ -230,6 +231,20 @@ class SweepTests(TestCase):
         self.assertEqual(set(kwargs['exclude_subject_ids']), {self.subject.id})
         self.assertFalse(kwargs['check_budget'])
         self.assertNotIn(chemistry.id, set(kwargs['exclude_subject_ids']))
+
+    def test_run_sweep_without_a_vocabulary_skips_v2_but_still_shields_treed_subjects(self):
+        TaxonomyRelease.objects.all().delete()
+        item = self._blind_item()
+        call = FakeCall(tag={str(self.question.id): tag_entry()})
+        with patched_tree(), patch.object(tagging_sweep.tagging_v1, 'run_tagging_for_tenant',
+                                          return_value=2) as v1, \
+                self.assertLogs('intelligence.services.tagging_sweep', 'WARNING'):
+            result = tagging_sweep.run_sweep(self.tenant, limit=50, call=call)
+        self.assertEqual(result, {'v2': 0, 'v1': 2})
+        self.assertEqual(call.calls, [])
+        kwargs = v1.call_args.kwargs
+        self.assertEqual(set(kwargs['exclude_subject_ids']), {self.subject.id})
+        self.assertNotIn(item, tagging.untagged_mock_items(self.tenant, exclude_mock_q=kwargs['exclude_mock_q']))
 
     def test_v1_selection_excludes_treed_subjects(self):
         self.assertIn(self.question, tagging.untagged_questions(self.tenant))
