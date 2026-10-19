@@ -1,0 +1,218 @@
+# Tag vocabulary for the v2 question tagger (decisions D1–D4, D10).
+#
+# Edit, then run `manage.py sync_taxonomy`:
+#   - change a label: display only, nothing is re-tagged; keys never change.
+#   - add a tag: run `sync_taxonomy --retag-subjects <ids>` for the subjects it affects.
+#   - change what a definition means: bump `version`, then re-tag.
+#   - remove a tag: set `active: false` (history is kept, it is no longer offered).
+# Skill keys are unique across `universal` and every pack.
+version: 1
+review_confidence_threshold: 0.6
+
+thinking_levels:   # exactly one per question: the highest it demands
+  - key: recall
+    label: Recall
+    definition: Remember a fact, definition, formula, unit or name.
+  - key: conceptual
+    label: Conceptual
+    definition: Explain or predict qualitatively; no calculation is needed.
+  - key: single_application
+    label: Single application
+    definition: Apply one concept or formula in a standard way.
+  - key: multi_concept
+    label: Multi-concept
+    definition: Must combine two or more subtopics to reach the answer.
+  - key: analytical
+    label: Analytical
+    definition: Unusual problem; needs insight, a trick, or building the approach.
+
+special_formats:
+  - key: assertion_reason
+    label: Assertion–reason
+    definition: An Assertion (A) and a Reason (R) are given; decide whether each is true and whether R correctly explains A.
+  - key: statement_pair
+    label: Two statements
+    definition: Two statements (Statement I and Statement II) are given; judge whether each one is true or false.
+  - key: match_list
+    label: Match the lists
+    definition: Items in List-I must be matched with items in List-II, and the option giving the correct matching is chosen.
+  - key: paragraph
+    label: Paragraph-based
+    definition: Several questions share one passage, data set or scenario that must be read first.
+  - key: matrix_match
+    label: Matrix match
+    definition: Each row item can match one or more column items, and every correct pairing must be marked.
+
+skills:
+  universal:
+    - key: formula_application
+      label: Formula application
+      definition: Select the right formula or standard result and substitute values into it correctly.
+    - key: numerical_computation
+      label: Numerical computation
+      definition: Carry out arithmetic accurately — fractions, powers, roots, logarithms, significant figures.
+    - key: algebraic_manipulation
+      label: Algebraic manipulation
+      definition: Rearrange, simplify, factorise or solve symbolic expressions and equations.
+    - key: derivation
+      label: Derivation
+      definition: Build a result step by step from first principles rather than recalling it.
+    - key: graph_interpretation
+      label: Graph interpretation
+      definition: Read or reason from a plotted graph — slopes, intercepts, areas, trends.
+    - key: diagram_interpretation
+      label: Diagram interpretation
+      definition: Extract the needed information from a figure, circuit, structure or set-up diagram.
+    - key: data_analysis
+      label: Data analysis
+      definition: Read tables or given data and draw quantitative conclusions from them.
+    - key: units_dimensions
+      label: Units and dimensions
+      definition: Work with units, unit conversions and dimensional analysis.
+    - key: approximation
+      label: Approximation
+      definition: Estimate, use limiting cases, or make justified approximations to reach the answer.
+    - key: case_analysis
+      label: Case analysis
+      definition: Split the problem into cases or conditions and handle each one.
+    - key: spatial_visualization
+      label: Spatial visualisation
+      definition: Picture shapes, orientations or arrangements in two or three dimensions.
+    - key: statement_evaluation
+      label: Statement evaluation
+      definition: Judge each of several given statements true or false, often to pick a combination.
+    - key: passage_comprehension
+      label: Passage comprehension
+      definition: Read and understand a passage or long description before answering.
+    - key: pattern_recognition
+      label: Pattern recognition
+      definition: Spot a pattern, symmetry, recurrence or periodicity that shortcuts the problem.
+
+  packs:
+    - key: physics
+      label: Physics
+      applies_to: [physics]
+      skills:
+        - key: free_body_diagram
+          label: Free-body diagram
+          definition: Identify every force on a body and resolve them to write the equations of motion.
+        - key: conservation_law_choice
+          label: Conservation law choice
+          definition: Decide which conservation law (energy, momentum, angular momentum, charge) applies and use it.
+        - key: vector_resolution
+          label: Vector resolution
+          definition: Resolve vectors into components and combine them.
+        - key: sign_convention
+          label: Sign convention
+          definition: Apply sign conventions correctly (optics, thermodynamics, circuits, directions).
+
+    - key: chemistry
+      label: Chemistry
+      applies_to: [chemistry]
+      skills:
+        - key: reaction_mechanism
+          label: Reaction mechanism
+          definition: Follow electron movement and intermediates to predict the products or steps of a reaction.
+        - key: named_reaction_reagent
+          label: Named reaction or reagent
+          definition: Recall what a named reaction or reagent does and the product it gives.
+        - key: nomenclature
+          label: Nomenclature
+          definition: Name compounds by IUPAC rules, or draw a structure from its name.
+        - key: stoichiometry
+          label: Stoichiometry
+          definition: Use mole ratios from balanced equations, including limiting reagent and yield.
+        - key: periodic_trend_reasoning
+          label: Periodic trend reasoning
+          definition: Predict or compare properties using periodic trends (size, ionisation energy, electronegativity).
+
+    - key: maths
+      label: Mathematics
+      applies_to: [mathematics, maths, math]
+      skills:
+        - key: calculus_technique
+          label: Calculus technique
+          definition: Choose and apply a differentiation, integration or limit technique (substitution, by parts, L'Hôpital).
+        - key: counting_combinatorics
+          label: Counting and combinatorics
+          definition: Count arrangements or selections systematically (permutations, combinations, inclusion–exclusion).
+        - key: coordinate_setup
+          label: Coordinate set-up
+          definition: Place the problem on axes, or choose a coordinate system that makes it tractable.
+        - key: inequality_reasoning
+          label: Inequality reasoning
+          definition: Solve or prove inequalities, including bounds and sign analysis.
+
+    - key: biology
+      label: Biology
+      applies_to: [biology, botany, zoology]
+      skills:
+        - key: classification
+          label: Classification
+          definition: Place organisms, structures or compounds into the correct group or category.
+        - key: process_sequencing
+          label: Process sequencing
+          definition: Order the steps of a biological process correctly.
+
+    - key: programming
+      label: Programming
+      applies_to: [programming, python, java, javascript, coding, dsa, data structures, algorithms, pygame, web development]
+      skills:
+        - key: code_tracing
+          label: Code tracing
+          definition: Run code mentally to find its output or the value of a variable.
+        - key: debugging
+          label: Debugging
+          definition: Find why code fails or gives a wrong result, and the fix.
+        - key: syntax_recall
+          label: Syntax recall
+          definition: Remember language syntax, keywords or built-in behaviour.
+        - key: algorithm_design
+          label: Algorithm design
+          definition: Choose or construct the steps of an algorithm for a task.
+        - key: complexity_analysis
+          label: Complexity analysis
+          definition: Work out the time or space complexity (Big-O) of code or an algorithm.
+        - key: data_structure_choice
+          label: Data structure choice
+          definition: Pick the data structure that fits the operations needed.
+        - key: edge_case_reasoning
+          label: Edge-case reasoning
+          definition: Spot the boundary or unusual inputs where code or logic breaks.
+        - key: api_library_usage
+          label: API and library usage
+          definition: Know how to use a specific library, framework or API correctly.
+
+    - key: aptitude
+      label: Aptitude
+      applies_to: [aptitude, quantitative aptitude, reasoning, logical reasoning, verbal ability]
+      skills:
+        - key: quantitative_shortcut
+          label: Quantitative shortcut
+          definition: Use a shortcut or trick (percentages, ratios, Vedic methods) instead of a long calculation.
+        - key: logical_deduction
+          label: Logical deduction
+          definition: Derive a conclusion from rules or premises (syllogisms, arrangements, puzzles).
+        - key: verbal_reasoning
+          label: Verbal reasoning
+          definition: Use vocabulary, grammar or reading inference to choose the answer.
+        - key: data_sufficiency
+          label: Data sufficiency
+          definition: Decide whether the given statements are enough to answer, without fully solving.
+
+    - key: ai_ml
+      label: AI and machine learning
+      applies_to: [machine learning, artificial intelligence, ai, ml, deep learning, data science, generative ai]
+      skills:
+        - key: model_selection
+          label: Model selection
+          definition: Choose a suitable model or algorithm for a task and justify it.
+        - key: metric_interpretation
+          label: Metric interpretation
+          definition: Read or choose evaluation metrics (accuracy, precision, recall, loss) correctly.
+        - key: data_preprocessing
+          label: Data preprocessing
+          definition: Prepare data — cleaning, encoding, scaling, splitting, avoiding leakage.
+        - key: prompt_design
+          label: Prompt design
+          definition: Write or improve prompts for language models to get the desired output.
