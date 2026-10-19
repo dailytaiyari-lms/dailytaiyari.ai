@@ -223,6 +223,15 @@ class TagPayloadsTests(SimpleTestCase):
             context(), [payload('q1', hint=LAWS)], call=lambda system, user: 'not json')
         self.assertEqual(result.error, 'unparseable_reply')
 
+    def test_latex_backslashes_in_reason_are_tolerated(self):
+        reply = json.dumps({'items': [dict(tag_entry(), id='q1')]})
+        reply = reply.replace('forces on the block', r'Use photon energy \(E=hc/\lambda\) here')
+        self.assertIn(r'\(E', reply)
+        [result] = tagging_v2.tag_payloads(
+            context(), [payload('q1', hint=LAWS)], call=lambda system, user: reply)
+        self.assertEqual(result.error, '')
+        self.assertIn(r'\(E=hc/\lambda\)', result.skills[0]['reason'])
+
     def test_hinted_item_never_gets_stage_disagreement(self):
         call = FakeCall(tag={'q1': tag_entry(primary_subtopic=POWER, secondary_subtopics=[])})
         [result] = tagging_v2.tag_payloads(context(), [payload('q1', hint=LAWS)], call=call)

@@ -163,6 +163,14 @@ def build_tag_prompt(context, topic_keys, payloads):
     return _system(TAG_SYSTEM, context), '\n'.join(lines) + '\n\n' + _questions_block(context, payloads)
 
 
+def _parse_reply(content):
+    try:
+        return extract_json(content)
+    except GenerationError:
+        # Models put LaTeX (e.g. \(E=hc/\lambda\)) in reason strings; double invalid escapes.
+        return extract_json(re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', content))
+
+
 def _ask(call, system, user):
     """({id: entry}, error) for one completion."""
     try:
@@ -170,7 +178,7 @@ def _ask(call, system, user):
     except GenerationError as exc:
         return {}, f'call_failed: {exc}'[:200]
     try:
-        parsed = extract_json(content)
+        parsed = _parse_reply(content)
     except GenerationError:
         return {}, 'unparseable_reply'
     items = parsed.get('items') if isinstance(parsed, dict) else None
