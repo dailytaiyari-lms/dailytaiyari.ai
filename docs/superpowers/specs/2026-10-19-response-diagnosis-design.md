@@ -143,10 +143,12 @@ Screens also replace their fabricated per-answer `time_taken_seconds` with
   client clock trust and no clock sync. The anchor is `started_at`, or
   `created_at` for practice sets, which may not have started yet.
 - **Clock mode** (stored on the row):
-  - `client` — quiz, or a mock resolved by `parent_id`. These screens
-    restart their timer and lose in-memory answers on reload, so a new
+  - `client` — a legacy mock/PYP resolved by `parent_id`. That screen
+    restarts its timer and loses in-memory answers on reload, so a new
     session replaces all earlier sessions.
-  - `server` — a rich mock (`attempt_id`). All sessions are kept.
+  - `server` — a rich mock (`attempt_id`) or a quiz. All sessions are kept.
+    Since #209 the proctored quiz timer is anchored to `started_at`, and its
+    timeline only starts once the proctored quiz begins.
   - `none` — practice. All sessions are kept.
 - **Write:** upsert `AttemptTimeline` (one row per attempt) and replace
   `sessions[session_id]`. Rejected with 409 once `finalized_at` is set.
@@ -204,8 +206,8 @@ All "last minute" / "third" maths is relative to the window:
 
 | Clock | Window start | Duration |
 |---|---|---|
-| `server` (rich mock) | the anchor, `attempt.started_at` | `mock_test.duration_minutes` |
-| `client` (quiz, legacy mock, PYP) | the start of the single kept session (the client timer starts at page load; a reused in-progress attempt's `started_at` may be days old) | `duration_minutes` |
+| `server` (rich mock, quiz) | the anchor, `attempt.started_at` | `duration_minutes` |
+| `client` (legacy mock, PYP) | the start of the single kept session (the client timer starts at page load; a reused in-progress attempt's `started_at` may be days old) | `duration_minutes` |
 | `none` (practice) | earliest session start | untimed: `last_minute`, `rushed` and time-pressure rules never apply |
 | no timeline | the anchor | the model's duration (only non-time rules run anyway) |
 
