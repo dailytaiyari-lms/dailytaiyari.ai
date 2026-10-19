@@ -73,6 +73,7 @@ class ScoreTests(SimpleTestCase):
         self.assertIn('| Metric | gpt-6-luna |', text)
         self.assertIn('| Subtopic hit | 0.667 |', text)
         self.assertIn('| Tokens / question | 120.0 |', text)
+        self.assertIn('| Cost / 1,000 questions (USD) | 0.0000 |', text)
 
 
 def dataset_rows():
@@ -163,6 +164,8 @@ class GoldAndEvaluateCommandTests(TestCase):
         self.assertEqual(saved['report']['models']['gpt-6-luna']['subtopic_exact'], 1.0)
         self.assertEqual(len(saved['items']['gpt-6-luna']), 4)
         self.assertNotIn('question', saved['items']['gpt-6-luna'][0])  # ids and keys only
+        for item in saved['items']['gpt-6-luna']:
+            self.assertTrue(all('reason' not in skill for skill in item['skills']))
         with self.patch_tree('evaluate_tagger'), patch(
                 'intelligence.management.commands.evaluate_tagger.platform_call',
                 return_value=FakeMeteredCall(rows)):
@@ -170,3 +173,31 @@ class GoldAndEvaluateCommandTests(TestCase):
                          '--mode', 'anchored', '--exam', 'jee_main', stdout=(anchored := StringIO()))
         self.assertNotIn('Topic accuracy (blind) | 1', anchored.getvalue())
         self.assertIn('| Subtopic exact | 1.000 |', anchored.getvalue())
+
+    def test_evaluate_tagger_rejects_out_before_any_work(self):
+        gold = self.dumps / 'gold.jsonl'
+        gold.write_text('', encoding='utf-8')
+        with patch('intelligence.management.commands.evaluate_tagger.platform_call') as fake,                 self.assertRaises(CommandError):
+            call_command('evaluate_tagger', '--gold', str(gold), '--models', 'gpt-6-luna', '--exam', 'jee_main',
+                         '--out', str(Path(self.tmp.name) / 'report.json'), stdout=StringIO())
+        fake.assert_not_called()
+
+    def test_make_gold_shuffles_rows_deterministically(self):
+        rows = dataset_rows()
+        for index, row in enumerate(rows):
+            if index % 2:
+                row.update(subject='chemistry', chapter='hydrocarbons', topic='alkanes')
+        source = self.dumps / 'two_subjects.jsonl'
+        source.write_text('\n'.join(json.dumps(r) for r in rows), encoding='utf-8')
+        tree, _ = eval_jee.draft_jee_main_tree(rows)
+        self.tree = taxonomy.validate_exam_tree(tree)
+        written = []
+        for name in ('g1.jsonl', 'g2.jsonl'):
+            with self.patch_tree('make_gold'):
+                call_command('make_gold', '--eval-jee', str(source), '--out', str(self.dumps / name),
+                             '--n', '6', '--seed', '7', stdout=StringIO())
+            written.append([r['id'] for r in eval_jee.read_rows(self.dumps / name)])
+        self.assertEqual(written[0], written[1])
+        subjects = [r['subject'] for r in eval_jee.read_rows(self.dumps / 'g1.jsonl')]
+        self.assertEqual(len(subjects), 6)
+        self.assertNotEqual(subjects, sorted(subjects))

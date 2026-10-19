@@ -7,6 +7,7 @@ import math
 
 DIFFICULTY_RANK = {'easy': 0, 'medium': 1, 'hard': 2}
 TARGET_SUBTOPIC_ACCURACY = 0.8
+ROW_DECIMALS = {'cost_per_1000_usd': 4}
 
 ROWS = [
     ('n', 'Questions'),
@@ -162,9 +163,11 @@ def _lookup(entry, path):
     return value
 
 
-def _cell(value):
+def _cell(value, decimals=None):
     if value is None:
         return '—'
+    if decimals is not None and isinstance(value, (int, float)) and not isinstance(value, bool):
+        return f'{value:.{decimals}f}'
     if isinstance(value, float) and not isinstance(value, bool):
         return f'{value:.3f}' if value <= 1 else f'{value:.1f}'
     return str(value)
@@ -181,7 +184,7 @@ def render_markdown(report):
     for path, label in ROWS:
         if path == 'topic_accuracy' and report['mode'] != 'blind':
             continue
-        cells = [_cell(_lookup(report['models'][name], path)) for name in names]
+        cells = [_cell(_lookup(report['models'][name], path), ROW_DECIMALS.get(path)) for name in names]
         lines.append(f'| {label} | ' + ' | '.join(cells) + ' |')
     for name in names:
         calibration = report['models'][name].get('calibration') or []

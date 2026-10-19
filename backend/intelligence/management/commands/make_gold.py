@@ -8,6 +8,7 @@ Track B rows carry only the gold topic (the course Topic the question sits
 in); fill subtopic / thinking_level / skills / difficulty by hand afterwards.
 """
 import json
+import random
 import uuid
 from pathlib import Path
 
@@ -62,7 +63,9 @@ class Command(BaseCommand):
             if is_usable(row, excluded) and (row['subject'], row['chapter'], row['topic']) in index
         ]
         gold = []
-        for row in stratified_sample(pool, options['n'], options['seed']):
+        sampled = stratified_sample(pool, options['n'], options['seed'])
+        random.Random(options['seed']).shuffle(sampled)
+        for row in sampled:
             topic_key = index[(row['subject'], row['chapter'])]
             gold.append({
                 **row_to_payload(row),
@@ -96,7 +99,9 @@ class Command(BaseCommand):
         pool = [{'question_id': qid, 'subject': str(q.subject_id), 'chapter': str(q.topic_id)}
                 for qid, q in questions.items()]
         gold = []
-        for picked in stratified_sample(pool, options['n'], options['seed']):
+        sampled = stratified_sample(pool, options['n'], options['seed'])
+        random.Random(options['seed']).shuffle(sampled)
+        for picked in sampled:
             question = questions[picked['question_id']]
             topic_key = topic_keys[question.topic_id]
             gold.append({

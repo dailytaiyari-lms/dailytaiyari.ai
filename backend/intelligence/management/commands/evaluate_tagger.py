@@ -38,6 +38,11 @@ class Command(BaseCommand):
         parser.add_argument('--out', default=None, help='Write the JSON report here (under data_dumps/).')
 
     def handle(self, *args, **options):
+        out = None
+        if options['out']:
+            out = Path(options['out']).resolve()
+            if 'data_dumps' not in out.parts:
+                raise CommandError('--out must be under data_dumps/.')
         rows = read_rows(options['gold'])[:options['limit'] or None]
         if not rows:
             raise CommandError('The gold file is empty.')
@@ -71,17 +76,14 @@ class Command(BaseCommand):
             items[model] = [
                 {'id': r.id, 'topic': r.topic_key, 'primary': r.primary_subtopic,
                  'secondary': r.secondary_subtopics, 'thinking_level': r.thinking_level,
-                 'skills': r.skills, 'special_format': r.special_format, 'difficulty': r.difficulty,
+                 'skills': [{'key': s['key'], 'role': s['role']} for s in r.skills], 'special_format': r.special_format, 'difficulty': r.difficulty,
                  'est_solve_seconds': r.est_solve_seconds, 'confidence': r.confidence,
                  'review_reasons': r.review_reasons, 'proposed_subtopic': r.proposed_subtopic,
                  'error': r.error}
                 for r in results
             ]
         self.stdout.write(render_markdown(report))
-        if options['out']:
-            out = Path(options['out']).resolve()
-            if 'data_dumps' not in out.parts:
-                raise CommandError('--out must be under data_dumps/.')
+        if out:
             out.write_text(json.dumps({'report': report, 'items': items}, ensure_ascii=False, indent=1),
                            encoding='utf-8')
             self.stdout.write(f'Report written to {out}')
