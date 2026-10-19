@@ -232,11 +232,13 @@ def _owned_finished_attempt(kind, attempt_id, student):
 
     from quiz.models import MockTestAttempt, QuizAttempt
 
+    if not isinstance(kind, str) or not isinstance(attempt_id, str):
+        return None
     model = {'quiz': QuizAttempt, 'mock': MockTestAttempt}.get(kind)
     if model is None or student is None:
         return None
     try:
-        uuid.UUID(str(attempt_id))
+        uuid.UUID(attempt_id)
     except ValueError:
         return None
     return model.objects.filter(id=attempt_id, student=student).exclude(
@@ -249,8 +251,10 @@ def _attempt_item(kind, attempt, item_kind, item_id):
 
     from quiz.models import MockTestItem, MockTestQuestion
 
+    if not isinstance(item_id, str) or not isinstance(item_kind, str):
+        return None
     try:
-        uuid.UUID(str(item_id))
+        uuid.UUID(item_id)
     except ValueError:
         return None
     if item_kind == 'bank':
@@ -296,9 +300,12 @@ class SelfReportView(APIView):
         from .services.diagnosis import reconcile
 
         data = request.data
+        if not isinstance(data, dict):
+            return Response({'error': 'Body must be a JSON object.'},
+                            status=status.HTTP_400_BAD_REQUEST)
         kind = data.get('attempt_kind')
         choice = data.get('choice')
-        if choice not in dict(ResponseSelfReport.CHOICE_CHOICES):
+        if not isinstance(choice, str) or choice not in dict(ResponseSelfReport.CHOICE_CHOICES):
             return Response({'error': 'Unknown choice.'}, status=status.HTTP_400_BAD_REQUEST)
         student = _student_or_none(request)
         attempt = _owned_finished_attempt(kind, data.get('attempt_id'), student)
