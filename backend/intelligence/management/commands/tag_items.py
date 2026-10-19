@@ -1,21 +1,25 @@
-"""Run the LLM tagging pass from the CLI (budget-gated, cached, batched).
+"""Run the tagging sweep from the CLI (budget-gated, cached, batched).
 
-Useful for the initial backfill after seed_concepts, or to catch up a single
-tenant without waiting for the weekly sweep.
+v2 tags every subject that has a syllabus tree; v1 tags the rest.
+``--model`` runs v2 on a platform model instead of the tenant's tagging model
+(experiments: e.g. ``--model gpt-6-luna``).
 """
 from django.core.management.base import BaseCommand, CommandError
 
 from core.models import Tenant
-from intelligence.services import tagging
+from intelligence.services import tagging_sweep
+from intelligence.services.llm import platform_call
 
 
 class Command(BaseCommand):
-    help = 'Tag untagged/stale items with concepts/difficulty/cognitive type via LLM.'
+    help = 'Tag untagged/stale items (v2 where a syllabus tree exists, v1 elsewhere).'
 
     def add_arguments(self, parser):
         parser.add_argument('--tenant', help='Tenant id (default: every active tenant).')
         parser.add_argument('--limit', type=int, default=200,
                             help='Max items per kind per tenant in this pass.')
+        parser.add_argument('--model', default=None,
+                            help='Platform model name to use for v2 (default: tenant tagging model).')
 
     def handle(self, *args, **options):
         if options.get('tenant'):
@@ -28,10 +32,11 @@ class Command(BaseCommand):
         total = 0
         for tenant in tenants:
             try:
-                tagged = tagging.run_tagging_for_tenant(tenant, limit=options['limit'])
+                call = platform_call(options['model'], tenant) if options['model'] else None
+                result = tagging_sweep.run_sweep(tenant, limit=options['limit'], call=call)
             except Exception as exc:  # noqa: BLE001 — budget/provider errors are per-tenant
                 self.stderr.write(f'{tenant.name}: {exc}')
                 continue
-            total += tagged
-            self.stdout.write(f'{tenant.name}: {tagged} item(s) tagged')
+            total += result['v2'] + result['v1']
+            self.stdout.write(f'{tenant.name}: v2: {result["v2"]}, v1: {result["v1"]} item(s) tagged')
         self.stdout.write(self.style.SUCCESS(f'Done — {total} item(s) tagged.'))

@@ -244,31 +244,40 @@ def tag_mock_items(tenant, items):
     return tagged
 
 
-def untagged_questions(tenant, limit=None):
+def untagged_questions(tenant, limit=None, exclude_subject_ids=()):
     from quiz.models import Question
 
     qs = Question.objects.filter(
         tenant=tenant, tagging_status__in=['', 'stale'],
     ).exclude(status='archived').select_related('subject', 'topic').order_by('created_at')
+    if exclude_subject_ids:
+        qs = qs.exclude(subject_id__in=list(exclude_subject_ids))
     return list(qs[:limit] if limit else qs)
 
 
-def untagged_mock_items(tenant, limit=None):
+def untagged_mock_items(tenant, limit=None, exclude_subject_ids=()):
     from quiz.models import MockTestItem
 
     qs = MockTestItem.objects.filter(
         tenant=tenant, tagging_status__in=['', 'stale'],
     ).select_related('mock_test__course', 'subject', 'topic').order_by('created_at')
+    if exclude_subject_ids:
+        qs = qs.exclude(subject_id__in=list(exclude_subject_ids))
     return list(qs[:limit] if limit else qs)
 
 
-def run_tagging_for_tenant(tenant, *, limit=200):
-    """Budget-gated tagging pass over a tenant's untagged/stale items."""
+def run_tagging_for_tenant(tenant, *, limit=200, exclude_subject_ids=(), check_budget=True):
+    """Budget-gated v1 tagging pass over a tenant's untagged/stale items.
+
+    ``exclude_subject_ids``: subjects with a syllabus tree, which the v2 sweep
+    (services/tagging_sweep.py) tags instead.
+    """
     from coursegen.generation import _check_budget
 
-    _check_budget(tenant)
-    questions = untagged_questions(tenant, limit=limit)
-    items = untagged_mock_items(tenant, limit=limit)
+    if check_budget:
+        _check_budget(tenant)
+    questions = untagged_questions(tenant, limit=limit, exclude_subject_ids=exclude_subject_ids)
+    items = untagged_mock_items(tenant, limit=limit, exclude_subject_ids=exclude_subject_ids)
     tagged = tag_questions(tenant, questions) + tag_mock_items(tenant, items)
     logger.info('tagging: tenant %s — %d item(s) tagged', tenant.id, tagged)
     return tagged

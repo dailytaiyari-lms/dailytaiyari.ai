@@ -273,14 +273,15 @@ def tag_items_for_tenant(self, tenant_id, limit=200):
     """One budget-gated tagging pass for one tenant."""
     from core.models import Tenant
 
-    from .services import tagging
+    from .services import tagging_sweep
 
     tenant = Tenant.objects.filter(id=tenant_id).first()
     if tenant is None:
         logger.warning('intelligence.tag_items: tenant %s not found', tenant_id)
         return 0
     try:
-        return tagging.run_tagging_for_tenant(tenant, limit=limit)
+        result = tagging_sweep.run_sweep(tenant, limit=limit)
+        return result['v2'] + result['v1']
     except Exception as exc:  # noqa: BLE001 — a failed sweep just waits for the next one
         logger.warning('intelligence.tag_items: tenant %s failed: %s', tenant_id, exc)
         return 0
