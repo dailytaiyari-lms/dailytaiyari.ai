@@ -293,3 +293,36 @@ class RegisterView(generics.CreateAPIView):
         user = serializer.save(tenant=request.tenant)
         # ...
 ```
+
+---
+
+## Response diagnosis (intelligence)
+
+Every attempt screen records a raw per-question timeline
+(`POST /api/v1/intelligence/timeline/` → `AttemptTimeline`). When an attempt
+is finalized, the `intelligence.diagnose_and_update_state` task labels every
+item, answered or not, as one of: not_seen, skipped, time_pressure, correct,
+correct_lucky, correct_slow, guess, second_guess, careless_slip,
+concept_gap, unclear. It writes `ResponseDiagnosis`, then recomputes learner
+state with guesses and slips down-weighted.
+
+- Thresholds: `intelligence/diagnosis_config.py`. After changing any value,
+  bump `CLASSIFIER_VERSION` in `intelligence/versions.py` and run
+  `manage.py recompute_diagnoses` (optionally `--tenant`, `--since`). The
+  command also refreshes learner state for quiz and mock attempts, survives
+  individual bad attempts, and reports the count of failures.
+- After first deploy, run `manage.py recompute_learner_state`
+  (`STATE_MODEL_VERSION` 2).
+- Students' "What happened?" taps on review pages need the opt-in tenant
+  feature `response_diagnosis`. Capture and classification run regardless.
+- Calibration: `GET /api/v1/tenant-admin/intelligence/diagnosis/calibration/?days=30`
+  compares classifier labels with self-reports.
+- Timeline clocks: quizzes and rich mocks are server-clocked (the window
+  starts at `started_at`). Legacy mock/PYP screens are client-clocked: a page
+  reload starts a new session that replaces the old ones. Practice is untimed.
+- Request size: the timeline endpoint caps the body at 256 KB by
+  `Content-Length`, with a post-parse check as defence in depth. The real limit
+  for requests without a `Content-Length` header belongs at the proxy (nginx
+  `client_max_body_size`).
+- Throttle: the timeline endpoint allows 20 requests/min/user on its own
+  `timeline` scope.
