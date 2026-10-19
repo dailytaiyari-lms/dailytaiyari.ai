@@ -106,6 +106,39 @@ class DraftTreeTests(SimpleTestCase):
         self.assertIn('communication_systems', eval_jee.out_of_syllabus_chapters(taxonomy.validate_exam_tree(tree)))
 
 
+    def test_misspelt_slugs_get_corrected_keys_and_keep_the_dataset_alias(self):
+        rows = [
+            row(question_id='1', chapter='properties-of-matter',
+                topic='stress-strain-curve,-thermal-stress-and-elastic-pe'),
+            row(question_id='2', subject='maths', chapter='trigonometric-ratio-and-identites',
+                topic='trigonometric-ratio-of-standard-angles'),
+            row(question_id='3', subject='maths', chapter='limits-continuity-and-differentiability',
+                topic='existance-of-limits'),
+        ]
+        tree = taxonomy.validate_exam_tree(eval_jee.draft_jee_main_tree(rows)[0])
+        flat = {node['key']: node for node in taxonomy.flatten_tree(tree)}
+        elastic = ('jee_main.physics.mechanics.properties_of_matter.'
+                   'stress_strain_curve_thermal_stress_and_elastic_potential_energy')
+        self.assertEqual(flat[elastic]['label'], 'Stress Strain Curve, Thermal Stress and Elastic Potential Energy')
+        self.assertEqual(flat[elastic]['aliases'], ['stress-strain-curve,-thermal-stress-and-elastic-pe'])
+        trig = 'jee_main.maths.trigonometry.trigonometric_ratios_and_identities'
+        self.assertEqual(flat[trig]['label'], 'Trigonometric Ratios and Identities')
+        self.assertEqual(flat[trig]['aliases'], ['trigonometric-ratio-and-identites'])
+        limits = 'jee_main.maths.calculus.limits_continuity_and_differentiability.existence_of_limits'
+        self.assertEqual(flat[limits]['label'], 'Existence of Limits')
+        index = eval_jee.tree_key_index(tree)
+        self.assertEqual(index[('physics', 'properties-of-matter',
+                                'stress-strain-curve,-thermal-stress-and-elastic-pe')], elastic)
+        self.assertEqual(index[('maths', 'trigonometric-ratio-and-identites')], trig)
+        self.assertEqual(index[('maths', 'limits-continuity-and-differentiability', 'existance-of-limits')],
+                         limits)
+
+    def test_fixed_chapter_still_matches_the_out_of_syllabus_set(self):
+        excluded = frozenset({'trigonometric_ratios_and_identities'})
+        self.assertFalse(eval_jee.is_usable(row(subject='maths', chapter='trigonometric-ratio-and-identites'),
+                                            out_of_syllabus=excluded))
+
+
 class ShippedTreeTests(SimpleTestCase):
     def test_shipped_jee_main_tree(self):
         tree = taxonomy.load_exam_tree('jee_main')

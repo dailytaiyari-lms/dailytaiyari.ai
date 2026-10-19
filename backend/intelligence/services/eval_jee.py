@@ -23,13 +23,43 @@ ACRONYMS = {
 
 SUBJECT_LABELS = {'physics': 'Physics', 'chemistry': 'Chemistry', 'maths': 'Mathematics'}
 SUBJECT_ALIASES = {'physics': ['phy'], 'chemistry': ['chem'], 'maths': ['mathematics', 'math']}
-LABEL_OVERRIDES = {
+# Dataset slug → corrected slug, for chapters and topics. Tree keys are
+# permanent cross-tenant identifiers, so misspellings and truncations in the
+# dataset's labels are fixed here; the original slug stays in the node's
+# ``aliases``, so ``tree_key_index`` (and the gold files) still map dataset rows.
+SLUG_FIXES = {
+    # chapters
+    'trigonometric-ratio-and-identites': 'trigonometric-ratios-and-identities',
+    # topics
+    'mediun-and-angle-bisector': 'median-and-angle-bisector',
+    'interestitial-voids': 'interstitial-voids',
+    'existance-of-limits': 'existence-of-limits',
+    'limits-of-algebric-function': 'limits-of-algebraic-function',
+    'newton-lebnitz-rule-of-differentiation': 'newton-leibnitz-rule-of-differentiation',
+    "real-gas-and-van-der-wall's-equation": 'real-gas-and-van-der-waals-equation',
+    'van-der-walls-forces': 'van-der-waals-forces',
+    "pressure,-density,-pascal's-law-and-archimede's-principle":
+        "pressure,-density,-pascal's-law-and-archimedes'-principle",
+    'classical-defininition-of-probability': 'classical-definition-of-probability',
+    'stress-strain-curve,-thermal-stress-and-elastic-pe':
+        'stress-strain-curve,-thermal-stress-and-elastic-potential-energy',
+    'relative-lowering-of-vapour-pressure-and-roult’s-law':
+        'relative-lowering-of-vapour-pressure-and-raoult’s-law',
+    "warner's-theory-and-valence-bond-theory": "werner's-theory-and-valence-bond-theory",
+    'dearrangement': 'derangement',
+    'physiochemical-trends-in-alkali-metals': 'physicochemical-trends-in-alkali-metals',
+    'physiochemical-trends-in-alkaline-earth-metals': 'physicochemical-trends-in-alkaline-earth-metals',
+}
+
+# Display labels where slug_label() gets it wrong, keyed by the dataset slug.
+CHAPTER_LABEL_OVERRIDES = {
     'trigonometric-ratio-and-identites': 'Trigonometric Ratios and Identities',
     'magnetics': 'Magnetic Effects of Current',
     's-block-elements': 's-Block Elements',
     'p-block-elements': 'p-Block Elements',
     'd-and-f-block-elements': 'd- and f-Block Elements',
-    # subtopic slugs (the same table is consulted for them)
+}
+SUBTOPIC_LABEL_OVERRIDES = {
     'refraction,-tir-and-prism': 'Refraction, TIR and Prism',
     'ph,-buffer-and-indicators': 'pH, Buffer and Indicators',
     'relative-lowering-of-vapour-pressure-and-roult’s-law': 'Relative Lowering of Vapour Pressure and Raoult’s Law',
@@ -38,6 +68,8 @@ LABEL_OVERRIDES = {
     'geometric-progression-(g.p)': 'Geometric Progression (GP)',
     'harmonic-progression-(h.p)': 'Harmonic Progression (HP)',
     "warner's-theory-and-valence-bond-theory": "Werner's Theory and Valence Bond Theory",
+    "real-gas-and-van-der-wall's-equation": 'Real Gas and Van der Waals Equation',
+    'van-der-walls-forces': 'Van der Waals Forces',
 }
 
 # Sub-subject grouping of the dataset's chapters (dataset `chapter` = tree
@@ -129,6 +161,16 @@ def node_key(slug):
     return re.sub(r'[^a-z0-9]+', '_', (slug or '').casefold()).strip('_')
 
 
+def fixed_slug(slug):
+    """The dataset slug with SLUG_FIXES applied."""
+    return SLUG_FIXES.get(slug, slug)
+
+
+def chapter_key(slug):
+    """Tree key for a dataset chapter slug (after SLUG_FIXES)."""
+    return node_key(fixed_slug(slug))
+
+
 def slug_label(slug):
     """'ac-circuits-and-power-in-ac-circuits' → 'AC Circuits and Power in AC Circuits'."""
     words = (slug or '').replace(',-', ', ').replace('-', ' ').split()
@@ -186,7 +228,7 @@ def is_usable(row, out_of_syllabus=frozenset()):
         return False
     if paper_year(row.get('paper_id')) < POOL_MIN_YEAR or has_image(row):
         return False
-    if node_key(row.get('chapter')) in out_of_syllabus:
+    if chapter_key(row.get('chapter')) in out_of_syllabus:
         return False
     if row['question_type'] == 'integer':
         return str(row.get('answer') or '').strip() != ''
@@ -290,18 +332,20 @@ def draft_jee_main_tree(rows):
                 chapter_total = counted(subject, chapter)
                 children, used = [], set()
                 for topic in sorted(chapters[subject][chapter]):
-                    key, suffix = node_key(topic), 2
+                    base = node_key(fixed_slug(topic))
+                    key, suffix = base, 2
                     while key in used:  # two slugs that normalise to one key
-                        key, suffix = f'{node_key(topic)}_{suffix}', suffix + 1
+                        key, suffix = f'{base}_{suffix}', suffix + 1
                     used.add(key)
                     children.append({
-                        'key': key, 'label': LABEL_OVERRIDES.get(topic) or slug_label(topic),
+                        'key': key,
+                        'label': SUBTOPIC_LABEL_OVERRIDES.get(topic) or slug_label(fixed_slug(topic)),
                         'weightage': _share(counted(subject, chapter, topic), chapter_total),
-                        'aliases': [topic],
+                        'aliases': [topic],  # the dataset slug, even when the key was fixed
                     })
                 topic_nodes.append({
-                    'key': node_key(chapter),
-                    'label': LABEL_OVERRIDES.get(chapter) or slug_label(chapter),
+                    'key': chapter_key(chapter),
+                    'label': CHAPTER_LABEL_OVERRIDES.get(chapter) or slug_label(fixed_slug(chapter)),
                     'weightage': _share(chapter_total, group_total),
                     'in_syllabus': chapter not in JEE_MAIN_OUT_OF_SYLLABUS,
                     'aliases': [chapter],

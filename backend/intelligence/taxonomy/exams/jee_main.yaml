@@ -336,13 +336,13 @@ subjects:
         weightage: 0.015
         aliases:
         - newton's-law-of-cooling
-      - key: pressure_density_pascal_s_law_and_archimede_s_principle
-        label: Pressure, Density, Pascal's Law and Archimede's Principle
+      - key: pressure_density_pascal_s_law_and_archimedes_principle
+        label: Pressure, Density, Pascal's Law and Archimedes' Principle
         weightage: 0.0902
         aliases:
         - pressure,-density,-pascal's-law-and-archimede's-principle
-      - key: stress_strain_curve_thermal_stress_and_elastic_pe
-        label: Stress Strain Curve, Thermal Stress and Elastic Pe
+      - key: stress_strain_curve_thermal_stress_and_elastic_potential_energy
+        label: Stress Strain Curve, Thermal Stress and Elastic Potential Energy
         weightage: 0.0376
         aliases:
         - stress-strain-curve,-thermal-stress-and-elastic-pe
@@ -1006,8 +1006,8 @@ subjects:
         weightage: 0.0
         aliases:
         - maxwell's-distribution-of-speed
-      - key: real_gas_and_van_der_wall_s_equation
-        label: Real Gas and Van Der Wall's Equation
+      - key: real_gas_and_van_der_waals_equation
+        label: Real Gas and Van der Waals Equation
         weightage: 0.0
         aliases:
         - real-gas-and-van-der-wall's-equation
@@ -1156,7 +1156,7 @@ subjects:
         weightage: 0.1233
         aliases:
         - osmotic-pressure
-      - key: relative_lowering_of_vapour_pressure_and_roult_s_law
+      - key: relative_lowering_of_vapour_pressure_and_raoult_s_law
         label: Relative Lowering of Vapour Pressure and Raoult’s Law
         weightage: 0.1507
         aliases:
@@ -1242,8 +1242,8 @@ subjects:
         weightage: 0.0
         aliases:
         - defects-in-crystal
-      - key: interestitial_voids
-        label: Interestitial Voids
+      - key: interstitial_voids
+        label: Interstitial Voids
         weightage: 0.0
         aliases:
         - interestitial-voids
@@ -1392,8 +1392,8 @@ subjects:
         weightage: 0.0085
         aliases:
         - valence-bond-theory
-      - key: van_der_walls_forces
-        label: Van Der Walls Forces
+      - key: van_der_waals_forces
+        label: Van der Waals Forces
         weightage: 0.0
         aliases:
         - van-der-walls-forces
@@ -1441,13 +1441,13 @@ subjects:
         weightage: 0.0
         aliases:
         - compounds-of-alkali-metals
-      - key: physiochemical_trends_in_alkali_metals
-        label: Physiochemical Trends in Alkali Metals
+      - key: physicochemical_trends_in_alkali_metals
+        label: Physicochemical Trends in Alkali Metals
         weightage: 0.0
         aliases:
         - physiochemical-trends-in-alkali-metals
-      - key: physiochemical_trends_in_alkaline_earth_metals
-        label: Physiochemical Trends in Alkaline Earth Metals
+      - key: physicochemical_trends_in_alkaline_earth_metals
+        label: Physicochemical Trends in Alkaline Earth Metals
         weightage: 0.0
         aliases:
         - physiochemical-trends-in-alkaline-earth-metals
@@ -1542,7 +1542,7 @@ subjects:
         weightage: 0.0207
         aliases:
         - nomenclature-of-coordination-compounds
-      - key: warner_s_theory_and_valence_bond_theory
+      - key: werner_s_theory_and_valence_bond_theory
         label: Werner's Theory and Valence Bond Theory
         weightage: 0.2552
         aliases:
@@ -2143,8 +2143,8 @@ subjects:
         weightage: 0.2889
         aliases:
         - conditional-permutations
-      - key: dearrangement
-        label: Dearrangement
+      - key: derangement
+        label: Derangement
         weightage: 0.0111
         aliases:
         - dearrangement
@@ -2281,7 +2281,7 @@ subjects:
     label: Trigonometry
     weightage: 0.0412
     children:
-    - key: trigonometric_ratio_and_identites
+    - key: trigonometric_ratios_and_identities
       label: Trigonometric Ratios and Identities
       weightage: 0.2697
       in_syllabus: true
@@ -2409,8 +2409,8 @@ subjects:
         weightage: 0.0769
         aliases:
         - half-angle-formulae
-      - key: mediun_and_angle_bisector
-        label: Mediun and Angle Bisector
+      - key: median_and_angle_bisector
+        label: Median and Angle Bisector
         weightage: 0.0
         aliases:
         - mediun-and-angle-bisector
@@ -2753,13 +2753,13 @@ subjects:
         weightage: 0.2692
         aliases:
         - differentiability
-      - key: existance_of_limits
-        label: Existance of Limits
+      - key: existence_of_limits
+        label: Existence of Limits
         weightage: 0.0096
         aliases:
         - existance-of-limits
-      - key: limits_of_algebric_function
-        label: Limits of Algebric Function
+      - key: limits_of_algebraic_function
+        label: Limits of Algebraic Function
         weightage: 0.1442
         aliases:
         - limits-of-algebric-function
@@ -2896,8 +2896,8 @@ subjects:
         weightage: 0.0784
         aliases:
         - definite-integral-as-a-limit-of-sum
-      - key: newton_lebnitz_rule_of_differentiation
-        label: Newton Lebnitz Rule of Differentiation
+      - key: newton_leibnitz_rule_of_differentiation
+        label: Newton Leibnitz Rule of Differentiation
         weightage: 0.1242
         aliases:
         - newton-lebnitz-rule-of-differentiation
@@ -3047,8 +3047,8 @@ subjects:
         weightage: 0.1717
         aliases:
         - binomial-distribution
-      - key: classical_defininition_of_probability
-        label: Classical Defininition of Probability
+      - key: classical_definition_of_probability
+        label: Classical Definition of Probability
         weightage: 0.2626
         aliases:
         - classical-defininition-of-probability
