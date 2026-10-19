@@ -93,7 +93,7 @@ def _context_block(subject_names, topics, candidates):
 def _cached_result(tenant, content_hash, model_ref):
     row = AITaggingResult.objects.filter(
         tenant=tenant, content_hash=content_hash,
-        prompt_version=TAGGER_PROMPT_VERSION, model_ref=model_ref,
+        prompt_version=TAGGER_PROMPT_VERSION, model_ref=model_ref, stage='',  # never a v2 stage row
     ).first()
     return row.result if row else None
 
@@ -101,7 +101,7 @@ def _cached_result(tenant, content_hash, model_ref):
 def _store_result(tenant, content_hash, model_ref, result):
     AITaggingResult.objects.get_or_create(
         tenant=tenant, content_hash=content_hash,
-        prompt_version=TAGGER_PROMPT_VERSION, model_ref=model_ref,
+        prompt_version=TAGGER_PROMPT_VERSION, model_ref=model_ref, stage='',  # never a v2 stage row
         defaults={'result': result},
     )
 

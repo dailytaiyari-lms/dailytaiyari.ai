@@ -126,3 +126,15 @@ class TaggingTests(TestCase):
         self.assertEqual(llm.call_count, 0)
         item.refresh_from_db()
         self.assertEqual(item.tagging_status, '')
+
+    def test_v1_cache_ignores_v2_stage_rows(self):
+        from intelligence.versions import TAGGER_PROMPT_VERSION
+
+        AITaggingResult.objects.create(
+            tenant=self.tenant, content_hash='h1', prompt_version=TAGGER_PROMPT_VERSION,
+            model_ref='openai:gpt-4o-mini', stage='tag', result={'v2': True},
+        )
+        self.assertIsNone(tagging._cached_result(self.tenant, 'h1', 'openai:gpt-4o-mini'))
+        tagging._store_result(self.tenant, 'h1', 'openai:gpt-4o-mini', {'v1': True})
+        self.assertEqual(tagging._cached_result(self.tenant, 'h1', 'openai:gpt-4o-mini'), {'v1': True})
+        self.assertEqual(AITaggingResult.objects.get(content_hash='h1', stage='').result, {'v1': True})
