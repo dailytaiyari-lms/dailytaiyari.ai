@@ -279,3 +279,79 @@ class TokenParameterTests(SimpleTestCase):
             _openai_create(client, rp, {'model': rp.model, 'messages': []})
         self.assertEqual(len(client.completions.calls), 1)
         self.assertEqual(_token_param_for(rp), 'max_tokens')
+
+
+def _http_error(status, message):
+    err = Exception(f'Error code: {status} - {message}')
+    err.status_code = status
+    return err
+
+
+TEMPERATURE_REJECTED = _http_error(
+    400, "Unsupported value: 'temperature' does not support 0.2 with this "
+         "model. Only the default (1) value is supported.")
+
+
+class TemperatureTests(SimpleTestCase):
+    """Reasoning models only accept their default temperature."""
+
+    def setUp(self):
+        for memo in (providers_mod._TOKEN_PARAM_OVERRIDES, providers_mod._NO_TEMPERATURE):
+            memo.clear()
+            self.addCleanup(memo.clear)
+
+    def test_a_temperature_rejection_is_retried_without_temperature(self):
+        rp = ResolvedProvider(provider='openai', model='gpt-5.1')
+        client = _FakeClient(errors=[TEMPERATURE_REJECTED])
+        result = _openai_create(client, rp, {'model': rp.model, 'messages': [],
+                                             'temperature': 0.2})
+
+        first, second = client.completions.calls
+        self.assertEqual(first.get('temperature'), 0.2)
+        self.assertNotIn('temperature', second)
+        self.assertIsNotNone(result)
+
+    def test_temperature_and_token_param_can_both_be_corrected(self):
+        rp = ResolvedProvider(provider='azure_openai', model='my-deployment',
+                              max_tokens=99)
+        client = _FakeClient(errors=[TEMPERATURE_REJECTED, Exception(UNSUPPORTED)])
+        _openai_create(client, rp, {'model': rp.model, 'messages': [],
+                                    'temperature': 0.2})
+
+        self.assertEqual(len(client.completions.calls), 3)
+        last = client.completions.calls[-1]
+        self.assertNotIn('temperature', last)
+        self.assertNotIn('max_tokens', last)
+        self.assertEqual(last.get('max_completion_tokens'), 99)
+
+    def test_other_bad_requests_are_not_retried(self):
+        rp = ResolvedProvider(provider='openai', model='gpt-4o')
+        client = _FakeClient(errors=[_http_error(400, 'messages must not be empty')])
+        with self.assertRaises(Exception) as ctx:
+            _openai_create(client, rp, {'model': rp.model, 'messages': [],
+                                        'temperature': 0.2})
+        self.assertIn('messages must not be empty', str(ctx.exception))
+        self.assertEqual(len(client.completions.calls), 1)
+
+    def test_a_learned_temperature_rejection_skips_the_failed_round_trip(self):
+        rp = ResolvedProvider(provider='azure_openai', model='my-deployment',
+                              base_url='https://x.openai.azure.com')
+        kwargs = {'model': rp.model, 'messages': [], 'temperature': 0.2}
+        _openai_create(_FakeClient(errors=[TEMPERATURE_REJECTED]), rp, kwargs)
+
+        second = _FakeClient()
+        _openai_create(second, rp, kwargs)
+        self.assertEqual(len(second.completions.calls), 1)
+        self.assertNotIn('temperature', second.completions.calls[0])
+
+    def test_the_memo_is_per_endpoint_and_model(self):
+        rp = ResolvedProvider(provider='azure_openai', model='my-deployment',
+                              base_url='https://x.openai.azure.com')
+        other = ResolvedProvider(provider='azure_openai', model='my-deployment',
+                                 base_url='https://y.openai.azure.com')
+        kwargs = {'model': 'my-deployment', 'messages': [], 'temperature': 0.2}
+        _openai_create(_FakeClient(errors=[TEMPERATURE_REJECTED]), rp, kwargs)
+
+        client = _FakeClient()
+        _openai_create(client, other, kwargs)
+        self.assertEqual(client.completions.calls[0].get('temperature'), 0.2)
