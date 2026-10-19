@@ -7,6 +7,7 @@ import math
 
 DIFFICULTY_RANK = {'easy': 0, 'medium': 1, 'hard': 2}
 TARGET_SUBTOPIC_ACCURACY = 0.8
+MIN_BUCKET_N = 5  # calibration buckets smaller than this are too noisy to set the threshold
 ROW_DECIMALS = {'cost_per_1000_usd': 4}
 
 ROWS = [
@@ -46,14 +47,24 @@ def _gold(row, field):
     return (row.get('gold') or {}).get(field)
 
 
-def suggest_threshold(buckets, target=TARGET_SUBTOPIC_ACCURACY):
-    """Lowest bucket floor b such that items with confidence ≥ b reach ``target``."""
-    for floor in range(10):
-        n = sum(v['n'] for k, v in buckets.items() if k >= floor)
-        exact = sum(v['exact'] for k, v in buckets.items() if k >= floor)
-        if n and exact / n >= target:
-            return floor / 10
-    return None
+def suggest_threshold(buckets, target=TARGET_SUBTOPIC_ACCURACY, min_n=MIN_BUCKET_N):
+    """Review threshold from the calibration buckets (spec §5.3).
+
+    Walk the buckets holding at least ``min_n`` items from the top down; the
+    threshold is the floor of the lowest bucket reached while every visited
+    bucket has subtopic accuracy ≥ ``target``. Stop at the first failing
+    bucket. None when the top qualifying bucket already fails, or no bucket
+    is big enough.
+    """
+    threshold = None
+    for floor in sorted(buckets, reverse=True):
+        bucket = buckets[floor]
+        if bucket['n'] < min_n:
+            continue
+        if bucket['exact'] / bucket['n'] < target:
+            break
+        threshold = floor / 10
+    return threshold
 
 
 def score(gold_rows, results, *, mode):

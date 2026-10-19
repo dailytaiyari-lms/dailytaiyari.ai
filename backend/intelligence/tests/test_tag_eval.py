@@ -57,7 +57,7 @@ class ScoreTests(SimpleTestCase):
         self.assertEqual(m['special_formats'], {'statement_pair': {'precision': 1.0, 'recall': 1.0, 'f1': 1.0}})
         self.assertEqual(m['calibration'], [{'from': 0.5, 'n': 1, 'subtopic_exact': 0.0},
                                             {'from': 0.9, 'n': 1, 'subtopic_exact': 1.0}])
-        self.assertEqual(m['suggested_threshold'], 0.6)
+        self.assertIsNone(m['suggested_threshold'])  # every bucket has n < 5
 
     def test_anchored_mode_has_no_topic_accuracy(self):
         self.assertNotIn('topic_accuracy', tag_eval.score(gold_rows(), results(), mode='anchored'))
@@ -74,6 +74,32 @@ class ScoreTests(SimpleTestCase):
         self.assertIn('| Subtopic hit | 0.667 |', text)
         self.assertIn('| Tokens / question | 120.0 |', text)
         self.assertIn('| Cost / 1,000 questions (USD) | 0.0000 |', text)
+
+
+def buckets(**spec):
+    """``b9=(245, 0.865)`` → {9: {'n': 245, 'exact': round(245 * 0.865)}}."""
+    return {int(name[1:]): {'n': n, 'exact': round(n * acc)} for name, (n, acc) in spec.items()}
+
+
+class SuggestThresholdTests(SimpleTestCase):
+    def test_first_live_run_shape(self):
+        shape = buckets(b9=(245, 0.865), b8=(31, 0.645), b7=(7, 0.43), b0=(13, 0.0))
+        self.assertEqual(tag_eval.suggest_threshold(shape), 0.9)
+
+    def test_failing_top_bucket_gives_none(self):
+        self.assertIsNone(tag_eval.suggest_threshold(buckets(b9=(20, 0.7), b8=(20, 0.95))))
+
+    def test_only_small_buckets_give_none(self):
+        self.assertIsNone(tag_eval.suggest_threshold(buckets(b9=(4, 1.0), b8=(3, 1.0), b5=(1, 1.0))))
+        self.assertIsNone(tag_eval.suggest_threshold({}))
+
+    def test_adjacent_passing_buckets_give_the_lower_floor(self):
+        shape = buckets(b9=(40, 0.9), b8=(10, 0.8), b7=(10, 0.5), b6=(10, 0.9))
+        self.assertEqual(tag_eval.suggest_threshold(shape), 0.8)  # stops at 0.7; 0.6 is never reached
+
+    def test_small_buckets_are_skipped_not_failed(self):
+        shape = buckets(b9=(40, 0.9), b8=(2, 0.0), b7=(10, 0.85))
+        self.assertEqual(tag_eval.suggest_threshold(shape), 0.7)
 
 
 def dataset_rows():

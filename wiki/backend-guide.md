@@ -398,9 +398,18 @@ python manage.py tag_items --tenant <id> [--model <platform model>] [--limit N]
 **Review.** Items that need a human get `ItemTagging.review_status='needs_review'`
 with reasons `low_confidence`, `invalid_key`, `proposed_subtopic` or
 `stage_disagreement`. The confidence threshold is
-`review_confidence_threshold` in `tags.yaml` (default 0.6); reset it from the
-threshold `evaluate_tagger` suggests (the lowest confidence floor at which
-items at or above it reach 80% subtopic accuracy). The review UI is plan 2B.
+`review_confidence_threshold` in `tags.yaml`. The shipped value is 0.9, set
+from the first evaluation. Reset it from the threshold `evaluate_tagger`
+suggests:
+- it walks the confidence buckets that hold at least 5 items, from the top
+  bucket down;
+- the threshold is the floor of the lowest bucket reached while every bucket
+  visited has at least 80% subtopic accuracy, stopping at the first bucket
+  that fails;
+- it suggests nothing when the top bucket already fails or no bucket has 5
+  items.
+
+The review UI is plan 2B.
 
 **Evaluating:**
 
