@@ -248,6 +248,7 @@ A duration of 0 means untimed.
 | `hidden_s` | hidden time while this key was on screen |
 | `changes` | ordered answer digests, each graded server-side → `[{at_s, correct}]` |
 | `third` | which third of the attempt's elapsed time the final answer fell in (1–3) |
+| `ended_late` | timed attempts only: the attempt timed out, **or** was submitted within its last-minute zone. Quiz and legacy-mock auto-submits record `completed`, not `timed_out`, so this is the reliable "ran out of time" signal. Stored as `metrics['timed_out']` (= timed out or ended late), which reconciliation reads. |
 
 ### 4.2 Flags
 
@@ -361,7 +362,7 @@ mastery-based clauses never match.
 | Choice | Maps to | Adopted as `final_label` when |
 |---|---|---|
 | `slipped` | `careless_slip` | label is `unclear` / confidence low, **and** not `too_fast` |
-| `ran_out_of_time` | `time_pressure` | label is `unclear` / confidence low, **and** (`last_minute` or attempt timed out) |
+| `ran_out_of_time` | `time_pressure` | label is `unclear` / confidence low, **and** (`last_minute` or the attempt ended late — timed out or submitted in its last-minute zone) |
 | `guessed` | `guess` | label is `unclear` / confidence low (always plausible) |
 | `didnt_know` | `concept_gap` | label is `unclear` / confidence low |
 
