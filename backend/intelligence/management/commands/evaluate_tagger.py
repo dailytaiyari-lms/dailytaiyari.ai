@@ -76,7 +76,8 @@ class Command(BaseCommand):
             items[model] = [
                 {'id': r.id, 'topic': r.topic_key, 'primary': r.primary_subtopic,
                  'secondary': r.secondary_subtopics, 'thinking_level': r.thinking_level,
-                 'skills': [{'key': s['key'], 'role': s['role']} for s in r.skills], 'special_format': r.special_format, 'difficulty': r.difficulty,
+                 'skills': [{'key': s['key'], 'role': s['role']} for s in r.skills],
+                 'special_format': r.special_format, 'difficulty': r.difficulty,
                  'est_solve_seconds': r.est_solve_seconds, 'confidence': r.confidence,
                  'review_reasons': r.review_reasons, 'proposed_subtopic': r.proposed_subtopic,
                  'error': r.error}

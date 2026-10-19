@@ -176,11 +176,19 @@ class GoldAndEvaluateCommandTests(TestCase):
 
     def test_evaluate_tagger_rejects_out_before_any_work(self):
         gold = self.dumps / 'gold.jsonl'
-        gold.write_text('', encoding='utf-8')
-        with patch('intelligence.management.commands.evaluate_tagger.platform_call') as fake,                 self.assertRaises(CommandError):
-            call_command('evaluate_tagger', '--gold', str(gold), '--models', 'gpt-6-luna', '--exam', 'jee_main',
-                         '--out', str(Path(self.tmp.name) / 'report.json'), stdout=StringIO())
+        with self.patch_tree('make_gold'):
+            call_command('make_gold', '--eval-jee', str(self.source), '--out', str(gold), '--n', '4',
+                         stdout=StringIO())
+        self.assertTrue(eval_jee.read_rows(gold))
+        bad_out = Path(self.tmp.name) / 'report.json'
+        with self.patch_tree('evaluate_tagger'), patch(
+                'intelligence.management.commands.evaluate_tagger.platform_call') as fake:
+            with self.assertRaises(CommandError) as ctx:
+                call_command('evaluate_tagger', '--gold', str(gold), '--models', 'gpt-6-luna',
+                             '--exam', 'jee_main', '--out', str(bad_out), stdout=StringIO())
+        self.assertIn('data_dumps', str(ctx.exception))
         fake.assert_not_called()
+        self.assertFalse(bad_out.exists())
 
     def test_make_gold_shuffles_rows_deterministically(self):
         rows = dataset_rows()
