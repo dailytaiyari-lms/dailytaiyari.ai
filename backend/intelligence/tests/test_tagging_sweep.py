@@ -8,9 +8,10 @@ from django.core.management import call_command
 from django.test import TestCase
 
 from core.models import Tenant
+from coursegen.generation import GenerationError
 from exams.models import Course, Subject, Topic
 from intelligence.models import ConceptLink, ItemSkillTag, ItemTagging, SyllabusNode
-from intelligence.services import syllabus, tagging, tagging_sweep, taxonomy
+from intelligence.services import llm, syllabus, tagging, tagging_sweep, taxonomy
 from intelligence.services.tagging_v2 import LOCATE_MARKER
 from intelligence.tests.taxonomy_fixtures import mini_tree, sync_mini_vocabulary
 from quiz.models import MockTest, MockTestItem, Question, QuestionOption
@@ -180,3 +181,63 @@ class SweepTests(TestCase):
                                    return_value=call):
             call_command('tag_items', '--tenant', str(self.tenant.id), '--model', 'gpt-6-luna', stdout=out)
         self.assertIn('v2: 1', out.getvalue())
+
+    def _blind_item(self):
+        mock_test = MockTest.objects.create(tenant=self.tenant, title='Blind', duration_minutes=60,
+                                            total_marks=4)
+        mock_test.courses.set([self.course])
+        return MockTestItem.objects.create(
+            tenant=self.tenant, mock_test=mock_test, item_type='mcq', question_text='Unplaceable…',
+            options=[{'text': '1', 'is_correct': True}, {'text': '2', 'is_correct': False}], marks=4,
+        )
+
+    def test_v2_owned_mock_items_are_never_handed_to_v1(self):
+        item = self._blind_item()  # no subject, no topic; single-subject treed course
+        self.run_v2(FakeCall())  # v2 gets no reply for it
+        q = tagging_sweep.v2_mock_item_filter(self.tenant, {self.subject.id})
+        self.assertIn(item, tagging.untagged_mock_items(self.tenant))
+        self.assertNotIn(item, tagging.untagged_mock_items(self.tenant, exclude_mock_q=q))
+
+    def test_run_sweep_passes_the_mock_filter_to_v1(self):
+        item = self._blind_item()
+        with patched_tree(), patch.object(tagging_sweep.tagging_v1, 'run_tagging_for_tenant',
+                                          return_value=0) as v1:
+            tagging_sweep.run_sweep(self.tenant, limit=50, call=FakeCall())
+        q = v1.call_args.kwargs['exclude_mock_q']
+        self.assertIsNotNone(q)
+        self.assertNotIn(item, tagging.untagged_mock_items(self.tenant, exclude_mock_q=q))
+
+    def test_no_topic_is_a_review_result_and_not_retried(self):
+        item = self._blind_item()
+        call = FakeCall(locate={str(item.id): {'topic_key': 'mini.physics.nope', 'confidence': 0.9}})
+        self.run_v2(call)
+        row = ItemTagging.objects.get(mock_item=item)
+        self.assertEqual(row.review_status, 'needs_review')
+        self.assertEqual(row.review_reasons, ['invalid_key'])
+        self.assertIsNone(row.primary_node)
+        self.assertFalse(ConceptLink.objects.filter(mock_item=item).exists())
+        item.refresh_from_db()
+        self.assertEqual(item.tagging_status, 'tagged')
+        again = FakeCall()
+        self.run_v2(again)
+        self.assertNotIn('locate', again.calls)  # the blind item is not re-located
+        self.assertEqual(ItemTagging.objects.filter(mock_item=item).count(), 1)
+
+
+class LlmTests(TestCase):
+    def test_unknown_platform_model_raises(self):
+        with self.assertRaises(GenerationError):
+            llm.platform_call('no-such-model')
+
+    def test_metered_call_records_latency_per_call(self):
+        metered = llm.MeteredCall(type('R', (), {'provider': 'p', 'model': 'm'})(), None)
+
+        def fake(resolved, system, user, meter, tenant, feature=None):
+            meter.elapsed_ms += 40
+            return 'text'
+
+        with patch('intelligence.services.llm._call', side_effect=fake):
+            self.assertEqual(metered('s', 'u'), 'text')
+            self.assertEqual(metered('s', 'u'), 'text')
+        self.assertEqual(metered.latencies_ms, [40, 40])
+        self.assertEqual(metered.model_ref, 'p:m')

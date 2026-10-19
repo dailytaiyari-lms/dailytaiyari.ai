@@ -8,12 +8,14 @@ import logging
 from collections import defaultdict
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from intelligence.models import AITaggingResult, ItemSkillTag, ItemTagging, SyllabusNode, TagDefinition
 from intelligence.services import tagging as tagging_v1
 from intelligence.services.itemtags import content_hash_for, replace_links
 from intelligence.services.llm import tenant_tagging_call
+from intelligence.services import taxonomy
 from intelligence.services.syllabus import ensure_node_concept, tagging_context
 from intelligence.services.tagging_v2 import cognitive_projection, tag_payloads
 from intelligence.versions import TAGGER_V2_PROMPT_VERSION
@@ -176,6 +178,11 @@ def _tag_group(tenant, subject, context, items, call, *, arm):
     tagger_version = f'{TAGGER_V2_PROMPT_VERSION}:{call.model_ref}'
     written = 0
     for result in results:
+        if result.error == 'no_topic':
+            # Locate found no valid topic: a result (needs review), not a retry.
+            result.error = ''
+            result.review_reasons = ['invalid_key']
+            result.needs_review = True
         if result.error:
             logger.info('tagging v2: %s %s not tagged (%s)', arm, result.id, result.error)
             continue
@@ -196,6 +203,38 @@ def _mock_item_subject(item):
     return subjects[0] if len(subjects) == 1 else None
 
 
+def _single_subject_test_ids(tenant, subject_ids):
+    """Mock tests whose courses have exactly one subject, and it is in ``subject_ids``."""
+    from quiz.models import MockTest
+
+    ids = []
+    for test in (MockTest.objects.filter(tenant=tenant).select_related('course')
+                 .prefetch_related('courses__subjects')):
+        courses = list(test.courses.all()) or ([test.course] if test.course_id else [])
+        subjects = [subject for course in courses for subject in course.subjects.all()]
+        if len(subjects) == 1 and subjects[0].id in subject_ids:
+            ids.append(test.id)
+    return ids
+
+
+def v2_mock_item_filter(tenant, subject_ids):
+    """Q selecting the mock items the v2 sweep owns (v1 must skip these)."""
+    subject_ids = set(subject_ids)
+    return (
+        Q(subject_id__in=subject_ids)
+        | Q(subject__isnull=True, topic__subject_id__in=subject_ids)
+        | Q(subject__isnull=True, topic__isnull=True,
+            mock_test_id__in=_single_subject_test_ids(tenant, subject_ids))
+    )
+
+
+def _candidate_q():
+    release = taxonomy.current_release()
+    version = release.version if release else ''
+    return (Q(tagging__isnull=True) | Q(tagging_status__in=['', 'stale'])
+            | ~Q(tagging__taxonomy_version=version))
+
+
 def tag_v2_for_tenant(tenant, subject_ids, call, *, limit=200):
     """Tag up to ``limit`` not-current items of these (treed) subjects."""
     from quiz.models import MockTestItem, Question
@@ -203,6 +242,7 @@ def tag_v2_for_tenant(tenant, subject_ids, call, *, limit=200):
     subject_ids = set(subject_ids)
     contexts, subjects = {}, {}
     picked = defaultdict(list)
+    candidates = _candidate_q()
 
     def context_for(subject):
         if subject.id not in contexts:
@@ -210,8 +250,6 @@ def tag_v2_for_tenant(tenant, subject_ids, call, *, limit=200):
         return contexts[subject.id]
 
     def take(arm, item, subject, tagging):
-        if tagging is not None and tagging.source == 'manual':
-            return False
         if _is_current(item, tagging, context_for(subject)):
             return False
         picked[(arm, subject.id)].append(item)
@@ -219,29 +257,30 @@ def tag_v2_for_tenant(tenant, subject_ids, call, *, limit=200):
         return True
 
     taken = 0
-    question_tags = {t.question_id: t for t in ItemTagging.objects.filter(tenant=tenant, question__isnull=False)}
     questions = (
         Question.objects.filter(tenant=tenant, subject_id__in=subject_ids).exclude(status='archived')
-        .select_related('subject__course', 'topic').order_by('created_at')
+        .exclude(tagging__source='manual').filter(candidates)
+        .select_related('subject__course', 'topic', 'tagging').order_by('created_at')
     )
     for question in questions.iterator():
         if taken >= limit:
             break
-        taken += take('question', question, question.subject, question_tags.get(question.id))
+        taken += take('question', question, question.subject, getattr(question, 'tagging', None))
 
-    item_tags = {t.mock_item_id: t for t in ItemTagging.objects.filter(tenant=tenant, mock_item__isnull=False)}
     items = (
-        MockTestItem.objects.filter(tenant=tenant)
-        .select_related('mock_test__course', 'subject__course', 'topic__subject__course')
+        MockTestItem.objects.filter(tenant=tenant).filter(v2_mock_item_filter(tenant, subject_ids))
+        .exclude(tagging__source='manual').filter(candidates)
+        .select_related('mock_test__course', 'subject__course', 'topic__subject__course', 'tagging')
+        .prefetch_related('mock_test__courses__subjects')
         .order_by('created_at')
     )
-    for item in items.iterator():
+    for item in items:
         if taken >= limit:
             break
         subject = _mock_item_subject(item)
         if subject is None or subject.id not in subject_ids:
-            continue  # v1 handles it
-        taken += take('mock_item', item, subject, item_tags.get(item.id))
+            continue
+        taken += take('mock_item', item, subject, getattr(item, 'tagging', None))
 
     tagged = 0
     for (arm, subject_id), group in picked.items():
@@ -260,6 +299,9 @@ def run_sweep(tenant, *, limit=200, call=None):
         .values_list('subject_id', flat=True)
     )
     v2 = tag_v2_for_tenant(tenant, treed, call or tenant_tagging_call(tenant), limit=limit) if treed else 0
-    v1 = tagging_v1.run_tagging_for_tenant(tenant, limit=limit, exclude_subject_ids=treed, check_budget=False)
+    v1 = tagging_v1.run_tagging_for_tenant(
+        tenant, limit=limit, exclude_subject_ids=treed, check_budget=False,
+        exclude_mock_q=v2_mock_item_filter(tenant, treed) if treed else None,
+    )
     logger.info('tagging sweep: tenant %s — v2 %d, v1 %d item(s)', tenant.id, v2, v1)
     return {'v2': v2, 'v1': v1}

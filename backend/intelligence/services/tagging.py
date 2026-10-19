@@ -255,7 +255,7 @@ def untagged_questions(tenant, limit=None, exclude_subject_ids=()):
     return list(qs[:limit] if limit else qs)
 
 
-def untagged_mock_items(tenant, limit=None, exclude_subject_ids=()):
+def untagged_mock_items(tenant, limit=None, exclude_subject_ids=(), exclude_mock_q=None):
     from quiz.models import MockTestItem
 
     qs = MockTestItem.objects.filter(
@@ -263,10 +263,13 @@ def untagged_mock_items(tenant, limit=None, exclude_subject_ids=()):
     ).select_related('mock_test__course', 'subject', 'topic').order_by('created_at')
     if exclude_subject_ids:
         qs = qs.exclude(subject_id__in=list(exclude_subject_ids))
+    if exclude_mock_q is not None:
+        qs = qs.exclude(exclude_mock_q)
     return list(qs[:limit] if limit else qs)
 
 
-def run_tagging_for_tenant(tenant, *, limit=200, exclude_subject_ids=(), check_budget=True):
+def run_tagging_for_tenant(tenant, *, limit=200, exclude_subject_ids=(), check_budget=True,
+                           exclude_mock_q=None):
     """Budget-gated v1 tagging pass over a tenant's untagged/stale items.
 
     ``exclude_subject_ids``: subjects with a syllabus tree, which the v2 sweep
@@ -277,7 +280,8 @@ def run_tagging_for_tenant(tenant, *, limit=200, exclude_subject_ids=(), check_b
     if check_budget:
         _check_budget(tenant)
     questions = untagged_questions(tenant, limit=limit, exclude_subject_ids=exclude_subject_ids)
-    items = untagged_mock_items(tenant, limit=limit, exclude_subject_ids=exclude_subject_ids)
+    items = untagged_mock_items(tenant, limit=limit, exclude_subject_ids=exclude_subject_ids,
+                                exclude_mock_q=exclude_mock_q)
     tagged = tag_questions(tenant, questions) + tag_mock_items(tenant, items)
     logger.info('tagging: tenant %s — %d item(s) tagged', tenant.id, tagged)
     return tagged
