@@ -42,7 +42,7 @@ export default function WhatHappened({ attemptKind, attemptId, itemKind, itemId,
   }, [initial])
 
   const pick = async (value) => {
-    if (saving || value === choice) return
+    if (savingRef.current || value === choice) return
     const previous = choice
     setChoice(value)
     setSaving(true)
@@ -70,7 +70,13 @@ export default function WhatHappened({ attemptKind, attemptId, itemKind, itemId,
   }
 
   return (
-    <div role="group" aria-label="What happened?" className="mt-3 flex flex-wrap items-center gap-2">
+    <div
+      role="group"
+      aria-label="What happened?"
+      className={`mt-3 flex flex-wrap items-center gap-2 transition-opacity ${
+        saving ? 'opacity-60' : ''
+      }`}
+    >
       <span className="text-xs text-surface-500">What happened?</span>
       {CHOICES.map(([value, label]) => (
         <button

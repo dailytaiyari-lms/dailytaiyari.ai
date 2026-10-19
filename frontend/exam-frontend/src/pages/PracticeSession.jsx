@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { practiceService } from '../services/practiceService'
@@ -18,6 +18,8 @@ const PracticeSession = () => {
 
   const [index, setIndex] = useState(0)
   const [selected, setSelected] = useState([])
+  const [finishing, setFinishing] = useState(false)
+  const finishingRef = useRef(false) // set synchronously: blocks a second tap during the flush
   const [numerical, setNumerical] = useState('')
   const [review, setReview] = useState(null) // grading payload for current item
   const [summary, setSummary] = useState(null)
@@ -54,6 +56,10 @@ const PracticeSession = () => {
       queryClient.invalidateQueries({ queryKey: ['practiceSets'] })
       queryClient.invalidateQueries({ queryKey: ['practiceMastery'] })
     },
+    onError: () => {
+      finishingRef.current = false
+      setFinishing(false)
+    },
   })
 
   if (isLoading) return <Loading fullScreen />
@@ -79,6 +85,11 @@ const PracticeSession = () => {
   }
 
   const nextQuestion = () => {
+    if (index + 1 >= total) {
+      if (finishingRef.current) return
+      finishingRef.current = true
+      setFinishing(true)
+    }
     setReview(null)
     setSelected([])
     setNumerical('')
@@ -268,7 +279,7 @@ const PracticeSession = () => {
           {review ? (
             <button
               onClick={nextQuestion}
-              disabled={submitMutation.isPending}
+              disabled={finishing || submitMutation.isPending}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary-500 text-white font-medium hover:bg-primary-600 transition-colors disabled:opacity-50"
             >
               {index + 1 < total ? 'Next question' : 'Finish set'}

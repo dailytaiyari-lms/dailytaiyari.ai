@@ -126,8 +126,9 @@ export default function useResponseTimeline({ attemptKind, attemptId, parentId, 
   }
 
   // Syncs run one at a time, each building its payload when it starts, so an
-  // older snapshot can never land after a newer one and an awaited flush()
-  // sends the latest state after any in-flight sync.
+  // awaited flush() sends the latest state after any in-flight sync. Ordering
+  // is guaranteed by this client chain together with the server guard that
+  // ignores a snapshot whose elapsed_ms is lower than the stored one.
   // flush({ final: true }) is the pre-submit call: it sends even when nothing
   // is dirty (time passing never marks the session dirty, and the server needs
   // the final elapsed_ms to credit the last reading time) and resolves after at
