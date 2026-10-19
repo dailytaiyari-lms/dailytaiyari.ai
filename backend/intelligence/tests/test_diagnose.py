@@ -1,12 +1,17 @@
 """Response diagnosis: schema, fact assembly, persistence and state weights."""
+from datetime import timedelta
+
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
 from intelligence.models import (
     AttemptTimeline, ItemStats, ResponseDiagnosis, ResponseSelfReport,
 )
 from intelligence.services import diagnose, itemstats
 from intelligence.services.events import record_attempt_events
+from intelligence.models import ConceptLink, PracticeSet, PracticeSetItem
 from intelligence.tests.diagnosis_fixtures import DiagnosisTestCase
+from quiz.models import Answer, Question, QuestionOption, Quiz, QuizAttempt, QuizQuestion
 from intelligence.versions import CLASSIFIER_VERSION, STATE_MODEL_VERSION
 
 
@@ -152,3 +157,128 @@ class DiagnoseAttemptTests(DiagnosisTestCase):
         stats = itemstats.recompute_for_item(self.guessed)
         self.assertEqual(stats.active_time_n, 0)
         self.assertIsNone(ItemStats.objects.get(mock_item=self.guessed).median_active_seconds)
+
+
+class DiagnoseFixRoundTests(DiagnosisTestCase):
+    def make_bank_question(self, n):
+        question = Question.objects.create(
+            tenant=self.tenant, topic=self.topic, subject=self.subject,
+            question_text=f'Bank question {n}?', question_type='mcq',
+            difficulty='medium', status='published', correct_answer='0', marks=1,
+        )
+        for i in range(3):
+            QuestionOption.objects.create(
+                tenant=self.tenant, question=question, option_text=f'Option {i}',
+                is_correct=(i == 0), order=i,
+            )
+        ConceptLink.objects.create(
+            tenant=self.tenant, concept=self.concept, question=question,
+            is_primary=True, weight=1.0, source='generator',
+        )
+        return question
+
+    def test_blank_subjective_row_is_skipped_not_pending(self):
+        item = self.make_item(item_type='subjective')
+        attempt = self.make_attempt(minutes_ago=30)
+        self.answer(attempt, item, text='', needs_manual=True)
+        key = f'item:{item.id}'
+        self.make_timeline(attempt, [[0, 'e', key], [40000, 'l', key]])
+        self.finish(attempt)
+        diagnose.diagnose_attempt('mock', str(attempt.id))
+        row = ResponseDiagnosis.objects.get(attempt_id=attempt.id, mock_item=item)
+        self.assertFalse(row.answered)
+        self.assertEqual(row.label, 'skipped')
+
+    def test_corrupt_only_session_is_treated_as_no_timeline(self):
+        item = self.make_item()
+        attempt = self.make_attempt()
+        AttemptTimeline.objects.create(
+            tenant=self.tenant, student=self.student, attempt_kind='mock',
+            attempt_id=attempt.id, clock='server', sessions={'s1': 'not-a-dict'},
+        )
+        self.finish(attempt)
+        diagnose.diagnose_attempt('mock', str(attempt.id))
+        row = ResponseDiagnosis.objects.get(attempt_id=attempt.id, mock_item=item)
+        self.assertEqual(row.label, 'unclear')
+        self.assertFalse(row.has_timeline)
+
+    def test_quiz_loader_rows_and_session_relative_answer_time(self):
+        quiz = Quiz.objects.create(
+            tenant=self.tenant, course=self.course, title='Q', quiz_type='topic',
+            duration_minutes=15,
+        )
+        q1, q2 = self.make_bank_question(1), self.make_bank_question(2)
+        QuizQuestion.objects.create(quiz=quiz, question=q1)
+        QuizQuestion.objects.create(quiz=quiz, question=q2)
+        attempt = QuizAttempt.objects.create(student=self.student, quiz=quiz)
+        QuizAttempt.objects.filter(id=attempt.id).update(
+            started_at=timezone.now() - timedelta(minutes=30))
+        attempt.refresh_from_db()
+        Answer.objects.create(quiz_attempt=attempt, question=q1, selected_option='1',
+                              is_correct=False)
+        k = f'bank:{q1.id}'
+        self.make_timeline(attempt, [
+            [0, 'e', k], [20000, 'a', k, {'sel': [1]}], [25000, 'l', k],
+        ], clock='client', offset_ms=60000, kind='quiz')
+        attempt.status = 'completed'
+        attempt.completed_at = attempt.started_at + timedelta(minutes=10)
+        attempt.save()
+        self.assertEqual(diagnose.diagnose_attempt('quiz', str(attempt.id)), 2)
+        rows = {r.question_id: r for r in ResponseDiagnosis.objects.filter(attempt_id=attempt.id)}
+        self.assertTrue(rows[q1.id].answered)
+        self.assertEqual(rows[q2.id].label, 'not_seen')
+        self.assertAlmostEqual(rows[q1.id].metrics['final_answer_at_s'], 20.0, delta=1.0)
+
+    def test_practice_loader_rows_are_untimed(self):
+        q1, q2 = self.make_bank_question(1), self.make_bank_question(2)
+        practice_set = PracticeSet.objects.create(
+            tenant=self.tenant, student=self.student, course=self.course,
+            status='completed', deficit_kind='starter', deficit_signature='starter:t',
+            started_at=timezone.now() - timedelta(minutes=10),
+            completed_at=timezone.now(),
+        )
+        PracticeSetItem.objects.create(
+            tenant=self.tenant, practice_set=practice_set, question=q1, order=0,
+            selected_options=[1], is_correct=False, answered_at=timezone.now())
+        PracticeSetItem.objects.create(
+            tenant=self.tenant, practice_set=practice_set, question=q2, order=1)
+        self.assertEqual(diagnose.diagnose_attempt('practice', str(practice_set.id)), 2)
+        rows = ResponseDiagnosis.objects.filter(attempt_id=practice_set.id)
+        self.assertEqual({r.attempt_kind for r in rows}, {'practice'})
+        for row in rows:
+            self.assertNotIn('last_minute', row.flags)
+
+    def test_practice_digest_graded_by_option_flags(self):
+        q = self.make_bank_question(1)
+        q.correct_answer = '2'       # stale; practice grades by is_correct options
+        q.save()
+        q = Question.objects.prefetch_related('options').get(id=q.id)
+        ref = diagnose._Ref('q', q, True, 0.0, False, [0], None, practice=True)
+        self.assertTrue(diagnose._digest_correct(ref, {'sel': [0]}))
+        ref.practice = False
+        self.assertFalse(diagnose._digest_correct(ref, {'sel': [0]}))
+
+    def test_prior_mastery_uses_only_evidence_before_the_attempt(self):
+        first = self.make_item()
+        old = self.make_attempt(minutes_ago=300)
+        self.answer(old, first, selected=[1])
+        self.finish(old, after_minutes=20)
+        record_attempt_events(old)
+        item = self.make_item()
+        new = self.make_attempt(minutes_ago=30)
+        self.answer(new, item, selected=[2])
+        self.finish(new)
+        record_attempt_events(new)
+        diagnose.diagnose_attempt('mock', str(new.id))
+        row = ResponseDiagnosis.objects.get(attempt_id=new.id, mock_item=item)
+        self.assertIn('prior_mastery', row.metrics)
+
+    def test_own_events_are_not_prior_mastery(self):
+        item = self.make_item()
+        attempt = self.make_attempt(minutes_ago=30)
+        self.answer(attempt, item, selected=[2])
+        self.finish(attempt)
+        record_attempt_events(attempt)
+        diagnose.diagnose_attempt('mock', str(attempt.id))
+        row = ResponseDiagnosis.objects.get(attempt_id=attempt.id, mock_item=item)
+        self.assertNotIn('prior_mastery', row.metrics)

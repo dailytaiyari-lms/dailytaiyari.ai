@@ -3,7 +3,6 @@ ResponseDiagnosis rows. The judgment itself lives in ``services.diagnosis``
 (pure); this module only collects facts — grading, timeline, prior mastery,
 item statistics — and writes results. Idempotent: a rerun overwrites.
 """
-import logging
 from dataclasses import dataclass
 
 from django.utils import timezone
@@ -14,11 +13,10 @@ from intelligence.models import (
     ResponseSelfReport,
 )
 from intelligence.services import diagnosis as rules
-from intelligence.services.timeline import KeyTimeline, reduce_sessions, window_start_s
+from intelligence.services.timeline import (
+    KeyTimeline, _valid_sessions, reduce_sessions, window_start_s,
+)
 from intelligence.versions import CLASSIFIER_VERSION
-
-logger = logging.getLogger(__name__)
-
 
 @dataclass
 class _Ref:
@@ -31,6 +29,7 @@ class _Ref:
     selected: list
     numeric: object           # float | None
     pending: bool = False
+    practice: bool = False    # graded by QuestionOption.is_correct, like practice does
 
     @property
     def key(self):
@@ -77,7 +76,7 @@ def _item_ref(item, answer):
         return _Ref('m', item, False, 0.0, None, [], None)
     answered = bool(answer.selected_options or answer.numerical_answer is not None
                     or (answer.answer_text or '').strip() or (answer.code or '').strip())
-    pending = bool(answer.needs_manual_grading)
+    pending = answered and bool(answer.needs_manual_grading)
     return _Ref(
         'm', item, answered, item_score_fraction(answer),
         None if (pending or not answered) else answer.is_correct,
@@ -135,7 +134,7 @@ def _load(kind, attempt_id):
                 'q', set_item.question, answered, 1.0 if set_item.is_correct else 0.0,
                 set_item.is_correct if answered else None,
                 [i for i in (set_item.selected_options or []) if isinstance(i, int)],
-                _f(set_item.numerical_answer),
+                _f(set_item.numerical_answer), practice=True,
             ))
         return _Loaded(practice_set.student, refs, practice_set.created_at,
                        practice_set.started_at or practice_set.created_at,
@@ -149,7 +148,7 @@ def _correct_indices(ref):
     if ref.arm == 'm':
         return {i for i, option in enumerate(item.options or [])
                 if isinstance(option, dict) and option.get('is_correct')}
-    if item.question_type in ('mcq', 'true_false'):
+    if not ref.practice and item.question_type in ('mcq', 'true_false'):
         raw = (item.correct_answer or '').strip()
         return {int(raw)} if raw.isdigit() else set()
     return {i for i, option in enumerate(item.options.all()) if option.is_correct}
@@ -246,10 +245,12 @@ def diagnose_attempt(kind, attempt_id):
 
     timeline = AttemptTimeline.objects.filter(attempt_kind=kind, attempt_id=attempt_id).first()
     sessions = (timeline.sessions or {}) if timeline else {}
+    if sessions and not _valid_sessions(sessions):
+        sessions = {}     # every stored session is corrupt: no usable timeline
     clock = timeline.clock if timeline else None
     keys = {ref.key for ref in loaded.refs}
     lines = reduce_sessions(sessions, clock=clock, known_keys=keys) if sessions else {}
-    truncated = any(s.get('truncated') for s in sessions.values())
+    truncated = any(isinstance(s, dict) and s.get('truncated') for s in sessions.values())
     offset_s = window_start_s(sessions, clock) if sessions else 0.0
 
     elapsed_s = None

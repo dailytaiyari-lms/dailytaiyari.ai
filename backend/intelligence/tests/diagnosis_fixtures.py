@@ -47,7 +47,7 @@ class DiagnosisTestCase(TestCase):
         )
 
     def make_item(self, *, item_type='mcq', difficulty='medium', numerical=None):
-        options = [] if item_type == 'numerical' else [
+        options = [] if item_type in ('numerical', 'subjective') else [
             {'text': 'A', 'is_correct': True},
             {'text': 'B', 'is_correct': False},
             {'text': 'C', 'is_correct': False},
@@ -76,10 +76,12 @@ class DiagnosisTestCase(TestCase):
         attempt.refresh_from_db()
         return attempt
 
-    def answer(self, attempt, item, *, selected=None, numerical=None, correct=False):
+    def answer(self, attempt, item, *, selected=None, numerical=None, correct=False,
+               text='', needs_manual=False):
         return MockTestAnswer.objects.create(
             tenant=self.tenant, attempt=attempt, item=item,
             selected_options=selected or [], numerical_answer=numerical,
+            answer_text=text, needs_manual_grading=needs_manual,
             is_correct=correct, marks_obtained=4 if correct else 0, max_marks=4,
         )
 

@@ -39,13 +39,9 @@ def _latest_per_answer(events):
 
 
 def _selected_indices(event):
-    digest = event.response_digest or {}
-    if isinstance(digest.get('selected'), list):
-        return [i for i in digest['selected'] if isinstance(i, int)]
-    raw = digest.get('selected_option')
-    if isinstance(raw, str) and raw.strip().isdigit():
-        return [int(raw.strip())]
-    return []
+    from intelligence.services.state import selected_from_digest
+
+    return selected_from_digest(event.response_digest)
 
 
 def _point_biserial(pairs):
