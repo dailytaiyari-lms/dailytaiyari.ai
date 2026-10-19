@@ -32,6 +32,13 @@ class UsualTimeTests(SimpleTestCase):
         self.assertEqual(usual_seconds(item(difficulty='')), (70.0, 'default'))
         self.assertEqual(usual_seconds(item(item_type='subjective')), (None, 'none'))
 
+    def test_timeless_ignores_stats(self):
+        self.assertEqual(usual_seconds(ItemFacts(item_type='subjective', usual_s=300.0)),
+                         (None, 'none'))
+        d = classify(item(item_type='subjective', usual_s=300.0), timing(10.0), HOUR)
+        self.assertNotEqual(d.label, 'guess')
+        self.assertNotIn('too_fast', d.flags)
+
 
 class SlipMatchTests(SimpleTestCase):
     def test_transforms(self):
@@ -44,6 +51,11 @@ class SlipMatchTests(SimpleTestCase):
         self.assertFalse(slip_match(0, 9.81, 0.01))
         self.assertFalse(slip_match(5.0, 0, 0.01))
         self.assertFalse(slip_match(None, 9.81, 0.01))
+
+    def test_slip_tolerance_scales_with_candidate(self):
+        self.assertFalse(slip_match(0.3, 5.0, 0.5))
+        self.assertFalse(slip_match(0.01, 9.81, 0.01))
+        self.assertFalse(slip_match(-0.005, 9.81, 0.01))
 
 
 class LabelTests(SimpleTestCase):
@@ -153,6 +165,53 @@ class LabelTests(SimpleTestCase):
         self.assertEqual(d.metrics['usual_source'], 'default')
         self.assertAlmostEqual(d.metrics['rel_speed'], 0.5)
         self.assertEqual(d.metrics['active_s'], 35.0)
+    def test_mastery_slip_near_threshold_downgrades(self):
+        facts = item(prior_mastery=0.85, prior_confidence='high')
+        d = classify(facts, timing(36.0), HOUR)
+        self.assertEqual((d.label, d.confidence), ('careless_slip', 'low'))
+        d = classify(facts, timing(60.0), HOUR)
+        self.assertEqual((d.label, d.confidence), ('careless_slip', 'medium'))
+
+    def test_unanswered_short_rule_near_threshold_downgrades(self):
+        window = WindowFacts(duration_s=3600, elapsed_s=3600, timed_out=True)
+        t = timing(29.0, first_enter_at_s=1000.0, final_answer_at_s=None)
+        d = classify(item(answered=False), t, window)
+        self.assertEqual((d.label, d.confidence), ('time_pressure', 'low'))
+
+    def test_zero_visit_answered_is_no_timeline(self):
+        d = classify(item(), TimingFacts(), HOUR)
+        self.assertNotEqual(d.label, 'guess')
+        self.assertIn('no_timeline', [e['code'] for e in d.evidence])
+
+    def test_time_left_metric_clamped(self):
+        d = classify(item(), timing(30.0, final_answer_at_s=3700.0), HOUR)
+        self.assertEqual(d.metrics['time_left_s'], 0.0)
+        self.assertIn('last_minute', d.flags)
+
+    def test_rushed_time_pressure_far_from_its_cut_stays_medium(self):
+        # rel 0.43: 29% from the rushed cut (0.6); only the slip cut is near
+        d = classify(item(), timing(30.0, final_answer_at_s=3570.0), HOUR)
+        self.assertEqual((d.label, d.confidence), ('time_pressure', 'medium'))
+
+    def test_mastery_slip_far_from_slip_cuts_stays_medium(self):
+        # rel 0.70: near the rushed cut, which did not decide this label
+        facts = item(prior_mastery=0.85, prior_confidence='high')
+        d = classify(facts, timing(49.0), HOUR)
+        self.assertEqual((d.label, d.confidence), ('careless_slip', 'medium'))
+
+    def test_unanswered_late_entry_involves_no_cut(self):
+        window = WindowFacts(duration_s=3600, elapsed_s=3600, timed_out=True)
+        late = timing(20.0, first_enter_at_s=3300.0, final_answer_at_s=None)
+        d = classify(item(answered=False), late, window)
+        self.assertEqual((d.label, d.confidence), ('time_pressure', 'medium'))
+
+    def test_labels_decided_without_time_never_downgrade(self):
+        weak = item(prior_mastery=0.3, prior_confidence='medium')
+        d = classify(weak, timing(36.0), HOUR)
+        self.assertEqual((d.label, d.confidence), ('concept_gap', 'medium'))
+        d = classify(item(misconception_pick=True), timing(36.0), HOUR)
+        self.assertEqual((d.label, d.confidence), ('concept_gap', 'medium'))
+
 
 
 class ReconcileTests(SimpleTestCase):
@@ -174,40 +233,3 @@ class ReconcileTests(SimpleTestCase):
 
     def test_no_report(self):
         self.assertEqual(reconcile('unclear', 'low', [], '', False), 'unclear')
-
-
-class FixRound1Tests(SimpleTestCase):
-    def test_timeless_ignores_stats(self):
-        self.assertEqual(usual_seconds(ItemFacts(item_type='subjective', usual_s=300.0)),
-                         (None, 'none'))
-        d = classify(item(item_type='subjective', usual_s=300.0), timing(10.0), HOUR)
-        self.assertNotEqual(d.label, 'guess')
-        self.assertNotIn('too_fast', d.flags)
-
-    def test_mastery_slip_near_threshold_downgrades(self):
-        facts = item(prior_mastery=0.85, prior_confidence='high')
-        d = classify(facts, timing(36.0), HOUR)
-        self.assertEqual((d.label, d.confidence), ('careless_slip', 'low'))
-        d = classify(facts, timing(60.0), HOUR)
-        self.assertEqual((d.label, d.confidence), ('careless_slip', 'medium'))
-
-    def test_unanswered_short_rule_near_threshold_downgrades(self):
-        window = WindowFacts(duration_s=3600, elapsed_s=3600, timed_out=True)
-        t = timing(29.0, first_enter_at_s=1000.0, final_answer_at_s=None)
-        d = classify(item(answered=False), t, window)
-        self.assertEqual((d.label, d.confidence), ('time_pressure', 'low'))
-
-    def test_slip_tolerance_scales_with_candidate(self):
-        self.assertFalse(slip_match(0.3, 5.0, 0.5))
-        self.assertFalse(slip_match(0.01, 9.81, 0.01))
-        self.assertFalse(slip_match(-0.005, 9.81, 0.01))
-
-    def test_zero_visit_answered_is_no_timeline(self):
-        d = classify(item(), TimingFacts(), HOUR)
-        self.assertNotEqual(d.label, 'guess')
-        self.assertIn('no_timeline', [e['code'] for e in d.evidence])
-
-    def test_time_left_metric_clamped(self):
-        d = classify(item(), timing(30.0, final_answer_at_s=3700.0), HOUR)
-        self.assertEqual(d.metrics['time_left_s'], 0.0)
-        self.assertIn('last_minute', d.flags)

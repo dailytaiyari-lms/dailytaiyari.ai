@@ -99,31 +99,30 @@ def _mastery_known(facts):
     return facts.prior_mastery is not None and facts.prior_confidence in MASTERY_CONFIDENT
 
 
-def _near_threshold(rel, usual):
-    cuts = (
-        max(T['too_fast_floor_s'] / usual, T['too_fast_ratio']),
-        T['too_long_ratio'],
-        T['rushed_ratio'],
-        T['slip_speed_min'],
-        T['slip_speed_max'],
-        T['unanswered_short_ratio'],
-    )
+def _near_cut(rel, cuts):
+    """Is rel within the band of any cut that decided the label?"""
     return any(abs(rel - cut) <= T['near_threshold_band'] * cut for cut in cuts)
 
 
-def _label(facts, timing, window, flags, rel, zone, source):
-    """(label, confidence, decided_by_time) — first matching rule wins."""
+def _label(facts, timing, window, flags, rel, zone, source, usual):
+    """(label, confidence, cuts) — first matching rule wins.
+
+    ``cuts`` are the rel-speed thresholds that decided the label (empty when
+    time did not decide it, or no rel cut was involved).
+    """
     has = set(flags).__contains__
     fast_confidence = 'high' if source == 'stats' else 'medium'
+    fast_cut = (max(T['too_fast_floor_s'] / usual, T['too_fast_ratio']),) if usual else ()
+    none = ()
 
     if facts.pending_grade:
-        return 'unclear', 'low', False
+        return 'unclear', 'low', none
 
     if not facts.answered:
         if timing is None:
-            return 'unclear', 'low', False
+            return 'unclear', 'low', none
         if timing.visits == 0 or timing.active_s < T['not_seen_active_s']:
-            return 'not_seen', 'high', False
+            return 'not_seen', 'high', none
         if window.duration_s:
             ended_late = window.timed_out or (
                 window.elapsed_s is not None and window.duration_s - window.elapsed_s <= zone
@@ -134,36 +133,36 @@ def _label(facts, timing, window, flags, rel, zone, source):
             )
             short = rel is not None and rel < T['unanswered_short_ratio']
             if ended_late and (late_entry or short):
-                return 'time_pressure', 'medium', True
-        return 'skipped', 'medium', False
+                return 'time_pressure', 'medium', () if late_entry else (T['unanswered_short_ratio'],)
+        return 'skipped', 'medium', none
 
     if facts.score_fraction >= T['correct_score']:
         if facts.item_type in MCQ_TYPES and has('too_fast'):
-            return 'correct_lucky', fast_confidence, True
+            return 'correct_lucky', fast_confidence, fast_cut
         if has('too_long'):
-            return 'correct_slow', 'medium', True
-        return 'correct', 'high', False
+            return 'correct_slow', 'medium', (T['too_long_ratio'],)
+        return 'correct', 'high', none
 
     if has('too_fast'):
-        return 'guess', fast_confidence, True
+        return 'guess', fast_confidence, fast_cut
     if has('right_to_wrong'):
-        return 'second_guess', 'high', False
+        return 'second_guess', 'high', none
     if has('rushed'):
-        return 'time_pressure', 'medium', True
+        return 'time_pressure', 'medium', (T['rushed_ratio'],)
     if has('slip_match'):
-        return 'careless_slip', 'high', False
+        return 'careless_slip', 'high', none
 
     known = _mastery_known(facts)
     strong = known and facts.prior_mastery >= T['slip_mastery'] and not has('misconception_pick')
     if strong and has('too_long'):
-        return 'unclear', 'low', False   # strong on paper, yet struggled: conflict
+        return 'unclear', 'low', none   # strong on paper, yet struggled: conflict
     if strong and (rel is None or T['slip_speed_min'] <= rel <= T['slip_speed_max']):
-        return 'careless_slip', 'medium', rel is not None
+        return 'careless_slip', 'medium', (T['slip_speed_min'], T['slip_speed_max']) if rel is not None else none
     if (known and facts.prior_mastery < T['gap_mastery']) or has('misconception_pick'):
-        return 'concept_gap', 'medium', False
+        return 'concept_gap', 'medium', none
     if has('too_long'):
-        return 'concept_gap', 'medium', True
-    return 'unclear', 'low', False
+        return 'concept_gap', 'medium', (T['too_long_ratio'],)
+    return 'unclear', 'low', none
 
 
 def classify(facts, timing, window):
@@ -231,9 +230,8 @@ def classify(facts, timing, window):
         evidence.append({'code': 'prior_mastery',
                          'detail': f'{facts.prior_mastery:.2f} ({facts.prior_confidence})'})
 
-    label, confidence, by_time = _label(facts, timing, window, flags, rel, zone, source)
-    if by_time and confidence != 'low' and source == 'default' and rel is not None \
-            and _near_threshold(rel, usual):
+    label, confidence, cuts = _label(facts, timing, window, flags, rel, zone, source, usual)
+    if cuts and confidence != 'low' and source == 'default' and rel is not None             and _near_cut(rel, cuts):
         confidence = 'low'
     return Diagnosis(label, confidence, flags, evidence, metrics)
 

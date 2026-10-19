@@ -37,7 +37,7 @@ DEFAULT_USUAL_S = {
     'numerical': _WORKED,
     'fill_blank': _WORKED,
 }
-TIMELESS_TYPES = {'subjective', 'coding'}   # time rules never apply
+TIMELESS_TYPES = {'subjective', 'coding'}   # usual-time rules (too_fast, too_long, rushed, rel_speed) never apply; window rules (last_minute, late entry) still can
 MCQ_TYPES = {'mcq', 'mcq_multi', 'true_false'}
 MASTERY_CONFIDENT = {'medium', 'high'}      # prior-mastery confidences the rules trust
 
