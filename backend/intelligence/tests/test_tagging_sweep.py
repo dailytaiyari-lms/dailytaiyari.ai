@@ -188,6 +188,27 @@ class SweepTests(TestCase):
         self.assertIn(str(self.tenant.id), queued)
         self.assertNotIn(str(idle.id), queued)
 
+    def test_result_without_a_primary_keeps_existing_concept_links(self):
+        from intelligence.services.itemtags import replace_links
+
+        concept = syllabus.ensure_node_concept(SyllabusNode.objects.get(key=FRICTION))
+        replace_links(self.question, [concept], source='llm_tagger', tagger_version='1:v1-model')
+        item = self._blind_item()
+        replace_links(item, [concept], source='llm_tagger', tagger_version='1:v1-model')
+        call = FakeCall(locate={str(item.id): {'topic_key': 'mini.physics.nope', 'confidence': 0.9}},
+                        tag={str(self.question.id): tag_entry(primary_subtopic='',
+                                                              proposed_subtopic='Rolling friction')})
+        self.run_v2(call)
+        for kind, obj in (('question', self.question), ('mock_item', item)):
+            with self.subTest(kind):
+                row = ItemTagging.objects.get(**{kind: obj})
+                self.assertEqual(row.review_status, 'needs_review')
+                self.assertIsNone(row.primary_node)
+                self.assertEqual(list(ConceptLink.objects.filter(**{kind: obj}).values_list(
+                    'concept_id', 'tagger_version')), [(concept.id, '1:v1-model')])
+        # Skill tags are still written for the proposed-subtopic result.
+        self.assertTrue(ItemSkillTag.objects.filter(question=self.question).exists())
+
     def test_manual_tags_are_never_overwritten(self):
         ItemTagging.objects.create(tenant=self.tenant, question=self.question, source='manual',
                                    thinking_level='recall')

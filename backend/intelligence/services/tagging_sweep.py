@@ -139,8 +139,13 @@ def write_result(item, result, context, nodes, tagger_version, *, subject, allow
 
     primary = nodes.get(result.primary_subtopic)
     secondaries = [nodes[key] for key in result.secondary_subtopics if key in nodes] if primary else []
-    concepts = [ensure_node_concept(node) for node in ([primary, *secondaries] if primary else [])]
-    replace_links(item, concepts, source='llm_tagger', tagger_version=tagger_version[:LINK_VERSION_CHARS])
+    if primary is not None:
+        concepts = [ensure_node_concept(node) for node in [primary, *secondaries]]
+        replace_links(item, concepts, source='llm_tagger', tagger_version=tagger_version[:LINK_VERSION_CHARS])
+    # With no valid primary (no topic, an invalid key, a proposed subtopic) the
+    # existing ConceptLinks stay untouched: they may be v1 links that feed
+    # mastery, and an empty v2 answer is no reason to drop them. The
+    # needs_review ItemTagging and the skill tags are still written below.
 
     if tagging is None:
         tagging = ItemTagging(tenant=item.tenant, **{arm: item})

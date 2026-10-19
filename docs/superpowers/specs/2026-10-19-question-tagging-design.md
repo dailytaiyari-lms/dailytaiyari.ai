@@ -415,6 +415,11 @@ calibration table (§6.3).
   stored as a `needs_review` result with reason `invalid_key`. It is not
   retried until the tree changes. Transient failures (call errors,
   unparseable replies) leave the item untagged so it is retried.
+- **No primary, no link change:** when a v2 result has no valid primary
+  subtopic (no topic, an invalid key, or a `proposed_subtopic`), the item's
+  existing ConceptLinks are left untouched, including v1 `llm_tagger` links
+  that feed mastery. The `needs_review` ItemTagging and the skill tags are
+  still written.
 - **Module layout:** the pure core is `services/tagging_v2.py`. The
   database shell is `services/tagging_sweep.py`.
 
