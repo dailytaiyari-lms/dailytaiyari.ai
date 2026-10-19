@@ -4,6 +4,8 @@ These pin the layer's two core guarantees:
 - everything is idempotent (double calls change nothing), and
 - the old signal-driven analytics double-count stays dead.
 """
+from datetime import timedelta
+
 from django.test import TestCase
 from django.utils import timezone
 
@@ -158,7 +160,9 @@ class LearningEventTests(IntelligenceTestCase):
         # Manual grade appends a superseding event with partial credit.
         item_answer.marks_obtained = 4
         item_answer.needs_manual_grading = False
-        item_answer.graded_at = timezone.now()
+        # Strictly after the attempt: Windows' coarse clock can otherwise give
+        # completed_at and graded_at the same tick, making "latest" a coin toss.
+        item_answer.graded_at = event.occurred_at + timedelta(seconds=1)
         item_answer.save()
         event_service.record_regrade_event(item_answer)
         self.assertEqual(LearningEvent.objects.count(), 2)

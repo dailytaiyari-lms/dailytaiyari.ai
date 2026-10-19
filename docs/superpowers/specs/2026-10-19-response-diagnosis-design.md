@@ -318,9 +318,15 @@ A subjective answer still awaiting a grade (`needs_manual_grading`) is
 - *high* — `not_seen`, plain `correct`, `second_guess`, `slip_match`, or
   `too_fast` on an item with `usual_source == 'stats'`.
 - *medium* — other time-based or mastery-based rules.
-- *low* — `unclear`, or any time-decided rule on a default usual time with
-  `rel_speed` within 20% of a threshold. Time-decided rules include the
-  mastery slip's 0.5–2.5 speed window and the unanswered 0.5 × usual rule.
+- *low* — `unclear`, or a time-decided rule on a default usual time with
+  `rel_speed` within 20% of **the threshold that decided that label**.
+  Proximity to unrelated cuts does not count. Time-decided rules and their
+  cuts:
+  - too_fast → the fast cut;
+  - too_long → 2.5;
+  - rushed → 0.6;
+  - the mastery slip → its 0.5–2.5 speed window;
+  - unanswered time pressure → the 0.5 × usual short rule (not late entry).
 
 **Prior mastery:** `compute_state_fields` over the student's observations
 for the item's primary concept, restricted to events with `occurred_at <
