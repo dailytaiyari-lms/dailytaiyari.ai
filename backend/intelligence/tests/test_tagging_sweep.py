@@ -321,7 +321,6 @@ class SweepTests(TestCase):
         self.assertNotIn('locate', again.calls)  # the blind item is not re-located
         self.assertEqual(ItemTagging.objects.filter(mock_item=item).count(), 1)
 
-
     def test_tree_change_retags_current_items(self):
         self.run_v2(FakeCall(tag={str(self.question.id): tag_entry()}))
         old = ItemTagging.objects.get(question=self.question).tree_version
@@ -343,6 +342,7 @@ class SweepTests(TestCase):
         self.assertIn('locate', again.calls)
         row = ItemTagging.objects.get(mock_item=item)
         self.assertEqual(row.primary_node.key, FRICTION)
+
 
 class LlmTests(TestCase):
     def test_unknown_platform_model_raises(self):

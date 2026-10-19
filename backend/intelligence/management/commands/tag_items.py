@@ -17,7 +17,8 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument('--tenant', help='Tenant id (default: every active tenant).')
         parser.add_argument('--limit', type=int, default=200,
-                            help='Max items per kind per tenant in this pass.')
+                            help='Item cap per tenant for this pass: v2 shares one cap across questions '
+                                 'and mock items; v1 applies it to each kind separately.')
         parser.add_argument('--model', default=None,
                             help='Platform model name to use for v2 (default: tenant tagging model).')
 
