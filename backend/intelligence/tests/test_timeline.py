@@ -29,6 +29,15 @@ class CleanEventsTests(SimpleTestCase):
             with self.assertRaises(TimelineError, msg=repr(bad)):
                 clean_events(bad)
 
+    def test_rejects_non_finite_times(self):
+        for bad_t in (float('nan'), float('inf'), float('-inf')):
+            with self.assertRaises(TimelineError, msg=repr(bad_t)):
+                clean_events([[bad_t, 'e', 'bank:a']])
+
+    def test_answer_without_a_digest_is_rejected(self):
+        with self.assertRaises(TimelineError):
+            clean_events([[0, 'a', 'bank:a']])
+
     def test_rejects_too_many(self):
         with self.assertRaises(TimelineError):
             clean_events([[i, 'h', None] for i in range(MAX_EVENTS + 1)])
@@ -97,3 +106,43 @@ class ReduceTests(SimpleTestCase):
         sessions = {'bad': {'offset_ms': 0, 'events': [[0, 'zz', 'x']]},
                     'ok': {'offset_ms': 0, 'events': [[0, 'e', 'bank:a'], [1000, 'l', 'bank:a']]}}
         self.assertAlmostEqual(reduce_sessions(sessions, clock='server')['bank:a'].active_s, 1.0)
+
+    def test_leave_for_a_non_current_question_is_ignored(self):
+        lines = one([[0, 'e', 'bank:a'], [5000, 'e', 'bank:b'],
+                     [5000, 'l', 'bank:a'], [9000, 'l', 'bank:b']])
+        self.assertAlmostEqual(lines['bank:b'].active_s, 4.0)
+        self.assertAlmostEqual(lines['bank:a'].active_s, 5.0)
+
+    def test_unknown_key_enter_breaks_the_visit_chain(self):
+        lines = one([[0, 'e', 'bank:a'], [2000, 'e', 'bank:ghost'],
+                     [8000, 'e', 'bank:a'], [9000, 'l', 'bank:a']],
+                    known_keys={'bank:a'})
+        self.assertAlmostEqual(lines['bank:a'].active_s, 3.0)
+        self.assertEqual(lines['bank:a'].visits, 2)
+        self.assertNotIn('bank:ghost', lines)
+
+    def test_malformed_sessions_are_skipped_not_fatal(self):
+        ok = {'offset_ms': 0, 'events': [[0, 'e', 'bank:a'], [1000, 'l', 'bank:a']]}
+        for bad in (
+            'not-a-dict',
+            {'offset_ms': 'x', 'events': [[0, 'e', 'bank:a'], [9000, 'l', 'bank:a']]},
+            {'offset_ms': -5, 'events': [[0, 'e', 'bank:a'], [9000, 'l', 'bank:a']]},
+            {'offset_ms': float('nan'), 'events': []},
+        ):
+            sessions = {'bad': bad, 'ok': ok}
+            for clock in ('server', 'client'):
+                lines = reduce_sessions(sessions, clock=clock)
+                self.assertAlmostEqual(lines['bank:a'].active_s, 1.0, msg=repr(bad))
+            self.assertEqual(window_start_s(sessions, 'client'), 0.0)
+
+    def test_answers_are_ordered_by_time_across_sessions(self):
+        sessions = {
+            's1': {'offset_ms': 0, 'events': [
+                [0, 'e', 'bank:a'], [1000, 'a', 'bank:a', {'sel': [1]}],
+                [9000, 'a', 'bank:a', {'sel': [3]}], [10000, 'l', 'bank:a']]},
+            's2': {'offset_ms': 3000, 'events': [
+                [0, 'e', 'bank:a'], [1000, 'a', 'bank:a', {'sel': [2]}],
+                [2000, 'l', 'bank:a']]},
+        }
+        answers = reduce_sessions(sessions, clock='server')['bank:a'].answers
+        self.assertEqual([a[0] for a in answers], [1.0, 4.0, 9.0])

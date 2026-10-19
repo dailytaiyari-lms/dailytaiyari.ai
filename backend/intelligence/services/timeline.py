@@ -11,6 +11,7 @@ Digests: ``{"sel": [1, 3]}``, ``{"num": "3.14"}``, ``{"txt": 120}``,
 ``{"code": 480}``.
 """
 import logging
+import math
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,10 @@ class TimelineError(ValueError):
 @dataclass
 class KeyTimeline:
     """What one question's timeline says. ``*_at_s`` are seconds relative to
-    the timing window start; durations are seconds."""
+    the timing window start; durations are seconds.
+
+    ``final_answer_at_s`` is the time of the last answer change, set or clear
+    (a trailing clear counts)."""
     active_s: float = 0.0
     hidden_s: float = 0.0
     visits: int = 0
@@ -51,7 +55,7 @@ def clean_events(events):
         t, code = raw[0], raw[1]
         key = raw[2] if len(raw) > 2 else None
         value = raw[3] if len(raw) > 3 else None
-        if isinstance(t, bool) or not isinstance(t, (int, float)) or t < 0:
+        if isinstance(t, bool) or not isinstance(t, (int, float))                 or not math.isfinite(t) or t < 0:
             raise TimelineError(f'event {index} has a bad time')
         if code not in CODES:
             raise TimelineError(f'event {index} has an unknown code')
@@ -60,13 +64,36 @@ def clean_events(events):
             raise TimelineError(f'event {index} needs a question key')
         if value is not None and not isinstance(value, dict):
             raise TimelineError(f'event {index} has a bad value')
+        if code == 'a' and value is None:
+            raise TimelineError(f'event {index} is an answer without a digest')
         cleaned.append((float(t), code, key, value))
     cleaned.sort(key=lambda event: event[0])  # stable: equal times keep order
     return cleaned
 
 
 def _offset_s(session):
-    return float(session.get('offset_ms') or 0) / 1000.0
+    """Session start in seconds, or None when the stored session is corrupt."""
+    if not isinstance(session, dict):
+        return None
+    raw = session.get('offset_ms')
+    if raw is None:
+        return 0.0
+    if isinstance(raw, bool) or not isinstance(raw, (int, float))             or not math.isfinite(raw) or raw < 0:
+        return None
+    return float(raw) / 1000.0
+
+
+def _valid_sessions(sessions):
+    """[(offset_s, session)] for sessions with a usable offset, in offset order."""
+    valid = []
+    for session in (sessions.values() if isinstance(sessions, dict) else ()):
+        offset = _offset_s(session)
+        if offset is None:
+            logger.warning('timeline: skipping a corrupt stored session')
+            continue
+        valid.append((offset, session))
+    valid.sort(key=lambda pair: pair[0])
+    return valid
 
 
 def window_start_s(sessions, clock):
@@ -76,9 +103,10 @@ def window_start_s(sessions, clock):
     untimed ones from their earliest session (a client-timed row only ever
     keeps one session — see timeline_sync).
     """
-    if clock == 'server' or not sessions:
+    if clock == 'server':
         return 0.0
-    return min(_offset_s(session) for session in sessions.values())
+    valid = _valid_sessions(sessions)
+    return valid[0][0] if valid else 0.0
 
 
 def _fold_session(events, base_s, out, known_keys):
@@ -116,6 +144,8 @@ def _fold_session(events, base_s, out, known_keys):
     for t, code, key, value in events:
         last_t = t
         if key is not None and known_keys is not None and key not in known_keys:
+            if code == 'e':
+                close(t)  # an unknown question still ends the previous visit
             continue
         at_s = base_s + t / 1000.0
         if code == 'e':
@@ -126,7 +156,8 @@ def _fold_session(events, base_s, out, known_keys):
             if kt.first_enter_at_s is None or at_s < kt.first_enter_at_s:
                 kt.first_enter_at_s = at_s
         elif code == 'l':
-            close(t)
+            if key == current:
+                close(t)
         elif code == 'h':
             if hidden_since is None:
                 hidden_since = t
@@ -153,11 +184,13 @@ def reduce_sessions(sessions, *, clock, known_keys=None):
     """
     out = {}
     start = window_start_s(sessions, clock)
-    for session in sorted((sessions or {}).values(), key=_offset_s):
+    for offset, session in _valid_sessions(sessions):
         try:
             events = clean_events(session.get('events') or [])
         except TimelineError:
             logger.warning('timeline: skipping a corrupt stored session')
             continue
-        _fold_session(events, _offset_s(session) - start, out, known_keys)
+        _fold_session(events, offset - start, out, known_keys)
+    for kt in out.values():
+        kt.answers.sort(key=lambda answer: answer[0])  # stable: ties keep order
     return out
