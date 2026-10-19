@@ -120,21 +120,36 @@ Screens also replace their fabricated per-answer `time_taken_seconds` with
 ### 3.2 Sync endpoint — `POST /api/v1/intelligence/timeline/`
 
 ```json
-{"attempt_kind": "quiz|mock|practice", "attempt_id": "<uuid>",
+{"attempt_kind": "quiz|mock|practice",
+ "attempt_id": "<uuid>"  |  "parent_id": "<quiz or mock test uuid>",
  "session_id": "<uuid>", "elapsed_ms": 123456, "truncated": false,
  "events": [[0,"e","bank:…"], [5400,"a","bank:…",{"sel":[2]}], …]}
 ```
 
-- **Auth:** the attempt belongs to `request.user.profile`. Quiz/Mock: status
-  is `in_progress`, or completed less than 120 s ago (a late flush must not
-  be lost). Practice set: status is `in_progress`, or completed less than
-  120 s ago.
-- **Clock anchoring:** the server computes the session's offset from attempt
-  start as `received_at − elapsed_ms − attempt.started_at`. This needs no
-  client clock trust and no clock sync. Practice uses
-  `PracticeSet.started_at`.
+- **Attempt resolution:**
+  - Rich mock and practice send `attempt_id`.
+  - Quiz and legacy mock/PYP send `parent_id`, and the server picks the
+    student's `in_progress` attempt for it, exactly as their submit
+    endpoints do. The legacy mock screen also serves PYP papers, which start
+    through a different endpoint, so the client never needs an attempt id
+    there.
+- **Auth:** the attempt belongs to `request.user.profile`.
+  - Quiz/Mock: status is `in_progress`, or completed less than 120 s ago (a
+    late flush must not be lost).
+  - Practice set: `suggested` or `in_progress`, or completed less than
+    120 s ago. A set is still `suggested` until its first answer.
+- **Clock anchoring:** the server computes the session's offset from the
+  attempt's anchor as `received_at − elapsed_ms − anchor`. This needs no
+  client clock trust and no clock sync. The anchor is `started_at`, or
+  `created_at` for practice sets, which may not have started yet.
+- **Clock mode** (stored on the row):
+  - `client` — quiz, or a mock resolved by `parent_id`. These screens
+    restart their timer and lose in-memory answers on reload, so a new
+    session replaces all earlier sessions.
+  - `server` — a rich mock (`attempt_id`). All sessions are kept.
+  - `none` — practice. All sessions are kept.
 - **Write:** upsert `AttemptTimeline` (one row per attempt) and replace
-  `sessions[session_id]`. Rejected once `finalized` is set.
+  `sessions[session_id]`. Rejected with 409 once `finalized_at` is set.
 - **Limits:** body ≤ 256 KB (413 above that). `UserRateThrottle` at
   20/min/user.
 - **Response:** `{"ok": true}`. Any validation failure returns 4xx and is
@@ -143,7 +158,8 @@ Screens also replace their fabricated per-answer `time_taken_seconds` with
 ### 3.3 Models (in `intelligence/models.py`)
 
 **`AttemptTimeline`** (observation)
-- `student` FK, `attempt_kind`, `attempt_id` (UUID), `sessions` JSON
+- `student` FK, `attempt_kind`, `attempt_id` (UUID),
+  `clock` (`client|server|none`), `sessions` JSON
   `{session_id: {offset_ms, events, received_at, truncated}}`,
   `finalized_at` (nullable).
 - Unique on (`attempt_kind`, `attempt_id`).
@@ -186,13 +202,14 @@ All thresholds live in one `THRESHOLDS` dict in
 
 All "last minute" / "third" maths is relative to the window:
 
-| Kind | Window start | Duration |
+| Clock | Window start | Duration |
 |---|---|---|
-| Rich mock | `attempt.started_at` (server-timed already) | `mock_test.duration_minutes` |
-| Quiz / legacy mock / PYP | earliest session start in the timeline (the client timer starts at page load; a reused in-progress attempt's `started_at` may be days old) | `duration_minutes` |
-| Practice | `PracticeSet.started_at` | untimed: `last_minute`, `rushed` and `time_pressure` never apply |
+| `server` (rich mock) | the anchor, `attempt.started_at` | `mock_test.duration_minutes` |
+| `client` (quiz, legacy mock, PYP) | the start of the single kept session (the client timer starts at page load; a reused in-progress attempt's `started_at` may be days old) | `duration_minutes` |
+| `none` (practice) | earliest session start | untimed: `last_minute`, `rushed` and time-pressure rules never apply |
+| no timeline | the anchor | the model's duration (only non-time rules run anyway) |
 
-A duration of 0 means untimed, with the same effect as practice.
+A duration of 0 means untimed.
 
 ### 4.1 Metrics (from the timeline reduced per key)
 
@@ -222,7 +239,7 @@ A duration of 0 means untimed, with the same effect as practice.
 | `tab_hidden` | `hidden_s > 0` |
 | `late_third` | `third == 3` |
 | `slip_match` | numerical only: final value matches a slip transform (§4.4) |
-| `misconception_pick` | the student picked this same wrong option on this item ≥ 1 time before, or the item's primary-concept `LearnerConceptState.misconception_counts` already holds ≥ 2 picks for it (`GeneratedItem.target_misconception` is free text with no option index, so it is not used) |
+| `misconception_pick` | the student picked this same wrong option on this same item at least once before this attempt (from earlier `LearningEvent` digests). This fires rarely today, since items repeat only on retakes. It gains reach when sub-project 4 tags options with misconceptions. `GeneratedItem.target_misconception` is free text with no option index, so it is not used. |
 
 ### 4.3 Default usual times (seconds) when `ItemStats` is too thin
 
@@ -242,7 +259,8 @@ The student's value equals the correct value under one of:
 - sign flip;
 - × 10^k for k ∈ {±1, ±2, ±3};
 - × or ÷ one of {60, 100, 1000, 3600};
-- rounded to 1–2 fewer significant figures than given.
+- the correct value rounded to 1, 2 or 3 significant figures (when that
+  changes it).
 
 Applied only when the correct value is not 0 and the student's value is not
 0.
@@ -282,11 +300,18 @@ Applied only when the correct value is not 0 and the student's value is not
 **No timeline** (historic attempts, or sync lost): time-based flags are not
 computed. The rules still run with only `slip_match`, `misconception_pick`
 and mastery. Any rule that needs time is skipped, and the evidence records
-`no_timeline`.
+`no_timeline`. Unanswered items without a timeline are `unclear`.
+
+An *answered* item whose timeline shows zero visits (dropped `e` events in a
+truncated session) is treated as "no timeline" for that item, never as a
+0-second guess. `too_fast` is evaluated only for answered items.
+
+A subjective answer still awaiting a grade (`needs_manual_grading`) is
+`unclear`/low. The regrade path re-runs diagnosis through the same task.
 
 **Confidence**
-- *high* — `slip_match`, `right_to_wrong`, or `too_fast` on an item with
-  `usual_source == 'stats'`.
+- *high* — `not_seen`, plain `correct`, `second_guess`, `slip_match`, or
+  `too_fast` on an item with `usual_source == 'stats'`.
 - *medium* — other time-based or mastery-based rules.
 - *low* — `unclear`, or any rule on a default usual time with
   `rel_speed` within 20% of a threshold.
@@ -361,12 +386,13 @@ unaffected. After deploy, `recompute_learner_state` is re-run.
   Practice set submit already recomputes state synchronously (the student
   is on the results screen). It calls `diagnosis.diagnose_attempt('practice',
   set_id)` synchronously just before that recompute, so it gets no task.
-- Attempt ids on the client: `QuizAttempt.jsx` and `MockTestAttempt.jsx`
-  never receive an attempt id today (`Quiz.jsx` calls `start` and then
-  navigates, and legacy mock submit get-or-creates). Both screens call their
-  existing `start` endpoint on mount. It already returns the in-progress
-  attempt instead of creating a second one, and it supplies the id the hook
-  needs. Rich mock and practice already hold their ids.
+- Attempt ids on the client:
+  - `QuizAttempt.jsx` and `MockTestAttempt.jsx` never hold an attempt id, so
+    they sync by `parent_id` (§3.2).
+  - `QuizAttempt.jsx` also calls the idempotent `startQuiz` on mount. Quiz
+    submit get-or-creates its attempt, so a deep-linked quiz would otherwise
+    have no attempt to attach a timeline to until submit.
+  - Rich mock and practice already hold their ids.
 
 ## 7. Error handling
 
