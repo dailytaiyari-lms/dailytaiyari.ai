@@ -1,10 +1,11 @@
 """Timeline reduction (pure) — raw browser events to per-question timing."""
+import json
 from datetime import timedelta
 
 from django.core.cache import cache
 from django.test import SimpleTestCase
 from django.utils import timezone
-from rest_framework.test import APIClient
+from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from intelligence.models import AttemptTimeline, PracticeSet
@@ -246,8 +247,57 @@ class TimelineSyncTests(DiagnosisTestCase):
         attempt = self.make_attempt()
         key = 'item:' + 'x' * 70
         events = [[i, 'a', key, {'txt': i}] for i in range(4000)]
-        response = self.post(self.payload(attempt_id=str(attempt.id), events=events))
+        payload = self.payload(attempt_id=str(attempt.id), events=events)
+        self.assertGreater(len(json.dumps(payload)), 256 * 1024)
+        response = self.post(payload)
         self.assertEqual(response.status_code, 413)
+
+    def test_oversized_body_without_content_length_is_413(self):
+        from intelligence.views import TimelineSyncView
+        attempt = self.make_attempt()
+        key = 'item:' + 'x' * 70
+        events = [[i, 'a', key, {'txt': i}] for i in range(4000)]
+        payload = self.payload(attempt_id=str(attempt.id), events=events)
+        self.assertGreater(len(json.dumps(payload['events'], separators=(',', ':'))), 256 * 1024)
+        class HeaderlessView(TimelineSyncView):
+            # Parse the real body, then hide the header, as a chunked upload would.
+            def initial(self, request, *args, **kwargs):
+                super().initial(request, *args, **kwargs)
+                request.data  # noqa: B018 - force parsing
+                request._request.META['CONTENT_LENGTH'] = ''
+
+        request = APIRequestFactory().post(URL, payload, format='json')
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.user)
+        response = HeaderlessView.as_view()(request)
+        self.assertEqual(response.status_code, 413)
+        self.assertFalse(AttemptTimeline.objects.exists())
+
+    def test_non_object_body_is_400(self):
+        response = self.post([1, 2, 3])
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json(), {'error': 'Body must be a JSON object.'})
+
+    def test_timed_out_attempt_within_grace_window_accepts_sync(self):
+        attempt = self.make_attempt(minutes_ago=30)
+        attempt.status = 'timed_out'
+        attempt.completed_at = timezone.now() - timedelta(seconds=30)
+        attempt.save()
+        response = self.post(self.payload(attempt_id=str(attempt.id)))
+        self.assertEqual(response.status_code, 200, response.content)
+
+    def test_timeline_throttle_is_isolated_from_the_default_user_throttle(self):
+        self.tenant.features = {**(self.tenant.features or {}), 'practice': True}
+        self.tenant.save()
+        cache.clear()
+        client = self.client_for(self.user)
+        for _ in range(20):
+            other = client.get('/api/v1/intelligence/mastery/',
+                               HTTP_X_TENANT_ID=str(self.tenant.id))
+            self.assertEqual(other.status_code, 200, other.content)
+        attempt = self.make_attempt()
+        response = self.post(self.payload(attempt_id=str(attempt.id)))
+        self.assertEqual(response.status_code, 200, response.content)
 
     def test_suggested_practice_set_syncs_untimed(self):
         practice_set = PracticeSet.objects.create(

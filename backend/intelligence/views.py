@@ -1,4 +1,6 @@
 """Student-facing practice + mastery endpoints (/api/v1/intelligence/)."""
+import json
+
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -153,6 +155,7 @@ class MasteryView(APIView):
 
 
 class TimelineThrottle(UserRateThrottle):
+    scope = 'timeline'  # own cache history, not shared with the default 'user' scope
     rate = '20/min'
 
 
@@ -184,6 +187,17 @@ class TimelineSyncView(APIView):
         if student is None:
             return Response({'error': 'Students only.'}, status=status.HTTP_403_FORBIDDEN)
         data = request.data
+        if not isinstance(data, dict):
+            return Response({'error': 'Body must be a JSON object.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        # Content-Length can be absent (chunked); re-check the parsed payload.
+        try:
+            events_size = len(json.dumps(data.get('events'), separators=(',', ':')))
+        except (TypeError, ValueError):
+            events_size = 0
+        if events_size > MAX_TIMELINE_BODY:
+            return Response({'error': 'Timeline too large.'},
+                            status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
         try:
             save_session(
                 kind=data.get('attempt_kind'), student=student,
