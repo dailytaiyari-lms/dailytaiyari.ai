@@ -343,9 +343,12 @@ A two-stage, tree-bound tagger: stage 1 picks a topic from the subject's
 syllabus tree (only when the item's topic is unknown, e.g. mock items),
 stage 2 picks subtopics, thinking level, skills, format and difficulty
 within that topic. Results go to `ItemTagging` and `ItemSkillTag`; the
-subtopic Concept is the mastery unit. The nightly `intelligence.tagging_sweep`
-runs v2 for subjects with an active syllabus tree and v1 for the rest (mock
-items are owned by v2 through one ownership rule).
+subtopic Concept is the mastery unit. `intelligence.tagging_sweep` runs
+weekly (Sunday 04:00; also on demand: admin 'run tagging' button or
+`manage.py tag_items`). It runs v2 for subjects with an active syllabus tree
+and v1 for the rest (mock items are owned by v2 through one ownership rule).
+Every tenant with a tree is queued, so v2 starts after a tree is created or
+edited.
 
 - Never overwritten: manual tags (`ItemTagging.source='manual'`) are not
   re-tagged, and bank question difficulty is not touched.

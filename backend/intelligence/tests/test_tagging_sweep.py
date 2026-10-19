@@ -176,6 +176,17 @@ class SweepTests(TestCase):
             self.assertEqual(self.run_v2(FakeCall(tag={str(self.question.id): tag_entry()})), 0)
         self.assertFalse(AITaggingResult.objects.filter(stage='tag').exists())
 
+    def test_scheduled_sweep_enqueues_a_treed_tenant_with_only_tagged_items(self):
+        from intelligence import tasks
+
+        Question.objects.filter(tenant=self.tenant).update(tagging_status='tagged')
+        idle = Tenant.objects.create(name='No Tree Academy', is_active=True)
+        with patch.object(tasks.tag_items_for_tenant, 'delay') as delay:
+            tasks.tagging_sweep()
+        queued = {call.args[0] for call in delay.call_args_list}
+        self.assertIn(str(self.tenant.id), queued)
+        self.assertNotIn(str(idle.id), queued)
+
     def test_manual_tags_are_never_overwritten(self):
         ItemTagging.objects.create(tenant=self.tenant, question=self.question, source='manual',
                                    thinking_level='recall')

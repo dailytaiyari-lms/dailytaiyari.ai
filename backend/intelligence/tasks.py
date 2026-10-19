@@ -289,11 +289,21 @@ def tag_items_for_tenant(self, tenant_id, limit=200):
 
 @shared_task(name='intelligence.tagging_sweep', queue='aigen', time_limit=300)
 def tagging_sweep():
-    """Weekly: enqueue a tagging pass for every tenant with untagged items."""
+    """Weekly: enqueue a tagging pass for every tenant with untagged items or a syllabus tree.
+
+    Treed tenants are always enqueued, so v2 work starts after a tree is created
+    or edited even when every item is already v1-tagged; ``run_sweep`` selects
+    precisely, so an idle pass is cheap.
+    """
     from core.models import Tenant
     from quiz.models import MockTestItem, Question
 
+    from .models import SyllabusNode
+
     tenant_ids = set(
+        SyllabusNode.objects.filter(status='active', tenant__isnull=False)
+        .values_list('tenant_id', flat=True).distinct()
+    ) | set(
         Question.objects.filter(tagging_status__in=['', 'stale'], tenant__isnull=False)
         .values_list('tenant_id', flat=True).distinct()
     ) | set(

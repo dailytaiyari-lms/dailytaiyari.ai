@@ -395,9 +395,12 @@ calibration table (§6.3).
   than current. Manual items are excluded.
 - **Budget:** the existing `_check_budget` monthly gate and `AIUsageRecord`
   metering (feature `item_tagging`) are unchanged.
-- **Old tagger:** v1 stays until 2B. The nightly sweep runs v2 for every
-  subject that has a syllabus tree, then v1 for the remaining subjects
-  only, so untreed production courses keep today's tagging.
+- **Old tagger:** v1 stays until 2B. The sweep runs weekly (Sunday 04:00;
+  also on demand: admin 'run tagging' button or `manage.py tag_items`). It
+  runs v2 for every subject that has a syllabus tree, then v1 for the
+  remaining subjects only, so untreed production courses keep today's
+  tagging. Every tenant with an active tree is queued, so v2 work starts
+  after a tree is created or edited even when all items are v1-tagged.
 - **Ownership of mock items:** one rule decides which mock items v2 owns:
   - the item's own subject has a tree;
   - or its topic's subject has one;
