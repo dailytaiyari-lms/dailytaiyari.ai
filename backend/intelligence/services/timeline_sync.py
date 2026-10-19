@@ -77,7 +77,11 @@ def resolve_attempt(kind, student, *, attempt_id=None, parent_id=None, now=None)
     if attempt.status != 'in_progress' and not (
             attempt.completed_at and _open(attempt, now)):
         raise TimelineError('attempt is closed')
-    clock = 'client' if (kind == 'quiz' or not attempt_id) else 'server'
+    # Since #209 the quiz timer is anchored to the attempt's started_at and
+    # survives reloads, so quizzes are server-clocked however they resolve.
+    # Only the legacy mock/PYP screen (synced by parent_id) restarts its timer
+    # per page load; that is the 'client' clock (newest session replaces older).
+    clock = 'server' if (kind == 'quiz' or attempt_id) else 'client'
     return attempt.id, attempt.started_at, clock
 
 

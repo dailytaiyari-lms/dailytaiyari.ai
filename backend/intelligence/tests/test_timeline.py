@@ -211,6 +211,23 @@ class TimelineSyncTests(DiagnosisTestCase):
         # a client-timed screen restarted: only the newest session survives
         self.assertEqual(list(row.sessions), ['sess-2'])
 
+    def test_quiz_parent_id_uses_server_clock_and_keeps_sessions(self):
+        from quiz.models import Quiz, QuizAttempt
+        quiz = Quiz.objects.create(
+            tenant=self.tenant, course=self.course, title='Q', quiz_type='topic',
+            duration_minutes=30,
+        )
+        attempt = QuizAttempt.objects.create(
+            tenant=self.tenant, student=self.student, quiz=quiz, status='in_progress',
+        )
+        body = self.payload(attempt_kind='quiz', parent_id=str(quiz.id))
+        self.assertEqual(self.post(body).status_code, 200)
+        self.assertEqual(self.post({**body, 'session_id': 'sess-2'}).status_code, 200)
+        row = AttemptTimeline.objects.get(attempt_id=attempt.id)
+        # the quiz timer is anchored to started_at, so it never restarts
+        self.assertEqual(row.clock, 'server')
+        self.assertEqual(sorted(row.sessions), ['sess-1', 'sess-2'])
+
     def test_other_students_attempt_is_rejected(self):
         attempt = self.make_attempt(student=self.other_user.profile)
         response = self.post(self.payload(attempt_id=str(attempt.id)))

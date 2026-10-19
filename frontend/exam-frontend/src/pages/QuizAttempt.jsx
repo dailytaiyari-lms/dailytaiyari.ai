@@ -74,18 +74,12 @@ const QuizAttempt = () => {
     queryFn: () => quizService.getQuizDetails(quizId),
   })
 
-  // Make sure an in-progress attempt exists for the timeline to attach to
-  // (idempotent: returns the existing one when Quiz.jsx already started it).
-  useEffect(() => {
-    quizService.startQuiz(quizId).catch(() => {})
-  }, [quizId])
-
   const currentQ = quiz?.questions?.[currentQuestion]
   const timeline = useResponseTimeline({
     attemptKind: 'quiz',
     parentId: quizId,
     currentKey: currentQ ? `bank:${currentQ.id}` : null,
-    active: Boolean(quiz) && !result,
+    active: Boolean(quiz) && proctoringStarted && !result,
   })
 
   const enterFullscreen = useCallback(async () => {
