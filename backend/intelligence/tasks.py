@@ -101,7 +101,10 @@ def refresh_learner_state():
             except Exception:  # noqa: BLE001
                 logger.exception('nightly diagnose failed for %s %s', kind, attempt_id)
         if kind in ('quiz', 'mock'):
-            caught_up += state.update_for_attempt(kind, attempt_id)
+            try:
+                caught_up += state.update_for_attempt(kind, attempt_id)
+            except Exception:  # noqa: BLE001 — one bad attempt must not stop the sweep
+                logger.exception('nightly state update failed for %s %s', kind, attempt_id)
 
     logger.info('intelligence.refresh_learner_state: %d refreshed, %d catch-up concepts',
                 refreshed, caught_up)

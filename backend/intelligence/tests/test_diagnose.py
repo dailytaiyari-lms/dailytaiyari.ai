@@ -9,10 +9,13 @@ from intelligence.models import (
     AttemptTimeline, ConceptLink, ItemStats, LearnerConceptState, PracticeSet,
     PracticeSetItem, ResponseDiagnosis, ResponseSelfReport,
 )
+from intelligence import recommendation
 from intelligence.services import diagnose, itemstats
+from intelligence.services import practice as practice_service
 from intelligence.services.events import record_attempt_events
 from intelligence.services.state import recompute_state
 from intelligence.tests.diagnosis_fixtures import DiagnosisTestCase
+from intelligence.tests.test_practice import PracticeTestCase
 from quiz.models import Answer, Question, QuestionOption, Quiz, QuizAttempt, QuizQuestion
 from intelligence.versions import CLASSIFIER_VERSION, STATE_MODEL_VERSION
 
@@ -326,3 +329,126 @@ class DiagnosisWeightTests(DiagnosisTestCase):
         attempt, _item = self.wrong_attempt()
         call_command('recompute_diagnoses', verbosity=0)
         self.assertEqual(ResponseDiagnosis.objects.filter(attempt_id=attempt.id).count(), 1)
+
+
+class SweepAndRecomputeResilienceTests(DiagnosisTestCase):
+    def wrong_attempt(self, student=None):
+        item = self.make_item()
+        attempt = self.make_attempt(student=student)
+        self.answer(attempt, item, selected=[1])
+        self.finish(attempt)
+        record_attempt_events(attempt)
+        return attempt, item
+
+    def test_nightly_sweep_survives_one_bad_attempt(self):
+        from unittest import mock
+
+        from intelligence import tasks
+        from intelligence.services import state as state_module
+
+        bad, _ = self.wrong_attempt()
+        good, _ = self.wrong_attempt(student=self.other_user.profile)
+        real = state_module.update_for_attempt
+
+        def flaky(kind, attempt_id):
+            if str(attempt_id) == str(bad.id):
+                raise RuntimeError('boom')
+            return real(kind, attempt_id)
+
+        with mock.patch('intelligence.services.state.update_for_attempt', side_effect=flaky):
+            tasks.refresh_learner_state()
+
+        self.assertTrue(LearnerConceptState.objects.filter(
+            student=self.other_user.profile, concept=self.concept).exists())
+        for attempt in (bad, good):
+            self.assertTrue(ResponseDiagnosis.objects.filter(attempt_id=attempt.id).exists())
+
+    def test_recompute_survives_one_bad_attempt(self):
+        from io import StringIO
+        from unittest import mock
+
+        bad, _ = self.wrong_attempt()
+        good, _ = self.wrong_attempt(student=self.other_user.profile)
+        real = diagnose.diagnose_attempt
+
+        def flaky(kind, attempt_id):
+            if str(attempt_id) == str(bad.id):
+                raise RuntimeError('boom')
+            return real(kind, attempt_id)
+
+        out, err = StringIO(), StringIO()
+        with mock.patch('intelligence.services.diagnose.diagnose_attempt', side_effect=flaky):
+            call_command('recompute_diagnoses', stdout=out, stderr=err)
+        self.assertEqual(ResponseDiagnosis.objects.filter(attempt_id=good.id).exists(), True)
+        self.assertFalse(ResponseDiagnosis.objects.filter(attempt_id=bad.id).exists())
+        self.assertIn(str(bad.id), err.getvalue())
+        self.assertIn('1 failure(s)', out.getvalue())
+        self.assertIn('Diagnosed 1 attempt(s)', out.getvalue())
+
+    def test_recompute_guess_weight_reaches_mastery(self):
+        item = self.make_item()
+        attempt = self.make_attempt(minutes_ago=30)
+        self.answer(attempt, item, selected=[1])
+        key = f'item:{item.id}'
+        self.make_timeline(attempt, [
+            [0, 'e', key], [3000, 'a', key, {'sel': [1]}], [3000, 'l', key],
+        ])
+        self.finish(attempt, after_minutes=20)
+        record_attempt_events(attempt)
+        call_command('recompute_diagnoses', verbosity=0)
+        row = ResponseDiagnosis.objects.get(attempt_id=attempt.id, mock_item=item)
+        self.assertEqual(row.final_label, 'guess')
+        state = LearnerConceptState.objects.get(student=self.student, concept=self.concept)
+        self.assertAlmostEqual(state.mastery, 0.4688, places=3)
+
+    def test_since_filters_out_older_attempts(self):
+        from intelligence.models import LearningEvent
+
+        attempt, _ = self.wrong_attempt()
+        LearningEvent.objects.filter(attempt_id=attempt.id).update(
+            occurred_at=timezone.now() - timedelta(days=30))
+        since = (timezone.now() - timedelta(days=2)).strftime('%Y-%m-%d')
+        call_command('recompute_diagnoses', since=since, verbosity=0)
+        self.assertFalse(ResponseDiagnosis.objects.filter(attempt_id=attempt.id).exists())
+        call_command('recompute_diagnoses', verbosity=0)
+        self.assertTrue(ResponseDiagnosis.objects.filter(attempt_id=attempt.id).exists())
+
+
+class PracticeDiagnosisHookTests(PracticeTestCase):
+    def answered_set(self, selected):
+        for n in range(12):
+            self.make_question(n, difficulty='easy')
+        self.make_low_mastery_state()
+        practice_set = recommendation.refresh_recommendations(self.student, self.course)[0]
+        item = practice_set.items.select_related('question').order_by('order').first()
+        practice_service.answer_item(practice_set, str(item.id), selected_options=selected)
+        return practice_set, item
+
+    def test_diagnosis_runs_on_submit(self):
+        practice_set, item = self.answered_set([1])
+        practice_service.submit_set(practice_set)
+        rows = ResponseDiagnosis.objects.filter(
+            attempt_kind='practice', attempt_id=practice_set.id)
+        self.assertTrue(rows.exists())
+        self.assertTrue(rows.filter(question=item.question).exists())
+
+    def test_diagnosis_failure_never_fails_the_submit(self):
+        from unittest import mock
+
+        practice_set, _ = self.answered_set([0])
+        with mock.patch('intelligence.services.diagnose.diagnose_attempt',
+                        side_effect=RuntimeError('boom')):
+            practice_service.submit_set(practice_set)
+        practice_set.refresh_from_db()
+        self.assertEqual(practice_set.status, 'completed')
+
+    def test_practice_guess_label_scales_the_practice_weight(self):
+        practice_set, item = self.answered_set([1])
+        practice_service.submit_set(practice_set)
+        ResponseDiagnosis.objects.filter(
+            attempt_kind='practice', attempt_id=practice_set.id, question=item.question,
+        ).update(label='guess', final_label='guess')
+        recompute_state(self.student, self.concept)
+        state = LearnerConceptState.objects.get(student=self.student, concept=self.concept)
+        # weight 0.6 (practice) x 0.2 (guess) = 0.12; wrong answer scores 0.
+        self.assertAlmostEqual(state.mastery, (0 + 1.5) / (0.12 + 3), places=3)

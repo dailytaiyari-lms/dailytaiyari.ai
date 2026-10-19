@@ -179,10 +179,6 @@ def submit_set(practice_set):
 
     _emit_events(practice_set)
 
-    # Refresh every concept this set actually touched, synchronously — the
-    # student is looking at the "what changed" screen right now. Derived from
-    # the answered questions' links (not just target_concepts) so starter
-    # sets, which target no concept, still seed learner state.
     # Diagnose first so the synchronous state refresh below sees the labels.
     try:
         from intelligence.services import diagnose
@@ -190,6 +186,10 @@ def submit_set(practice_set):
     except Exception:  # noqa: BLE001 — never fail the student's submit
         logger.exception('practice: diagnosis failed for set %s', practice_set.id)
 
+    # Refresh every concept this set actually touched, synchronously — the
+    # student is looking at the "what changed" screen right now. Derived from
+    # the answered questions' links (not just target_concepts) so starter
+    # sets, which target no concept, still seed learner state.
     from intelligence.models import ConceptLink
     from intelligence.services import state as state_service
 
