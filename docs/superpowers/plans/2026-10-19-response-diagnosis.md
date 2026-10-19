@@ -25,8 +25,9 @@ React 18 + Vite, TanStack Query, Zustand (`tenantStore`).
 ## Global Constraints
 
 - Run backend commands from `backend/` with `venv/Scripts/python.exe` (Windows venv). Test command shape: `venv/Scripts/python.exe manage.py test <dotted.path> -v 2`.
-- Git identity: this machine has no `user.email` configured. Before executing, the user must run `git config user.email <their email>` in the repo (or tell you the identity to pass with `git -c`). Never change global git config yourself.
-- Every commit message ends with the line `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+- Git identity is configured in the repo; commit normally. Never change git config yourself.
+- The user may have unrelated uncommitted work in the tree. Stage only the files your task names; never `git add -A` or `git add .`.
+- Every commit message ends with the line `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`.
 - Never push. Work stays on local branch `feat/response-diagnosis`.
 - Other apps call the intelligence layer only through `intelligence/api.py` and `intelligence/hooks.py`. Those are fail-safe: an intelligence error must never fail a student submit.
 - Inference is always recomputed from observations. Never increment state in place. Bump the version constant when an algorithm changes.
@@ -175,15 +176,18 @@ Expected: all pass (the branch alone had 55 passing in `intelligence quiz`).
 
 - [ ] **Step 7: Commit the merge**
 
+Stage only merge-related paths. Never `git add -A`: the working tree may hold the user's unrelated uncommitted work.
+
 ```bash
-git add -A
+git add backend/chatbot backend/core/models.py backend/dailytaiyari backend/docker-compose.yml backend/quiz/migrations frontend/exam-frontend/src/components/layout/Sidebar.jsx
+git status --short   # confirm nothing unrelated is staged
 git commit -m "Merge main into feat/response-diagnosis
 
 Keep-both resolutions for feature registries, settings, urls, compose and
 sidebar; merge migrations for quiz and chatbot plus the combined
 AIUsageRecord.feature choices.
 
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -609,7 +613,7 @@ AttemptTimeline (raw per-question interaction log), ResponseSelfReport,
 ResponseDiagnosis, ItemStats active-time fields; CLASSIFIER_VERSION and
 STATE_MODEL_VERSION 2.
 
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -920,7 +924,7 @@ Expected: all PASS.
 git add backend/intelligence/services/timeline.py backend/intelligence/tests/test_timeline.py
 git commit -m "feat(intelligence): pure reducer from raw timelines to per-question timing
 
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -1278,7 +1282,7 @@ Expected: all PASS. If `test_oversized_body_is_413` returns 400, confirm the pay
 git add backend/intelligence/services/timeline_sync.py backend/intelligence/views.py backend/intelligence/urls.py backend/intelligence/tests/test_timeline.py
 git commit -m "feat(intelligence): timeline sync endpoint with server-anchored offsets
 
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -1817,7 +1821,7 @@ If `test_near_threshold_on_default_usual_lowers_confidence` fails, check the ari
 git add backend/intelligence/diagnosis_config.py backend/intelligence/services/diagnosis.py backend/intelligence/tests/test_diagnosis_rules.py
 git commit -m "feat(intelligence): pure response-diagnosis rules and self-report reconciliation
 
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -1828,10 +1832,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Create: `backend/intelligence/services/diagnose.py`
 - Modify: `backend/intelligence/services/events.py` (extract `item_score_fraction`)
 - Modify: `backend/intelligence/services/itemstats.py` (median active time)
+- Modify: `backend/intelligence/services/state.py` (extract `selected_from_digest`)
 - Test: append to `backend/intelligence/tests/test_diagnose.py`
 
 **Interfaces:**
-- Consumes: `reduce_sessions`, `window_start_s`, `KeyTimeline` (Task 3); `classify`, `reconcile`, facts dataclasses (Task 5); models (Task 2); `state.observations_for`, `state.compute_state_fields` (existing).
+- Consumes: `reduce_sessions`, `window_start_s`, `KeyTimeline` (Task 3); `classify`, `reconcile`, facts dataclasses (Task 5); models (Task 2); `state.observations_for`, `state.compute_state_fields`, `state.selected_from_digest` (existing / Step 3b).
 - Produces:
   - `diagnose.diagnose_attempt(kind: str, attempt_id) -> int` (rows written; 0 when the attempt is missing or unfinished)
   - `events.item_score_fraction(item_answer) -> float`
@@ -1979,6 +1984,31 @@ And in `_item_event_fields`, replace the `if item_answer.needs_manual_grading: �
 ```
 
 Keep `max_marks = item_answer.max_marks or item.marks` in `_item_event_fields`, since it is still used in the returned dict. Run `venv/Scripts/python.exe manage.py test intelligence.tests.test_foundation intelligence.tests.test_state -v 1` and expect everything to pass (a pure refactor).
+
+- [ ] **Step 3b: Share the digest-pick parser in `state.py`**
+
+`diagnose.py` needs the same "which options did this response pick" parsing as
+`state._selected_indices(event)`. Extract it rather than duplicating it. In
+`backend/intelligence/services/state.py`, replace `_selected_indices` with:
+
+```python
+def selected_from_digest(digest):
+    """Option indices a response digest picked (MCQ-like digests only)."""
+    digest = digest or {}
+    if isinstance(digest.get('selected'), list):
+        return [i for i in digest['selected'] if isinstance(i, int)]
+    raw = digest.get('selected_option')
+    if isinstance(raw, str) and raw.strip().isdigit():
+        return [int(raw.strip())]
+    return []
+
+
+def _selected_indices(event):
+    """Wrong-pick option indices from the response digest, if MCQ-like."""
+    return selected_from_digest(event.response_digest)
+```
+
+(`itemstats.py` imports `_selected_indices`; that import keeps working.)
 
 - [ ] **Step 4: Implement `diagnose.py`**
 
@@ -2182,16 +2212,6 @@ def _prior_mastery(student, concept, cutoff, cache):
     return cache[concept.id]
 
 
-def _digest_picks(digest):
-    digest = digest or {}
-    if isinstance(digest.get('selected'), list):
-        return {i for i in digest['selected'] if isinstance(i, int)}
-    raw = digest.get('selected_option')
-    if isinstance(raw, str) and raw.strip().isdigit():
-        return {int(raw.strip())}
-    return set()
-
-
 def _misconception_pick(student, ref, cutoff):
     """Picked this same wrong option on this same item before this attempt."""
     if ref.score_fraction >= 0.5 or not ref.selected:
@@ -2201,8 +2221,10 @@ def _misconception_pick(student, ref, cutoff):
         student=student, occurred_at__lt=cutoff, score_fraction__lt=0.5,
         **{arm: ref.item.id},
     ).values_list('response_digest', flat=True)
+    from intelligence.services.state import selected_from_digest
+
     picks = set(ref.selected)
-    return any(_digest_picks(digest) & picks for digest in earlier)
+    return any(set(selected_from_digest(digest)) & picks for digest in earlier)
 
 
 def _usual_from_stats(ref):
@@ -2353,7 +2375,7 @@ Gathers grading, timeline, prior mastery and item stats per item, persists
 ResponseDiagnosis (answered and unanswered), finalizes the timeline, and
 teaches ItemStats the median on-screen time.
 
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -2621,14 +2643,14 @@ Expected: all PASS, including the existing `test_state`, `test_practice` and `te
 - [ ] **Step 8: Commit**
 
 ```bash
-git add backend/intelligence
+git add backend/intelligence  # only this task's files — check `git status` first
 git commit -m "feat(intelligence): weight mastery evidence by response diagnosis
 
 Attempts now diagnose before the learner-state update (one task), practice
 sets diagnose before their synchronous refresh, the nightly sweep catches up
 missing/outdated diagnoses, and recompute_diagnoses reruns history.
 
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -2968,10 +2990,10 @@ Expected: all PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add backend/intelligence
+git add backend/intelligence  # only this task's files — check `git status` first
 git commit -m "feat(intelligence): student self-report API and diagnosis calibration report
 
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -3425,7 +3447,7 @@ git commit -m "feat(frontend): record real per-question timelines on every attem
 Replaces fabricated per-answer time (total/n, 0, attempt total) with
 visible on-screen time, and syncs raw enter/leave/answer events.
 
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -3635,7 +3657,7 @@ Manual check (via the `run` skill):
 git add backend/quiz/mock_grading.py backend/intelligence/tests/test_self_report.py frontend/exam-frontend/src/components/review/WhatHappened.jsx frontend/exam-frontend/src/pages/QuizReview.jsx frontend/exam-frontend/src/pages/MockTestReview.jsx frontend/exam-frontend/src/pages/RichMockReview.jsx
 git commit -m "feat(review): one-tap 'what happened?' self-report on review pages
 
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -3687,5 +3709,5 @@ state with guesses and slips down-weighted.
 git add wiki/backend-guide.md
 git commit -m "docs: response diagnosis operations
 
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
