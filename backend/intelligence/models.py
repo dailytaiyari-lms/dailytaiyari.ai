@@ -19,7 +19,9 @@ from django.db.models import Q
 from core.models import TimeStampedModel
 from exams.models import Subject, Topic
 
-from .versions import EVENT_SCHEMA_VERSION, ONTOLOGY_VERSION, STATE_MODEL_VERSION
+from .versions import (
+    CLASSIFIER_VERSION, EVENT_SCHEMA_VERSION, ONTOLOGY_VERSION, STATE_MODEL_VERSION,
+)
 
 
 class Concept(TimeStampedModel):
@@ -347,6 +349,10 @@ class ItemStats(TimeStampedModel):
     correct_count = models.PositiveIntegerField(default=0)
     p_value = models.FloatField(null=True, blank=True)  # observed % correct in [0,1]
     avg_time_seconds = models.FloatField(null=True, blank=True)
+    # Median on-screen time from interaction timelines (guesses excluded);
+    # the "usual time" the diagnosis classifier trusts once n is large enough.
+    median_active_seconds = models.FloatField(null=True, blank=True)
+    active_time_n = models.PositiveIntegerField(default=0)
 
     # {option_idx: count}, correct option included — the distractor table.
     option_distribution = models.JSONField(default=dict, blank=True)
@@ -644,3 +650,175 @@ class AITaggingResult(TimeStampedModel):
 
     def __str__(self):
         return f'{self.content_hash[:12]} @ {self.model_ref}'
+
+
+ATTEMPT_KIND_CHOICES = [
+    ('quiz', 'Quiz'),
+    ('mock', 'Mock test'),
+    ('practice', 'Practice set'),
+]
+
+
+def _per_attempt_item_constraints(prefix):
+    """XOR item arm + one row per (attempt, item), as ConceptLink does it."""
+    return [
+        models.CheckConstraint(
+            name=f'{prefix}_exactly_one_item',
+            check=(
+                (Q(question__isnull=False) & Q(mock_item__isnull=True))
+                | (Q(question__isnull=True) & Q(mock_item__isnull=False))
+            ),
+        ),
+        models.UniqueConstraint(
+            fields=['attempt_kind', 'attempt_id', 'question'],
+            condition=Q(question__isnull=False), name=f'uniq_{prefix}_question',
+        ),
+        models.UniqueConstraint(
+            fields=['attempt_kind', 'attempt_id', 'mock_item'],
+            condition=Q(mock_item__isnull=False), name=f'uniq_{prefix}_mock_item',
+        ),
+    ]
+
+
+class AttemptTimeline(TimeStampedModel):
+    """Observation: the raw per-question interaction log of one attempt.
+
+    ``sessions`` maps a page-load session id to
+    ``{offset_ms, events, received_at, truncated}``. Each sync replaces its own
+    session wholesale, so resends are harmless. ``offset_ms`` is the session
+    start relative to the attempt's anchor (``started_at``; ``created_at``
+    for practice sets), computed server-side — the client clock is never
+    trusted. ``clock`` says how the attempt is timed, which decides where the
+    timing window starts (see services/timeline.py).
+    """
+
+    CLOCK_CHOICES = [
+        ('client', 'Client-timed (timer restarts per page load)'),
+        ('server', 'Server-timed (anchored to started_at)'),
+        ('none', 'Untimed'),
+    ]
+
+    student = models.ForeignKey(
+        'users.StudentProfile', on_delete=models.CASCADE, related_name='attempt_timelines',
+    )
+    attempt_kind = models.CharField(max_length=10, choices=ATTEMPT_KIND_CHOICES)
+    attempt_id = models.UUIDField()
+    clock = models.CharField(max_length=10, choices=CLOCK_CHOICES, default='server')
+    sessions = models.JSONField(default=dict, blank=True)
+    # Set once diagnosis has consumed the timeline; later syncs are refused.
+    finalized_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'Attempt Timeline'
+        verbose_name_plural = 'Attempt Timelines'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['attempt_kind', 'attempt_id'], name='uniq_attempt_timeline',
+            ),
+        ]
+
+    def __str__(self):
+        return f'timeline {self.attempt_kind}:{self.attempt_id}'
+
+
+class ResponseSelfReport(TimeStampedModel):
+    """Observation: the student's own "what happened?" on one item."""
+
+    CHOICE_CHOICES = [
+        ('slipped', 'Knew it, slipped'),
+        ('ran_out_of_time', 'Ran out of time'),
+        ('guessed', 'Guessed'),
+        ('didnt_know', "Didn't know"),
+    ]
+
+    student = models.ForeignKey(
+        'users.StudentProfile', on_delete=models.CASCADE, related_name='response_self_reports',
+    )
+    attempt_kind = models.CharField(max_length=10, choices=ATTEMPT_KIND_CHOICES)
+    attempt_id = models.UUIDField()
+    question = models.ForeignKey(
+        'quiz.Question', on_delete=models.CASCADE, null=True, blank=True, related_name='+',
+    )
+    mock_item = models.ForeignKey(
+        'quiz.MockTestItem', on_delete=models.CASCADE, null=True, blank=True, related_name='+',
+    )
+    choice = models.CharField(max_length=20, choices=CHOICE_CHOICES)
+
+    class Meta:
+        verbose_name = 'Response Self-Report'
+        verbose_name_plural = 'Response Self-Reports'
+        constraints = _per_attempt_item_constraints('selfreport')
+
+    def __str__(self):
+        return f'{self.attempt_kind}:{self.attempt_id} → {self.choice}'
+
+
+class ResponseDiagnosis(TimeStampedModel):
+    """Inference: why one item in one attempt was won or lost.
+
+    Exists for answered *and* unanswered items. Always recomputed by
+    ``services.diagnose`` from timeline + grading + prior state; ``label`` is
+    the classifier's call, ``final_label`` folds in the self-report.
+    """
+
+    LABEL_CHOICES = [
+        ('not_seen', 'Never looked at'),
+        ('skipped', 'Seen and skipped'),
+        ('time_pressure', 'Time pressure'),
+        ('correct', 'Correct'),
+        ('correct_lucky', 'Correct, likely a guess'),
+        ('correct_slow', 'Correct but slow'),
+        ('guess', 'Guess'),
+        ('second_guess', 'Changed a right answer'),
+        ('careless_slip', 'Careless slip'),
+        ('concept_gap', 'Concept gap'),
+        ('unclear', 'Unclear'),
+    ]
+    CONFIDENCE_CHOICES = [
+        ('low', 'Low'),
+        ('medium', 'Medium'),
+        ('high', 'High'),
+    ]
+
+    student = models.ForeignKey(
+        'users.StudentProfile', on_delete=models.CASCADE, related_name='response_diagnoses',
+    )
+    attempt_kind = models.CharField(max_length=10, choices=ATTEMPT_KIND_CHOICES)
+    attempt_id = models.UUIDField()
+    question = models.ForeignKey(
+        'quiz.Question', on_delete=models.CASCADE, null=True, blank=True,
+        related_name='response_diagnoses',
+    )
+    mock_item = models.ForeignKey(
+        'quiz.MockTestItem', on_delete=models.CASCADE, null=True, blank=True,
+        related_name='response_diagnoses',
+    )
+
+    answered = models.BooleanField(default=False)
+    is_correct = models.BooleanField(null=True, blank=True)
+    score_fraction = models.FloatField(default=0.0)
+
+    metrics = models.JSONField(default=dict, blank=True)
+    flags = models.JSONField(default=list, blank=True)
+    label = models.CharField(max_length=20, choices=LABEL_CHOICES)
+    confidence = models.CharField(max_length=10, choices=CONFIDENCE_CHOICES, default='low')
+    evidence = models.JSONField(default=list, blank=True)  # [{code, detail}]
+
+    self_report = models.CharField(max_length=20, blank=True, default='')
+    final_label = models.CharField(max_length=20, choices=LABEL_CHOICES)
+
+    has_timeline = models.BooleanField(default=False)
+    classifier_version = models.CharField(max_length=10, default=CLASSIFIER_VERSION)
+    computed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'Response Diagnosis'
+        verbose_name_plural = 'Response Diagnoses'
+        constraints = _per_attempt_item_constraints('diagnosis')
+        indexes = [
+            models.Index(fields=['student', 'computed_at']),
+            models.Index(fields=['tenant', 'final_label']),
+        ]
+
+    def __str__(self):
+        return f'{self.attempt_kind}:{self.attempt_id} {self.final_label}'

@@ -30,6 +30,7 @@ class Tenant(models.Model):
         'jobs': 'Job Portal',
         'practice': 'Smart Practice',
         'ai_grading': 'AI Subjective Grading',
+        'response_diagnosis': 'Answer Diagnosis',
         'hackathons': 'Hackathons',
     }
 
@@ -75,7 +76,7 @@ class Tenant(models.Model):
     # Features that roll out per tenant: a missing key means DISABLED (unlike
     # the classic features above, which default to enabled). Once a feature
     # has been switched on for everyone, move it out of this set.
-    OPT_IN_FEATURES = {'practice', 'ai_grading'}
+    OPT_IN_FEATURES = {'practice', 'ai_grading', 'response_diagnosis'}
 
     # Canonical list of selectable colour themes. Keys are stable identifiers the
     # frontend maps to a full colour palette; values are the human-readable

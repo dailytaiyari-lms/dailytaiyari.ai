@@ -9,7 +9,7 @@ migrated in place.
 EVENT_SCHEMA_VERSION = '1'
 
 # LearnerConceptState algorithm (services/state.py).
-STATE_MODEL_VERSION = '1'
+STATE_MODEL_VERSION = '2'
 
 # ItemStats computation (services/itemstats.py).
 ITEM_STATS_VERSION = '1'
@@ -20,3 +20,7 @@ TAGGER_PROMPT_VERSION = '1'
 
 # Concept ontology conventions (normalization rules, generic-label policy).
 ONTOLOGY_VERSION = '1'
+
+# Response diagnosis rules + thresholds (services/diagnosis.py,
+# diagnosis_config.py). Bump, then run ``recompute_diagnoses``.
+CLASSIFIER_VERSION = '1'
