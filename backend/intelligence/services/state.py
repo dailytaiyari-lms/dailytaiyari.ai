@@ -93,7 +93,7 @@ def _diagnosis_key(event):
     )
 
 
-def _diagnosis_weights(events):
+def _diagnosis_weights(student, events):
     """(attempt, item) → evidence multiplier from its ResponseDiagnosis.
 
     Guesses and slips stop counting as full evidence of not knowing; an
@@ -105,7 +105,9 @@ def _diagnosis_weights(events):
     attempt_ids = {e.attempt_id for e in events if e.attempt_id}
     if not attempt_ids:
         return {}
-    rows = ResponseDiagnosis.objects.filter(attempt_id__in=attempt_ids).values_list(
+    rows = ResponseDiagnosis.objects.filter(
+        student=student, attempt_id__in=attempt_ids,
+    ).values_list(
         'attempt_kind', 'attempt_id', 'question_id', 'mock_item_id', 'final_label')
     return {
         (kind, str(attempt_id), str(q) if q else None, str(m) if m else None):
@@ -150,7 +152,7 @@ def observations_for(student, concept):
     for event in events:
         latest[event.dedup_key.rsplit(':', 1)[0]] = event
 
-    diagnosis_weights = _diagnosis_weights(latest.values())
+    diagnosis_weights = _diagnosis_weights(student, latest.values())
     observations = []
     for event in sorted(latest.values(), key=lambda e: (e.occurred_at, e.created_at)):
         if event.question_id:

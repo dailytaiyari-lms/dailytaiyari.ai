@@ -748,6 +748,7 @@ class ResponseSelfReport(TimeStampedModel):
         verbose_name = 'Response Self-Report'
         verbose_name_plural = 'Response Self-Reports'
         constraints = _per_attempt_item_constraints('selfreport')
+        indexes = [models.Index(fields=['attempt_kind', 'attempt_id'])]
 
     def __str__(self):
         return f'{self.attempt_kind}:{self.attempt_id} → {self.choice}'
@@ -818,6 +819,8 @@ class ResponseDiagnosis(TimeStampedModel):
         indexes = [
             models.Index(fields=['student', 'computed_at']),
             models.Index(fields=['tenant', 'final_label']),
+            models.Index(fields=['attempt_kind', 'attempt_id']),
+            models.Index(fields=['tenant', 'computed_at']),
         ]
 
     def __str__(self):
