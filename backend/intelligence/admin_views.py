@@ -3,6 +3,9 @@
 Every read here is a thin serialization over the foundation tables — no new
 computation pipelines live in the product layer.
 """
+from collections import Counter, defaultdict
+from datetime import timedelta
+
 from django.db.models import Avg, Count, Q
 from django.utils import timezone
 from rest_framework import permissions, status
@@ -13,7 +16,7 @@ from exams.models import Course
 
 from .models import (
     Concept, CoursePracticeConfig, GeneratedItem, ItemStats, LearnerConceptState,
-    PracticeGenerationJob, PracticeSet,
+    PracticeGenerationJob, PracticeSet, ResponseDiagnosis,
 )
 from .recommendation import practice_config_for
 from .serializers import MasteryRowSerializer, PracticeSetSerializer
@@ -365,3 +368,49 @@ class CoursePracticeConfigView(APIView):
             'max_active_sets': config.max_active_sets,
             'daily_xp_set_cap': config.daily_xp_set_cap,
         }
+
+
+class DiagnosisCalibrationView(APIView):
+    """How well response-diagnosis labels match what students say happened.
+
+    Label distribution, classifier-label × self-report confusion, per-label
+    agreement, and how much of the data had a timeline / trusted usual time.
+    """
+
+    permission_classes = [permissions.IsAuthenticated, IsTenantAdminOrInstructor]
+
+    def get(self, request):
+        from .diagnosis_config import SELF_REPORT_LABEL
+
+        try:
+            days = max(1, min(365, int(request.query_params.get('days', 30))))
+        except ValueError:
+            days = 30
+        since = timezone.now() - timedelta(days=days)
+        rows = ResponseDiagnosis.objects.filter(
+            tenant=request.tenant, computed_at__gte=since,
+        ).values_list('label', 'self_report', 'has_timeline', 'metrics')
+
+        labels = Counter()
+        confusion = defaultdict(Counter)
+        total = with_timeline = stats_usual = 0
+        for label, report, has_timeline, metrics in rows.iterator():
+            total += 1
+            labels[label] += 1
+            with_timeline += 1 if has_timeline else 0
+            stats_usual += 1 if (metrics or {}).get('usual_source') == 'stats' else 0
+            if report:
+                confusion[label][report] += 1
+
+        agreement = {
+            label: round(
+                sum(n for rep, n in reports.items() if SELF_REPORT_LABEL.get(rep) == label)
+                / sum(reports.values()), 3)
+            for label, reports in confusion.items()
+        }
+        return Response({
+            'days': days, 'total': total, 'with_timeline': with_timeline,
+            'stats_usual': stats_usual, 'labels': dict(labels),
+            'confusion': {label: dict(reports) for label, reports in confusion.items()},
+            'agreement': agreement,
+        })

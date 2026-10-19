@@ -211,3 +211,119 @@ class TimelineSyncView(APIView):
         except TimelineError as exc:
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response({'ok': True})
+
+
+class DiagnosisFeaturePermission(permissions.BasePermission):
+    """The tenant must have opted into Answer Diagnosis."""
+
+    message = 'Answer Diagnosis is not enabled for this academy.'
+
+    def has_permission(self, request, view):
+        tenant = getattr(request, 'tenant', None)
+        return bool(tenant and tenant.get_features().get('response_diagnosis'))
+
+
+def _item_key(question_id, mock_item_id):
+    return f'bank:{question_id}' if question_id else f'item:{mock_item_id}'
+
+
+def _owned_finished_attempt(kind, attempt_id, student):
+    import uuid
+
+    from quiz.models import MockTestAttempt, QuizAttempt
+
+    model = {'quiz': QuizAttempt, 'mock': MockTestAttempt}.get(kind)
+    if model is None or student is None:
+        return None
+    try:
+        uuid.UUID(str(attempt_id))
+    except ValueError:
+        return None
+    return model.objects.filter(id=attempt_id, student=student).exclude(
+        status='in_progress').first()
+
+
+def _attempt_item(kind, attempt, item_kind, item_id):
+    """The Question / MockTestItem ``item_id`` names, only if it is in the attempt."""
+    import uuid
+
+    from quiz.models import MockTestItem, MockTestQuestion
+
+    try:
+        uuid.UUID(str(item_id))
+    except ValueError:
+        return None
+    if item_kind == 'bank':
+        if kind == 'quiz':
+            return attempt.quiz.questions.filter(id=item_id).first()
+        link = MockTestQuestion.objects.filter(
+            mock_test=attempt.mock_test, question_id=item_id).select_related('question').first()
+        return link.question if link else None
+    if item_kind == 'item' and kind == 'mock':
+        return MockTestItem.objects.filter(mock_test=attempt.mock_test, id=item_id).first()
+    return None
+
+
+class SelfReportView(APIView):
+    """The student's own "what happened?" on wrong/unanswered review items."""
+
+    permission_classes = [permissions.IsAuthenticated, DiagnosisFeaturePermission]
+
+    def get(self, request):
+        from .models import ResponseDiagnosis, ResponseSelfReport
+
+        kind = request.query_params.get('attempt_kind')
+        attempt = _owned_finished_attempt(
+            kind, request.query_params.get('attempt_id'), _student_or_none(request))
+        if attempt is None:
+            return Response({'error': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
+        reports = {
+            _item_key(q, m): choice
+            for q, m, choice in ResponseSelfReport.objects.filter(
+                attempt_kind=kind, attempt_id=attempt.id,
+            ).values_list('question_id', 'mock_item_id', 'choice')
+        }
+        not_seen = [
+            _item_key(q, m)
+            for q, m in ResponseDiagnosis.objects.filter(
+                attempt_kind=kind, attempt_id=attempt.id, final_label='not_seen',
+            ).values_list('question_id', 'mock_item_id')
+        ]
+        return Response({'reports': reports, 'not_seen': not_seen})
+
+    def post(self, request):
+        from .models import ResponseDiagnosis, ResponseSelfReport
+        from .services.diagnosis import reconcile
+
+        data = request.data
+        kind = data.get('attempt_kind')
+        choice = data.get('choice')
+        if choice not in dict(ResponseSelfReport.CHOICE_CHOICES):
+            return Response({'error': 'Unknown choice.'}, status=status.HTTP_400_BAD_REQUEST)
+        student = _student_or_none(request)
+        attempt = _owned_finished_attempt(kind, data.get('attempt_id'), student)
+        if attempt is None:
+            return Response({'error': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
+        item = _attempt_item(kind, attempt, data.get('item_kind'), data.get('item_id'))
+        if item is None:
+            return Response({'error': 'Question not in this attempt.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        arm = {'question': item} if data.get('item_kind') == 'bank' else {'mock_item': item}
+        diag = ResponseDiagnosis.objects.filter(
+            attempt_kind=kind, attempt_id=attempt.id, **arm).first()
+        if diag is not None and diag.is_correct:
+            return Response({'error': 'Only wrong or unanswered questions take a self-report.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        ResponseSelfReport.objects.update_or_create(
+            attempt_kind=kind, attempt_id=attempt.id, **arm,
+            defaults={'student': student, 'tenant': student.user.tenant, 'choice': choice},
+        )
+        if diag is not None:
+            # Cheap: reconcile only — the stored label, confidence and flags stand.
+            diag.self_report = choice
+            diag.final_label = reconcile(diag.label, diag.confidence, diag.flags, choice,
+                                         bool((diag.metrics or {}).get('timed_out')))
+            diag.save(update_fields=['self_report', 'final_label', 'updated_at'])
+        return Response({'saved': True, 'choice': choice})
