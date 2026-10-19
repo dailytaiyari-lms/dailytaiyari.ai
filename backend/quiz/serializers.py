@@ -341,7 +341,9 @@ class QuizAttemptSummarySerializer(serializers.ModelSerializer):
             'time_taken_seconds', 'status', 'total_questions',
             'attempted_questions', 'correct_answers', 'wrong_answers',
             'skipped_questions', 'marks_obtained', 'total_marks',
-            'percentage', 'xp_earned'
+            'percentage', 'xp_earned', 'proctoring_violations',
+            'tab_switch_count', 'fullscreen_exit_count',
+            'restricted_shortcut_count', 'last_proctoring_event_at'
         ]
 
 
@@ -357,12 +359,17 @@ class QuizAttemptSerializer(serializers.ModelSerializer):
             'time_taken_seconds', 'status', 'total_questions',
             'attempted_questions', 'correct_answers', 'wrong_answers',
             'skipped_questions', 'marks_obtained', 'total_marks',
-            'percentage', 'xp_earned', 'answers'
+            'percentage', 'xp_earned', 'proctoring_violations',
+            'tab_switch_count', 'fullscreen_exit_count',
+            'restricted_shortcut_count', 'last_proctoring_event_at', 'answers'
         ]
         read_only_fields = [
             'id', 'started_at', 'total_questions', 'attempted_questions',
             'correct_answers', 'wrong_answers', 'skipped_questions',
-            'marks_obtained', 'total_marks', 'percentage', 'xp_earned'
+            'marks_obtained', 'total_marks', 'percentage', 'xp_earned',
+            'proctoring_violations', 'tab_switch_count',
+            'fullscreen_exit_count', 'restricted_shortcut_count',
+            'last_proctoring_event_at'
         ]
 
 
@@ -545,4 +552,3 @@ class QuestionReportCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         validated_data['reported_by'] = self.context['request'].user.profile
         return super().create(validated_data)
-

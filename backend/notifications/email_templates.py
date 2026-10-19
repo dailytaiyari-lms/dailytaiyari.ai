@@ -18,6 +18,9 @@ TYPE_ENROLLMENT_REJECTED = 'enrollment_rejected'
 TYPE_ACCOUNT_CREATED = 'account_created'
 TYPE_COURSE_ASSIGNED = 'course_assigned'
 TYPE_CREDENTIALS_RESET = 'credentials_reset'
+TYPE_BIRTHDAY_STUDENT = 'birthday_student'
+TYPE_BIRTHDAY_PAST_STUDENT = 'birthday_past_student'
+TYPE_BIRTHDAY_DIGEST = 'birthday_digest'
 
 TEMPLATE_TYPES = [
     TYPE_ENROLLMENT_REQUEST,
@@ -26,6 +29,9 @@ TEMPLATE_TYPES = [
     TYPE_ACCOUNT_CREATED,
     TYPE_COURSE_ASSIGNED,
     TYPE_CREDENTIALS_RESET,
+    TYPE_BIRTHDAY_STUDENT,
+    TYPE_BIRTHDAY_PAST_STUDENT,
+    TYPE_BIRTHDAY_DIGEST,
 ]
 
 # Human labels + the placeholders available to each template, surfaced to the
@@ -72,6 +78,25 @@ TEMPLATE_META = {
         'description': 'Sent when an admin issues a new temporary password for '
                        'a user. Keep the {password} token.',
         'placeholders': ['student_name', 'email', 'password', 'tenant_name'],
+    },
+    TYPE_BIRTHDAY_STUDENT: {
+        'label': 'Birthday wish (to current student)',
+        'description': 'Sent on a current student’s birthday when birthday '
+                       'greetings are enabled in Settings → Advanced.',
+        'placeholders': ['student_name', 'first_name', 'tenant_name', 'age'],
+    },
+    TYPE_BIRTHDAY_PAST_STUDENT: {
+        'label': 'Birthday wish (to past student)',
+        'description': 'Sent on the birthday of a former student — someone with '
+                       'no active enrolment. A warm way to invite them back, so '
+                       'keep the tone celebratory rather than salesy.',
+        'placeholders': ['student_name', 'first_name', 'tenant_name', 'age'],
+    },
+    TYPE_BIRTHDAY_DIGEST: {
+        'label': "Today's birthdays (to admins)",
+        'description': 'The daily digest of students celebrating a birthday, '
+                       'sent to your notification address.',
+        'placeholders': ['tenant_name', 'count', 'names', 'date'],
     },
 }
 
@@ -143,6 +168,44 @@ DEFAULT_EMAIL_TEMPLATES = {
             'Temporary password: {password}\n\n'
             'Please change this password from your profile right after you '
             'sign in. If you did not expect this, contact your institute.'
+        ),
+    },
+    TYPE_BIRTHDAY_STUDENT: {
+        'subject': 'Happy Birthday, {first_name}! 🎂',
+        'heading': 'Happy Birthday, {first_name}! 🎉',
+        'body': (
+            'Everyone at {tenant_name} is wishing you a wonderful birthday '
+            'today.\n\n'
+            'Thank you for the curiosity, the effort and the early mornings you '
+            'bring to your preparation. Take a moment to celebrate yourself — '
+            'you have earned it.\n\n'
+            'Here is to another year of big goals and bigger breakthroughs. '
+            'Have a brilliant day!'
+        ),
+    },
+    TYPE_BIRTHDAY_PAST_STUDENT: {
+        'subject': 'Happy Birthday, {first_name}! 🎂',
+        'heading': 'Happy Birthday from all of us at {tenant_name} 🎉',
+        'body': (
+            'Hi {first_name},\n\n'
+            'It has been a while, and we did not want your birthday to pass '
+            'without saying it: we are wishing you a fantastic day.\n\n'
+            'You will always be part of the {tenant_name} family. If you ever '
+            'feel like picking up where you left off, your account is right '
+            'where you left it — and there is plenty of new material waiting '
+            'for you.\n\n'
+            'Enjoy your day. We would love to see you back.'
+        ),
+    },
+    TYPE_BIRTHDAY_DIGEST: {
+        'subject': "Today's birthdays at {tenant_name} — {count} to celebrate 🎂",
+        'heading': "Today's birthdays",
+        'body': (
+            '{count} member(s) of {tenant_name} are celebrating a birthday on '
+            '{date}:\n\n'
+            '{names}\n\n'
+            'They have already received an automatic wish from you. A quick '
+            'personal message goes a long way.'
         ),
     },
 }

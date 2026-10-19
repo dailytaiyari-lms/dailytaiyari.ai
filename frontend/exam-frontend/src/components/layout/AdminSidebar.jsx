@@ -14,6 +14,7 @@ import {
   ClipboardList,
   Shield,
   Briefcase,
+  Trophy,
   ShoppingCart,
   Megaphone,
   Bell,
@@ -38,6 +39,7 @@ export const ADMIN_NAV_ITEMS = [
   { path: '/admin/mock-tests', label: 'Mock Tests', icon: ClipboardList },
   { path: '/admin/insights', label: 'Learning Insights', icon: Brain, feature: 'practice' },
   { path: '/admin/jobs', label: 'Jobs', icon: Briefcase },
+  { path: '/admin/hackathons', label: 'Hackathons', icon: Trophy },
   { tab: 'ai', label: 'AI Features', icon: Sparkles },
   { tab: 'settings', label: 'Settings', icon: SlidersHorizontal },
 ]

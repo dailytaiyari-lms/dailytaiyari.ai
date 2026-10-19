@@ -10,11 +10,12 @@ fragment (``body_html``) plus an optional CTA button.
 """
 import logging
 import re
+from email.utils import formataddr, parseaddr
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
-from django.utils.html import strip_tags
+from django.utils.html import escape, strip_tags
 
 logger = logging.getLogger(__name__)
 
@@ -78,9 +79,53 @@ def tenant_link(tenant, path):
     return f"{origin}/{path.lstrip('/')}" if origin else path
 
 
+def from_address(tenant):
+    """Sender address showing the tenant's name as the display name.
+
+    The mailbox itself must stay on the platform's verified sending domain
+    (Azure Communication Services only signs that domain), so only the display
+    name is tenant-specific: ``CodeMinors <DoNotReply@dailytaiyari.in>``.
+    Falls back to the configured address unchanged when no tenant name exists.
+    """
+    configured = getattr(settings, 'DEFAULT_FROM_EMAIL', '') or ''
+    default_name, addr = parseaddr(configured)
+    if not addr:
+        return configured or None
+    display = (getattr(tenant, 'name', '') or '').strip() or default_name
+    return formataddr((display, addr)) if display else addr
+
+
 def _accent_for(tenant):
     theme = getattr(tenant, 'theme', None)
     return _THEME_ACCENTS.get(theme, _DEFAULT_ACCENT)
+
+
+def celebration_body_html(tenant, body_html, *, badge='🎂', banner_text=''):
+    """Wrap an email body in a festive, table-based celebration card.
+
+    Used by the birthday emails so they feel like a greeting card rather than a
+    transactional notice, while still rendering identically across Outlook /
+    Gmail (no flexbox, no background images, inline styles only). The accent
+    colour comes from the tenant theme so the card stays on brand.
+    """
+    accent = _accent_for(tenant)
+    banner = ''
+    if banner_text:
+        banner = (
+            '<p style="margin:12px 0 0; font-size:15px; font-weight:600; '
+            f'color:{accent}; letter-spacing:0.3px;">{escape(banner_text)}</p>'
+        )
+    return (
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        'style="margin:0 0 24px;">'
+        '<tr><td align="center" '
+        f'style="padding:28px 20px; border-radius:16px; background-color:#fff7ed; '
+        f'border:1px solid {accent}33;">'
+        f'<div style="font-size:52px; line-height:1;">{escape(badge)}</div>'
+        f'{banner}'
+        '</td></tr></table>'
+        f'{body_html or ""}'
+    )
 
 
 def send_branded_email(tenant, to, subject, heading, body_html,
@@ -124,7 +169,7 @@ def send_branded_email(tenant, to, subject, heading, body_html,
         text_parts += ['', f'{cta_text or "Open"}: {cta_url}']
     text_body = '\n'.join(p for p in text_parts if p is not None).strip()
 
-    from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None)
+    from_email = from_address(tenant)
     try:
         msg = EmailMultiAlternatives(
             subject=subject,

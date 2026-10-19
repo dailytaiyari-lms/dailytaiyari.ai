@@ -30,6 +30,46 @@ class Tenant(models.Model):
         'jobs': 'Job Portal',
         'practice': 'Smart Practice',
         'ai_grading': 'AI Subjective Grading',
+        'hackathons': 'Hackathons',
+    }
+
+    # Canonical list of "advanced" behaviour switches a tenant admin controls
+    # from Settings → Advanced. Unlike FEATURE_CHOICES (which show/hide whole
+    # product areas in the navigation), these tune how the platform behaves in
+    # the background — currently the automated birthday greetings. Each entry is
+    # {label, description, default}; a missing key falls back to its default so
+    # newly introduced switches take effect without a data migration.
+    ADVANCED_SETTING_CHOICES = {
+        'birthday_greetings': {
+            'label': 'Birthday greetings',
+            'description': 'Automatically wish students a happy birthday with a '
+                           'celebratory in-app message on their special day.',
+            'default': True,
+        },
+        'birthday_email_student': {
+            'label': 'Email the birthday wish to students',
+            'description': 'Also send the student a branded birthday email '
+                           'carrying your logo and institution name.',
+            'default': True,
+        },
+        'birthday_include_past_students': {
+            'label': 'Include past students',
+            'description': 'Wish former students too — a warm, natural moment to '
+                           'invite them back to your academy.',
+            'default': True,
+        },
+        'birthday_notify_admins': {
+            'label': "Notify admins in-app",
+            'description': "Give admins a daily in-app digest of today's "
+                           'birthdays so they can reach out personally.',
+            'default': True,
+        },
+        'birthday_email_admins': {
+            'label': 'Email the birthday digest to admins',
+            'description': "Send today's birthday list to your notification "
+                           'email address as well.',
+            'default': False,
+        },
     }
 
     # Features that roll out per tenant: a missing key means DISABLED (unlike
@@ -133,6 +173,17 @@ class Tenant(models.Model):
     # tenant-admin UI shows locked features as read-only with a "contact the
     # DailyTaiyari team" note. Missing keys are tenant-controlled as usual.
     feature_locks = models.JSONField(default=dict, blank=True)
+
+    # Per-tenant display-name overrides for features: {feature_key: label}.
+    # Feature *keys* stay canonical everywhere (toggles, routes, permissions);
+    # only the words shown to students/admins change. A missing or blank entry
+    # falls back to the platform default in ``FEATURE_CHOICES``.
+    feature_labels = models.JSONField(default=dict, blank=True)
+
+    # Per-tenant advanced behaviour switches: {setting_key: bool}. Missing keys
+    # fall back to the declared default in ``ADVANCED_SETTING_CHOICES``, so a new
+    # switch rolls out without touching existing rows.
+    advanced_settings = models.JSONField(default=dict, blank=True)
 
     # ── Suspension (super-admin freeze) ────────────────────────────────────
     # A suspended tenant stays ``is_active`` (so its public config, and thus the
@@ -249,6 +300,47 @@ class Tenant(models.Model):
     def locked_feature_keys(self):
         """List of feature keys currently locked by the super admin."""
         return list(self.get_feature_locks().keys())
+
+    # ── Feature naming ─────────────────────────────────────────────────────
+    #: Max length of a tenant's custom feature label (fits navigation UI).
+    FEATURE_LABEL_MAX_LENGTH = 40
+
+    def get_feature_label_overrides(self):
+        """Sanitized override map: only known keys with a non-empty label."""
+        overrides = self.feature_labels or {}
+        cleaned = {}
+        for key, label in overrides.items():
+            if key not in self.FEATURE_CHOICES:
+                continue
+            text = str(label or '').strip()[: self.FEATURE_LABEL_MAX_LENGTH]
+            if text and text != self.FEATURE_CHOICES[key]:
+                cleaned[key] = text
+        return cleaned
+
+    def get_feature_labels(self):
+        """Full effective label map: tenant override, else platform default."""
+        overrides = self.get_feature_label_overrides()
+        return {
+            key: overrides.get(key, default)
+            for key, default in self.FEATURE_CHOICES.items()
+        }
+
+    def feature_label(self, key):
+        """Effective label for a single feature key."""
+        return self.get_feature_labels().get(key, key)
+
+    # ── Advanced behaviour switches ────────────────────────────────────────
+    def get_advanced_settings(self):
+        """Full effective map of advanced switches, defaults filled in."""
+        stored = self.advanced_settings or {}
+        return {
+            key: bool(stored.get(key, spec['default']))
+            for key, spec in self.ADVANCED_SETTING_CHOICES.items()
+        }
+
+    def advanced_setting(self, key):
+        """Effective value of one advanced switch (False for unknown keys)."""
+        return self.get_advanced_settings().get(key, False)
 
     # ── Quotas & billing helpers (Phase 2) ─────────────────────────────────
     def usage_counts(self):

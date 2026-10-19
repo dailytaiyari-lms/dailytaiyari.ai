@@ -10,7 +10,13 @@ const PAGE = { page_size: 2000 }
 
 // Build a multipart request config when a payload carries a File (e.g. PDF
 // upload); otherwise send as plain JSON.
-const withFiles = (data) => {
+//
+// `onProgress` receives 0-100 as the bytes go up. Lecture videos run to
+// hundreds of megabytes, so without it the admin stares at a spinner with no
+// idea whether the upload is moving. It only fires for multipart requests,
+// and only while bytes are in flight — once the last byte is sent the server
+// still has to store the file, which is reported separately by the caller.
+const withFiles = (data, onProgress) => {
   const hasFile = Object.values(data).some((v) => v instanceof File)
   if (!hasFile) return { body: data, config: undefined }
   const fd = new FormData()
@@ -18,7 +24,14 @@ const withFiles = (data) => {
     if (v === undefined || v === null) return
     fd.append(k, v instanceof File ? v : String(v))
   })
-  return { body: fd, config: { headers: { 'Content-Type': undefined } } }
+  const config = { headers: { 'Content-Type': undefined } }
+  if (onProgress) {
+    config.onUploadProgress = (e) => {
+      if (!e.total) return
+      onProgress(Math.min(100, Math.round((e.loaded / e.total) * 100)))
+    }
+  }
+  return { body: fd, config }
 }
 
 /**
@@ -45,6 +58,8 @@ export const contentBuilderService = {
   createSubject: async (data) => (await api.post('/courses/admin/subjects/', data)).data,
   updateSubject: async (id, data) => (await api.patch(`/courses/admin/subjects/${id}/`, data)).data,
   deleteSubject: async (id) => api.delete(`/courses/admin/subjects/${id}/`),
+  reorderSubjects: async (ids) =>
+    (await api.post('/courses/admin/subjects/reorder/', { order: ids })).data,
 
   // ---- Chapters ----
   getChapters: async (subjectId) =>
@@ -52,6 +67,8 @@ export const contentBuilderService = {
   createChapter: async (data) => (await api.post('/courses/admin/chapters/', data)).data,
   updateChapter: async (id, data) => (await api.patch(`/courses/admin/chapters/${id}/`, data)).data,
   deleteChapter: async (id) => api.delete(`/courses/admin/chapters/${id}/`),
+  reorderChapters: async (ids) =>
+    (await api.post('/courses/admin/chapters/reorder/', { order: ids })).data,
 
   // ---- Topics ----
   getTopics: async ({ chapterId, subjectId }) =>
@@ -63,19 +80,28 @@ export const contentBuilderService = {
   createTopic: async (data) => (await api.post('/courses/admin/topics/', data)).data,
   updateTopic: async (id, data) => (await api.patch(`/courses/admin/topics/${id}/`, data)).data,
   deleteTopic: async (id) => api.delete(`/courses/admin/topics/${id}/`),
+  // Reordering inside a chapter resequences the ChapterTopic links, which is
+  // the sequence students actually follow.
+  reorderTopics: async (ids, chapterId) =>
+    (await api.post('/courses/admin/topics/reorder/', {
+      order: ids,
+      ...(chapterId ? { chapter: chapterId } : {}),
+    })).data,
 
   // ---- Content ----
   getContents: async (topicId) =>
     list(await api.get('/content/admin/contents/', { params: { topic: topicId, ...PAGE } })),
-  createContent: async (data) => {
-    const { body, config } = withFiles(data)
+  createContent: async (data, onProgress) => {
+    const { body, config } = withFiles(data, onProgress)
     return (await api.post('/content/admin/contents/', body, config)).data
   },
-  updateContent: async (id, data) => {
-    const { body, config } = withFiles(data)
+  updateContent: async (id, data, onProgress) => {
+    const { body, config } = withFiles(data, onProgress)
     return (await api.patch(`/content/admin/contents/${id}/`, body, config)).data
   },
   deleteContent: async (id) => api.delete(`/content/admin/contents/${id}/`),
+  reprocessVideo: async (id) =>
+    (await api.post(`/content/admin/contents/${id}/reprocess_video/`)).data,
 
   // ---- Quizzes ----
   getQuizzes: async (topicId) =>

@@ -30,6 +30,7 @@ import {
 
 import { chatService } from '../services/chatService'
 import { useAuthStore } from '../context/authStore'
+import { useFeatureLabel } from '../context/tenantStore'
 import MathRenderer from '../components/chat/MathRenderer'
 import ChatQuiz from '../components/chat/ChatQuiz'
 import { looksLikeQuiz, parseQuizFromMessage } from '../components/chat/quizParser'
@@ -407,6 +408,7 @@ const UserMessage = ({ content }) => (
 const AIDoubtSolver = () => {
   const queryClient = useQueryClient()
   const { profile } = useAuthStore()
+  const aiLabel = useFeatureLabel('ai', 'AI Study Assistant')
 
   const [input, setInput] = useState('')
   const [activeSession, setActiveSession] = useState(null)
@@ -702,7 +704,7 @@ const AIDoubtSolver = () => {
 
           <div className="flex items-center gap-2 min-w-0">
             <h1 className="font-semibold text-surface-900 dark:text-white truncate">
-              {sessionData?.title && activeSession ? sessionData.title : 'AI Study Assistant'}
+              {sessionData?.title && activeSession ? sessionData.title : aiLabel}
             </h1>
           </div>
 

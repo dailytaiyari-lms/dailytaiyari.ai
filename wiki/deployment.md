@@ -38,6 +38,7 @@ Each VM runs the same Docker Compose stack:
 | `celery-nbworker` | Notebook/lab grading (`notebooks` queue)     |
 | `celery-aiworker` | AI authoring — course + lab generation (`aigen` queue) |
 | `piston`       | Sandboxed code execution engine                 |
+| `piston-init`  | One-shot: installs Piston's language runtimes   |
 | `nbrunner`     | Sandboxed notebook/lab execution engine         |
 
 The three Celery workers are split by queue so a multi-minute LLM call or a
@@ -55,6 +56,38 @@ submission. See [Labs](./notebooks-labs.md) for the split and its rationale.
   hook that reloads nginx.
 - **Sandboxes:** neither `piston` nor `nbrunner` publishes ports — they are
   reachable only on the internal Docker network. Never add a `ports:` mapping.
+
+### Piston language runtimes
+
+Piston starts with an **empty package store**. Its language runtimes live in the
+`piston_data` volume, so any fresh volume — first boot, `docker compose down -v`,
+a volume prune, or a VM rebuild — leaves `piston` running and reporting **"Up"**
+while it has *zero* languages installed. In that state every `/api/v2/execute`
+call fails, `coding/services.py` raises `EngineError`, and the API returns **503
+on every Run/Submit**. This exact failure went unnoticed on prod for five weeks.
+
+Two guards make this self-healing; neither should be removed:
+
+- **`piston-init`** (`backend/deploy/piston/provision.sh`) runs on every
+  `compose up` and idempotently installs the runtimes listed in
+  `backend/coding/languages.py`. It exits 0 immediately when they're all present.
+  Keep the script's `PACKAGES` list in sync when adding a language — note that
+  installing `gcc` is what provides the `c++` runtime.
+- **`piston`'s healthcheck** asserts `/api/v2/runtimes` is *non-empty* rather
+  than merely that the port is open, so a runtime-less engine shows as
+  `unhealthy`. Its `start_period` is deliberately long (10m) because a cold
+  install of gcc takes several minutes.
+
+To check the engine by hand:
+
+```bash
+# On the VM — should list python 3.12.0, java 15.0.2 and c++ 10.2.0:
+docker compose exec -T web python -c \
+  "import requests;print(requests.get('http://piston:2000/api/v2/runtimes',timeout=10).text)"
+```
+
+`GET /api/v1/coding/meta/?health=1` reports the same thing through the API and is
+`{"ok": false, "missing": [...]}` whenever a required runtime is absent.
 
 ## Configuration
 

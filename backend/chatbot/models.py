@@ -661,6 +661,7 @@ class AIUsageRecord(TimeStampedModel):
     FEATURE_ITEMTAG = 'itemtag'
     FEATURE_PRACTICEGEN = 'practicegen'
     FEATURE_GRADING = 'grading'
+    FEATURE_HACKATHONGEN = 'hackathongen'
     FEATURE_OTHER = 'other'
     FEATURE_CHOICES = [
         (FEATURE_CHAT, 'Doubt solver'),
@@ -671,6 +672,7 @@ class AIUsageRecord(TimeStampedModel):
         (FEATURE_ITEMTAG, 'Item tagging'),
         (FEATURE_PRACTICEGEN, 'Practice generator'),
         (FEATURE_GRADING, 'Subjective grading'),
+        (FEATURE_HACKATHONGEN, 'Hackathon builder'),
         (FEATURE_OTHER, 'Other'),
     ]
     feature = models.CharField(max_length=20, choices=FEATURE_CHOICES, default=FEATURE_CHAT)

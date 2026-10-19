@@ -29,6 +29,13 @@ export const notificationService = {
         return response.data
     },
 
+    // Pending birthday celebration for the current user (null when there is
+    // none). Dismissing it is just marking the notification read.
+    getBirthday: async () => {
+        const response = await api.get('/notifications/birthday/')
+        return response.data?.celebration ?? null
+    },
+
     // --- Tenant-admin: announcements ---
     getAnnouncements: async (params = {}) => {
         const response = await api.get('/notifications/announcements/', { params })

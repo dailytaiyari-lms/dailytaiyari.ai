@@ -209,6 +209,44 @@
     @apply animate-pulse rounded;
   }
 
+  /*
+   * Rich HTML is persisted with inline colors so it also works in exports and
+   * emails. Those light-theme colors otherwise override prose-invert. Keep
+   * legacy content theme-aware here so existing records need no migration.
+   */
+  .dark .prose [style*="color:" i],
+  .dark .prose [color] {
+    color: theme('colors.surface.200') !important;
+  }
+
+  .dark .prose :is(h1, h2, h3, h4, h5, h6, strong)[style*="color:" i],
+  .dark .prose :is(h1, h2, h3, h4, h5, h6, strong)[color] {
+    color: theme('colors.surface.50') !important;
+  }
+
+  /* Light authored panels (callouts, inline code, and striped table rows). */
+  .dark .prose [style*="background:" i],
+  .dark .prose [style*="background-color:" i],
+  .dark .prose [bgcolor],
+  .dark .prose [style*="background:" i] *,
+  .dark .prose [style*="background-color:" i] *,
+  .dark .prose [bgcolor] * {
+    color: #1f2937 !important;
+  }
+
+  /* These authored surfaces intentionally retain dark backgrounds. */
+  .dark .prose pre[style],
+  .dark .prose pre[style] *,
+  .dark .prose th[style],
+  .dark .prose th[style] * {
+    color: theme('colors.surface.100') !important;
+  }
+
+  .dark .prose a[style*="color:" i],
+  .dark .prose a[color] {
+    color: rgb(var(--color-primary-400)) !important;
+  }
+
   /* Streak fire animation */
   .fire-glow {
     @apply animate-pulse;
@@ -297,3 +335,36 @@
   }
 }
 
+
+/* Video player volume slider */
+.dt-video-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    to right,
+    #fff 0,
+    #fff var(--dt-fill, 100%),
+    rgba(255, 255, 255, 0.35) var(--dt-fill, 100%),
+    rgba(255, 255, 255, 0.35) 100%
+  );
+  outline: none;
+}
+.dt-video-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  background: #fff;
+  cursor: pointer;
+}
+.dt-video-range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: none;
+  border-radius: 9999px;
+  background: #fff;
+  cursor: pointer;
+}

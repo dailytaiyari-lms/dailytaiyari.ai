@@ -6,3 +6,6 @@ class ContentConfig(AppConfig):
     name = 'content'
     verbose_name = 'Study Content'
 
+    def ready(self):
+        from content import signals  # noqa: F401
+

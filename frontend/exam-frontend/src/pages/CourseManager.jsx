@@ -8,7 +8,7 @@ import {
     FileText, ListChecks, GraduationCap, Pencil, Eye, Video, FileType,
     Sparkles, HelpCircle, ClipboardList, Clock, Users, X, CheckCircle2, Save,
     Code2, Trash2, Image as ImageIcon, Upload, Radio, Calendar, Link2,
-    Notebook as NotebookIcon,
+    Notebook as NotebookIcon, AlertTriangle, Zap, RefreshCw,
 } from 'lucide-react'
 import { contentBuilderService as svc } from '../services/contentBuilderService'
 import { tenantAdminService } from '../services/tenantAdminService'
@@ -17,6 +17,7 @@ import courseAiService from '../services/courseAiService'
 import { useAuthStore } from '../context/authStore'
 import {
     EntityModal, ConfirmDialog, RowActions, QuestionModal, formatApiError, QTYPE_LABEL,
+    useDragReorder, DragHandle, ReorderStatus, useSavedFlash,
 } from '../components/admin/builderShared'
 import TopicStudio from '../components/admin/aiStudio/TopicStudio'
 import PendingAiRows from '../components/admin/aiStudio/PendingAiRows'
@@ -33,19 +34,156 @@ const statusPill = (status) =>
             : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
 
 /* ===========================================================================
+ * Video processing status
+ * ========================================================================= */
+
+/** True while the optimisation pipeline still has work to do on this content. */
+const isVideoProcessing = (ct) =>
+    ['pending', 'processing'].includes(ct.video_status) ||
+    (ct.video_status === 'ready' && ['pending', 'processing'].includes(ct.hls_status))
+
+/**
+ * Can the admin usefully kick off processing for this row?
+ *
+ * True for an uploaded video that is idle, which covers both a file that
+ * predates the pipeline and one whose job never ran because the worker was
+ * down. Re-encoding an already-finished video is allowed too — it is the only
+ * way to pick up a later pipeline improvement.
+ */
+const canReprocessVideo = (ct) =>
+    ct.content_type === 'video' && !!ct.video_file && !isVideoProcessing(ct)
+
+/** Nothing has ever been done to this uploaded file. */
+const isUnprocessedVideo = (ct) =>
+    ct.content_type === 'video' && !!ct.video_file && !ct.video_status
+
+/**
+ * What the pipeline is doing to an uploaded video, in the admin's terms.
+ *
+ * Two stages run back to back. The first makes the file playable and seekable
+ * at all; the second builds the adaptive quality ladder, which on a long
+ * lecture can take many minutes. Reporting a percentage rather than a bare
+ * spinner is the difference between "still working" and "apparently stuck".
+ */
+const videoPipelineState = (ct) => {
+    const { video_status: vs, hls_status: hs } = ct
+    if (!vs) {
+        // An uploaded file nothing has touched: it plays, but seeking may not
+        // work and startup can be slow. Worth surfacing, since the fix is one
+        // click away.
+        if (ct.content_type === 'video' && ct.video_file) {
+            return { tone: 'slate', icon: AlertTriangle, spin: false, label: 'Not optimised' }
+        }
+        return null
+    }
+    if (vs === 'failed') {
+        return { tone: 'rose', icon: AlertTriangle, label: 'Processing failed', spin: false }
+    }
+    if (vs === 'pending') {
+        return { tone: 'amber', icon: Loader2, label: 'Queued for processing', spin: true }
+    }
+    if (vs === 'processing') {
+        const pct = ct.video_progress || 0
+        return {
+            tone: 'amber', icon: Loader2, spin: true,
+            label: pct > 0 ? `Optimising video ${pct}%` : 'Optimising video',
+            pct,
+        }
+    }
+    // Video itself is watchable from here on; the ladder is a quality upgrade.
+    if (hs === 'processing') {
+        const pct = ct.hls_progress || 0
+        return {
+            tone: 'sky', icon: Loader2, spin: true,
+            label: pct > 0 ? `Building quality options ${pct}%` : 'Building quality options',
+            pct,
+            sub: 'Playable now — adaptive quality is still encoding.',
+        }
+    }
+    if (hs === 'pending') {
+        return { tone: 'sky', icon: Loader2, label: 'Queued for quality encoding', spin: true }
+    }
+    if (hs === 'failed') {
+        return { tone: 'amber', icon: AlertTriangle, label: 'Quality options unavailable', spin: false }
+    }
+    if (hs === 'ready') {
+        return { tone: 'emerald', icon: Zap, label: 'Adaptive streaming ready', spin: false }
+    }
+    return { tone: 'emerald', icon: CheckCircle2, label: 'Ready to stream', spin: false }
+}
+
+const PIPELINE_TONE = {
+    amber: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+    sky: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400',
+    rose: 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400',
+    emerald: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+    slate: 'bg-surface-100 text-surface-500 dark:bg-surface-800 dark:text-surface-400',
+}
+
+const PIPELINE_BAR = {
+    amber: 'bg-amber-500',
+    sky: 'bg-sky-500',
+    rose: 'bg-rose-500',
+    emerald: 'bg-emerald-500',
+    slate: 'bg-surface-400',
+}
+
+const VideoPipelineBadge = ({ ct }) => {
+    const state = videoPipelineState(ct)
+    if (!state) return null
+    const Icon = state.icon
+    return (
+        <div className="mt-1.5">
+            <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded ${PIPELINE_TONE[state.tone]}`}>
+                <Icon className={`w-3 h-3 ${state.spin ? 'animate-spin' : ''}`} />
+                {state.label}
+            </span>
+            {state.pct > 0 && (
+                <div className="h-1 mt-1 rounded-full bg-surface-200 dark:bg-surface-700 overflow-hidden max-w-[220px]">
+                    <div
+                        className={`h-full rounded-full ${PIPELINE_BAR[state.tone]} transition-[width] duration-500`}
+                        style={{ width: `${state.pct}%` }}
+                    />
+                </div>
+            )}
+            {state.sub && <p className="text-[10px] text-surface-400 mt-0.5">{state.sub}</p>}
+        </div>
+    )
+}
+
+/* ===========================================================================
  * Content list for the selected topic
  * ========================================================================= */
 const ContentSection = ({ topic, subjectId, openModal, askDelete }) => {
     const { data: contents = [], isLoading } = useQuery({
         queryKey: ['cb-contents', topic.id],
         queryFn: () => svc.getContents(topic.id),
+        // Encoding happens in a worker with nothing to push the result back, so
+        // poll while a video is mid-pipeline and stop as soon as all are done.
+        refetchInterval: (query) =>
+            (query.state.data || []).some(isVideoProcessing) ? 5000 : false,
     })
 
     const videos = contents.filter((ct) => ct.content_type === 'video')
     const reading = contents.filter((ct) => ct.content_type !== 'video')
 
+    const queryClient = useQueryClient()
+    const reprocess = useMutation({
+        mutationFn: (ct) => svc.reprocessVideo(ct.id),
+        onSuccess: () => {
+            toast.success('Processing queued')
+            queryClient.invalidateQueries({ queryKey: ['cb-contents', topic.id] })
+        },
+        onError: (err) => toast.error(formatApiError(err)),
+    })
+
     const ContentRow = ({ ct }) => {
         const Icon = CONTENT_ICON[ct.content_type] || FileText
+        const busy = reprocess.isPending && reprocess.variables?.id === ct.id
+        const failed = ct.video_status === 'failed' || ct.hls_status === 'failed'
+        const label = isUnprocessedVideo(ct)
+            ? 'Optimise video'
+            : failed ? 'Retry processing' : 'Re-encode video'
         return (
             <div className="group card p-3.5 flex items-center justify-between gap-3 hover:border-primary-200 dark:hover:border-primary-800 transition-colors">
                 <div className="flex items-center gap-3 min-w-0">
@@ -58,13 +196,36 @@ const ContentSection = ({ topic, subjectId, openModal, askDelete }) => {
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-100 dark:bg-surface-800 text-surface-500 capitalize">{ct.content_type}</span>
                             <span className={`text-[10px] px-1.5 py-0.5 rounded capitalize ${statusPill(ct.status)}`}>{ct.status}</span>
                         </div>
+                        <VideoPipelineBadge ct={ct} />
                     </div>
                 </div>
-                <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-                    <RowActions
-                        onEdit={() => openModal('content', ct, { topicId: topic.id, subjectId })}
-                        onDelete={() => askDelete('content', ct, ct.title)}
-                    />
+                <div className="flex items-center gap-1 shrink-0">
+                    {canReprocessVideo(ct) && (
+                        <button
+                            onClick={() => reprocess.mutate(ct)}
+                            disabled={busy}
+                            title={label}
+                            // An unoptimised or failed video needs attention, so
+                            // that button stays visible; re-encoding a healthy
+                            // one is a power action and only shows on hover.
+                            className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg transition-all disabled:opacity-60 ${
+                                isUnprocessedVideo(ct) || failed
+                                    ? 'text-amber-700 bg-amber-100 hover:bg-amber-200 dark:text-amber-400 dark:bg-amber-900/30 dark:hover:bg-amber-900/50'
+                                    : 'opacity-0 group-hover:opacity-100 text-surface-400 hover:text-primary-600 hover:bg-surface-100 dark:hover:bg-surface-800'
+                            }`}
+                        >
+                            {busy
+                                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                : <RefreshCw className="w-3.5 h-3.5" />}
+                            {label}
+                        </button>
+                    )}
+                    <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                        <RowActions
+                            onEdit={() => openModal('content', ct, { topicId: topic.id, subjectId })}
+                            onDelete={() => askDelete('content', ct, ct.title)}
+                        />
+                    </div>
                 </div>
             </div>
         )
@@ -266,27 +427,50 @@ const QuizSection = ({ topic, subjectId, openModal, askDelete }) => {
  * Topic list inside a chapter (in the left navigator)
  * ========================================================================= */
 const TopicList = ({ chapter, subjectId, subjectName, sel, onSelectTopic, openModal, askDelete }) => {
+    const queryClient = useQueryClient()
     const { data: topics = [], isLoading } = useQuery({
         queryKey: ['cb-topics', chapter.id],
         queryFn: () => svc.getTopics({ chapterId: chapter.id }),
     })
 
+    const [savedFlash, flashSaved] = useSavedFlash()
+    const reorderMutation = useMutation({
+        mutationFn: (ids) => svc.reorderTopics(ids, chapter.id),
+        onError: (err) => {
+            toast.error(formatApiError(err, 'Could not save the new topic order'))
+            queryClient.invalidateQueries({ queryKey: ['cb-topics', chapter.id] })
+        },
+        onSuccess: () => {
+            toast.success('Topic order saved', { id: `reorder-topics-${chapter.id}` })
+            flashSaved()
+            queryClient.invalidateQueries({ queryKey: ['cb-topics', chapter.id] })
+        },
+    })
+
+    const { list, draggingId, rowProps, handleProps } = useDragReorder(topics, (ids) => reorderMutation.mutate(ids))
+
     return (
         <div className="pl-4 py-1 space-y-0.5">
             {isLoading ? (
                 <div className="py-2 flex justify-center"><Loader2 className="w-3.5 h-3.5 animate-spin text-surface-400" /></div>
-            ) : topics.length === 0 ? (
+            ) : list.length === 0 ? (
                 <p className="text-[11px] text-surface-400 italic px-2 py-1">No topics yet</p>
             ) : (
-                topics.map((tp) => {
+                list.map((tp) => {
                     const active = sel.topicId === tp.id
                     return (
                         <div
                             key={tp.id}
-                            className={`group flex items-center justify-between gap-1 pl-2 pr-1 py-1.5 rounded-lg cursor-pointer transition-colors ${active ? 'bg-primary-50 dark:bg-primary-900/25 text-primary-700 dark:text-primary-300' : 'hover:bg-surface-100 dark:hover:bg-surface-800'}`}
+                            {...rowProps(tp.id)}
+                            className={`group flex items-center justify-between gap-1 pl-1 pr-1 py-1.5 rounded-lg cursor-pointer transition-colors ${draggingId === tp.id ? 'opacity-50 ring-1 ring-primary-300' : ''} ${active ? 'bg-primary-50 dark:bg-primary-900/25 text-primary-700 dark:text-primary-300' : 'hover:bg-surface-100 dark:hover:bg-surface-800'}`}
                             onClick={() => onSelectTopic(tp, subjectId, chapter.id, subjectName)}
                         >
-                            <span className="flex items-center gap-1.5 min-w-0 text-sm">
+                            <span className="flex items-center gap-1 min-w-0 text-sm">
+                                <DragHandle
+                                    {...handleProps(tp.id)}
+                                    size={12}
+                                    className="opacity-0 group-hover:opacity-100 transition-opacity"
+                                />
                                 <FileText className={`w-3.5 h-3.5 shrink-0 ${active ? 'text-primary-500' : 'text-surface-400'}`} />
                                 <span className="truncate">{tp.name}</span>
                             </span>
@@ -300,12 +484,17 @@ const TopicList = ({ chapter, subjectId, subjectName, sel, onSelectTopic, openMo
                     )
                 })
             )}
-            <button
-                onClick={() => openModal('topic', null, { subjectId, chapterId: chapter.id })}
-                className="ml-2 mt-0.5 text-[11px] font-semibold text-primary-600 hover:text-primary-700 inline-flex items-center gap-1"
-            >
-                <Plus className="w-3 h-3" /> Add topic
-            </button>
+            <div className="ml-2 mt-0.5 flex items-center gap-2">
+                <button
+                    onClick={() => openModal('topic', null, { subjectId, chapterId: chapter.id })}
+                    className="text-[11px] font-semibold text-primary-600 hover:text-primary-700 inline-flex items-center gap-1"
+                >
+                    <Plus className="w-3 h-3" /> Add topic
+                </button>
+                {(reorderMutation.isPending || savedFlash) && (
+                    <ReorderStatus saving={reorderMutation.isPending} saved={savedFlash} />
+                )}
+            </div>
         </div>
     )
 }
@@ -315,21 +504,43 @@ const TopicList = ({ chapter, subjectId, subjectName, sel, onSelectTopic, openMo
  * ========================================================================= */
 const ChapterList = ({ subject, sel, onSelectTopic, openModal, askDelete }) => {
     const [open, setOpen] = useState({})
+    const queryClient = useQueryClient()
     const { data: chapters = [], isLoading } = useQuery({
         queryKey: ['cb-chapters', subject.id],
         queryFn: () => svc.getChapters(subject.id),
     })
 
+    const [savedFlash, flashSaved] = useSavedFlash()
+    const reorderMutation = useMutation({
+        mutationFn: (ids) => svc.reorderChapters(ids),
+        onError: (err) => {
+            toast.error(formatApiError(err, 'Could not save the new chapter order'))
+            queryClient.invalidateQueries({ queryKey: ['cb-chapters', subject.id] })
+        },
+        onSuccess: () => {
+            toast.success('Chapter order saved', { id: `reorder-chapters-${subject.id}` })
+            flashSaved()
+            queryClient.invalidateQueries({ queryKey: ['cb-chapters', subject.id] })
+        },
+    })
+
+    const { list, draggingId, rowProps, handleProps } = useDragReorder(chapters, (ids) => reorderMutation.mutate(ids))
+
     return (
         <div className="pl-4 py-1 space-y-0.5">
             {isLoading ? (
                 <div className="py-2 flex justify-center"><Loader2 className="w-3.5 h-3.5 animate-spin text-surface-400" /></div>
-            ) : chapters.length === 0 ? (
+            ) : list.length === 0 ? (
                 <p className="text-[11px] text-surface-400 italic px-2 py-1">No chapters yet</p>
             ) : (
-                chapters.map((ch) => (
-                    <div key={ch.id}>
-                        <div className="group flex items-center justify-between gap-1 pl-1 pr-1 py-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors">
+                list.map((ch) => (
+                    <div key={ch.id} {...rowProps(ch.id)}>
+                        <div className={`group flex items-center justify-between gap-1 pl-1 pr-1 py-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors ${draggingId === ch.id ? 'opacity-50 ring-1 ring-primary-300' : ''}`}>
+                            <DragHandle
+                                {...handleProps(ch.id)}
+                                size={12}
+                                className="opacity-0 group-hover:opacity-100 transition-opacity"
+                            />
                             <button onClick={() => setOpen((p) => ({ ...p, [ch.id]: !p[ch.id] }))} className="flex items-center gap-1.5 min-w-0 text-sm text-left flex-1">
                                 {open[ch.id] ? <ChevronDown className="w-3.5 h-3.5 text-surface-400 shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 text-surface-400 shrink-0" />}
                                 <Book className="w-3.5 h-3.5 text-surface-400 shrink-0" />
@@ -352,12 +563,17 @@ const ChapterList = ({ subject, sel, onSelectTopic, openModal, askDelete }) => {
                     </div>
                 ))
             )}
-            <button
-                onClick={() => openModal('chapter', null, { subjectId: subject.id })}
-                className="ml-1 mt-0.5 text-[11px] font-semibold text-primary-600 hover:text-primary-700 inline-flex items-center gap-1"
-            >
-                <Plus className="w-3 h-3" /> Add chapter
-            </button>
+            <div className="ml-1 mt-0.5 flex items-center gap-2">
+                <button
+                    onClick={() => openModal('chapter', null, { subjectId: subject.id })}
+                    className="text-[11px] font-semibold text-primary-600 hover:text-primary-700 inline-flex items-center gap-1"
+                >
+                    <Plus className="w-3 h-3" /> Add chapter
+                </button>
+                {(reorderMutation.isPending || savedFlash) && (
+                    <ReorderStatus saving={reorderMutation.isPending} saved={savedFlash} />
+                )}
+            </div>
         </div>
     )
 }
@@ -367,10 +583,27 @@ const ChapterList = ({ subject, sel, onSelectTopic, openModal, askDelete }) => {
  * ========================================================================= */
 const Navigator = ({ courseId, sel, onSelectTopic, openModal, askDelete }) => {
     const [open, setOpen] = useState({})
+    const queryClient = useQueryClient()
     const { data: subjects = [], isLoading } = useQuery({
         queryKey: ['cb-subjects', courseId],
         queryFn: () => svc.getSubjects(courseId),
     })
+
+    const [savedFlash, flashSaved] = useSavedFlash()
+    const reorderMutation = useMutation({
+        mutationFn: (ids) => svc.reorderSubjects(ids),
+        onError: (err) => {
+            toast.error(formatApiError(err, 'Could not save the new subject order'))
+            queryClient.invalidateQueries({ queryKey: ['cb-subjects', courseId] })
+        },
+        onSuccess: () => {
+            toast.success('Subject order saved', { id: `reorder-subjects-${courseId}` })
+            flashSaved()
+            queryClient.invalidateQueries({ queryKey: ['cb-subjects', courseId] })
+        },
+    })
+
+    const { list, draggingId, rowProps, handleProps } = useDragReorder(subjects, (ids) => reorderMutation.mutate(ids))
 
     return (
         <div className="card p-3 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
@@ -386,13 +619,20 @@ const Navigator = ({ courseId, sel, onSelectTopic, openModal, askDelete }) => {
 
             {isLoading ? (
                 <div className="py-8 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-surface-400" /></div>
-            ) : subjects.length === 0 ? (
+            ) : list.length === 0 ? (
                 <EmptyHint icon={Layers} text="No subjects yet." sub="Start by adding a subject." />
             ) : (
                 <div className="space-y-0.5">
-                    {subjects.map((sub) => (
-                        <div key={sub.id}>
-                            <div className="group flex items-center justify-between gap-1 px-1 py-2 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors">
+                    <div className="px-1 pb-1">
+                        <ReorderStatus saving={reorderMutation.isPending} saved={savedFlash} />
+                    </div>
+                    {list.map((sub) => (
+                        <div key={sub.id} {...rowProps(sub.id)}>
+                            <div className={`group flex items-center justify-between gap-1 px-1 py-2 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors ${draggingId === sub.id ? 'opacity-50 ring-1 ring-primary-300' : ''}`}>
+                                <DragHandle
+                                    {...handleProps(sub.id)}
+                                    className="opacity-0 group-hover:opacity-100 transition-opacity"
+                                />
                                 <button onClick={() => setOpen((p) => ({ ...p, [sub.id]: !p[sub.id] }))} className="flex items-center gap-2 min-w-0 text-left flex-1">
                                     {open[sub.id] ? <ChevronDown className="w-4 h-4 text-surface-400 shrink-0" /> : <ChevronRight className="w-4 h-4 text-surface-400 shrink-0" />}
                                     <span className="w-6 h-6 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: `${sub.color || '#10B981'}22` }}>
@@ -1809,6 +2049,7 @@ const CourseManager = () => {
     const [sel, setSel] = useState({ subjectId: null, chapterId: null, topicId: null, topic: null })
     const [modal, setModal] = useState(null)   // { type, instance, extra }
     const [del, setDel] = useState(null)        // { type, instance, label }
+    const [uploadPct, setUploadPct] = useState(null)  // 0-100 while a file uploads
     const [instructorsOpen, setInstructorsOpen] = useState(false)
     const [thumbnailOpen, setThumbnailOpen] = useState(false)
 
@@ -1853,14 +2094,22 @@ const CourseManager = () => {
                 assignment: [svc.updateAssignment, svc.createAssignment],
             }
             const [update, create] = map[type]
-            return instance ? update(instance.id, withParents) : create(withParents)
+            // Only report progress when bytes are actually going up: a plain
+            // field edit would otherwise sit at "Uploading 0%" until it saved.
+            const hasFile = Object.values(withParents).some((v) => v instanceof File)
+            const track = hasFile ? setUploadPct : undefined
+            if (track) setUploadPct(0)
+            return instance
+                ? update(instance.id, withParents, track)
+                : create(withParents, track)
         },
         onSuccess: (_d, vars) => {
             toast.success(`${vars.type === 'exam' ? 'Course' : vars.type[0].toUpperCase() + vars.type.slice(1)} ${vars.instance ? 'saved' : 'created'}`)
             invalidateFor(vars.type, vars.extra)
+            setUploadPct(null)
             setModal(null)
         },
-        onError: (err) => toast.error(formatApiError(err)),
+        onError: (err) => { setUploadPct(null); toast.error(formatApiError(err)) },
     })
 
     const deleteMutation = useMutation({
@@ -1950,6 +2199,7 @@ const CourseManager = () => {
                         instance={modal.instance}
                         defaults={modal.extra?.defaults}
                         saving={saveMutation.isPending}
+                        uploadPct={uploadPct}
                         onClose={() => setModal(null)}
                         onSubmit={(payload) => saveMutation.mutate({ type: modal.type, instance: modal.instance, payload, extra: modal.extra })}
                     />

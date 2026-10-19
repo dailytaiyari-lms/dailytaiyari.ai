@@ -11,6 +11,9 @@ threads = 4
 loglevel = "info"
 accesslog = "-"
 errorlog = "-"
+# Must stay ABOVE settings.AI_READ_TIMEOUT (default 90s), so a slow AI provider
+# hits its own timeout and returns a readable error rather than having the
+# worker killed out from under the request.
 timeout = 120
 keepalive = 5
 capture_output = True

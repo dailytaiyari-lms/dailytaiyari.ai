@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useQuery } from '@tanstack/react-query'
 import { quizService } from '../services/quizService'
+import { useFeatureLabel } from '../context/tenantStore'
 import Loading from '../components/common/Loading'
 import SearchableSelect from '../components/common/SearchableSelect'
 import {
@@ -24,6 +25,7 @@ import {
 
 const Quiz = () => {
   const navigate = useNavigate()
+  const quizLabel = useFeatureLabel('quiz', 'Practice Quiz')
   const [showFilters, setShowFilters] = useState(false)
 
   // Filter state. Course defaults to '' (All courses) so quizzes from every
@@ -146,7 +148,7 @@ const Quiz = () => {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-display font-bold">Practice Quiz</h1>
+          <h1 className="text-2xl font-display font-bold">{quizLabel}</h1>
           <p className="text-surface-500 mt-1">Test your knowledge and earn XP</p>
         </div>
         <button

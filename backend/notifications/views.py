@@ -1,3 +1,5 @@
+import logging
+
 from django.utils import timezone
 from rest_framework import generics, permissions, status
 from rest_framework.pagination import PageNumberPagination
@@ -6,7 +8,7 @@ from rest_framework.views import APIView
 
 from core.permissions import IsTenantAdmin
 
-from . import services
+from . import birthdays, services
 from .email_templates import (
     DEFAULT_EMAIL_TEMPLATES,
     TEMPLATE_META,
@@ -22,6 +24,8 @@ from .serializers import (
     NotificationSerializer,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class NotificationPagination(PageNumberPagination):
     page_size = 20
@@ -31,6 +35,23 @@ class NotificationPagination(PageNumberPagination):
 
 def _unread_count(user):
     return Notification.objects.filter(recipient=user, is_read=False).count()
+
+
+def _trigger_birthday_sweep(request):
+    """Fire the tenant's daily birthday sweep the first time it's seen today.
+
+    Hung off the endpoints the app already polls so greetings are delivered on
+    the day even with no cron/beat scheduler configured. Cheap: a per-process
+    memo means at most one DB round-trip per worker per tenant per day, and it
+    never raises.
+    """
+    tenant = getattr(request, 'tenant', None)
+    if tenant is None:
+        return
+    try:
+        birthdays.maybe_run_for_tenant(tenant)
+    except Exception:  # noqa: BLE001 - never break a notification poll
+        logger.exception('Birthday sweep trigger failed')
 
 
 class NotificationListView(generics.ListAPIView):
@@ -43,6 +64,9 @@ class NotificationListView(generics.ListAPIView):
         qs = Notification.objects.filter(recipient=self.request.user)
         if self.request.query_params.get('unread') in ('1', 'true', 'True'):
             qs = qs.filter(is_read=False)
+        type_filter = self.request.query_params.get('type')
+        if type_filter:
+            qs = qs.filter(type__in=[t for t in type_filter.split(',') if t])
         return qs
 
     def list(self, request, *args, **kwargs):
@@ -57,7 +81,42 @@ class UnreadCountView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        _trigger_birthday_sweep(request)
         return Response({'unread_count': _unread_count(request.user)})
+
+
+class BirthdayCelebrationView(APIView):
+    """The pending birthday celebration for the current user, if any.
+
+    Returns the unread birthday notification created today so the frontend can
+    play its full-screen confetti moment exactly once. Dismissing it is just
+    marking the notification read through the normal endpoint.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        _trigger_birthday_sweep(request)
+        notification = Notification.objects.filter(
+            recipient=request.user,
+            type=Notification.TYPE_BIRTHDAY,
+            is_read=False,
+            created_at__date=timezone.localdate(),
+        ).first()
+        if notification is None:
+            return Response({'celebration': None})
+        data = notification.data or {}
+        return Response({
+            'celebration': {
+                'id': str(notification.id),
+                'title': notification.title,
+                'body': notification.body,
+                'link': notification.link,
+                'first_name': data.get('first_name', ''),
+                'age': data.get('age'),
+                'tenant_name': data.get('tenant_name', ''),
+                'is_past_student': bool(data.get('is_past_student')),
+            },
+        })
 
 
 class MarkReadView(APIView):
@@ -116,10 +175,15 @@ def _sample_context(template_type, tenant):
     tenant_name = getattr(tenant, 'name', '') or 'Your Institute'
     return {
         'student_name': 'Jane Doe',
+        'first_name': 'Jane',
         'student_email': 'jane.doe@example.com',
         'course_name': 'Sample Course 101',
         'reason': 'Reason: Incomplete profile',
         'tenant_name': tenant_name,
+        'age': '18',
+        'count': '3',
+        'names': '• Jane Doe\n• Arjun Mehta\n• Riya Sharma (past student)',
+        'date': timezone.localdate().strftime('%d %B %Y'),
     }
 
 

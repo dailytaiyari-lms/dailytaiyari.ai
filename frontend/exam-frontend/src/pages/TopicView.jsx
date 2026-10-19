@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { useQuery } from '@tanstack/react-query'
 import { courseService } from '../services/courseService'
 import { contentService } from '../services/contentService'
+import { useFeatureLabel } from '../context/tenantStore'
 import Loading from '../components/common/Loading'
 import {
   BookOpen,
@@ -22,6 +23,7 @@ import {
 const TopicView = () => {
   const { topicId } = useParams()
   const navigate = useNavigate()
+  const quizLabel = useFeatureLabel('quiz', 'Practice Quiz')
 
   const { data: topic, isLoading: topicLoading } = useQuery({
     queryKey: ['topic', topicId],
@@ -86,7 +88,7 @@ const TopicView = () => {
           <div className="flex justify-center mb-2 text-primary-500">
             <PenTool size={24} />
           </div>
-          <p className="font-medium">Practice Quiz</p>
+          <p className="font-medium">{quizLabel}</p>
         </button>
         <button
           onClick={() => navigate('/doubt-solver')}

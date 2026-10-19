@@ -3,10 +3,11 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import {
-  Briefcase, MapPin, Building2, ExternalLink, Clock, GraduationCap, Code2,
+  Briefcase, MapPin, Building2, ExternalLink, Clock, GraduationCap,
   ArrowRight, ClipboardList, Search, SlidersHorizontal, X,
 } from 'lucide-react'
 import { jobService } from '../services/jobService'
+import { useFeatureLabel } from '../context/tenantStore'
 import { useAuthStore } from '../context/authStore'
 import {
   stageMeta, formatSalary, formatExperience, categoryMeta,
@@ -19,7 +20,7 @@ const TABS = [
   { id: 'mine', label: 'My Applications' },
 ]
 
-const CATEGORY_ICONS = { Briefcase, GraduationCap, Code2 }
+const CATEGORY_ICONS = { Briefcase, GraduationCap }
 
 const HIRING_TYPES = [
   { value: 'internal', label: 'Internal' },
@@ -128,6 +129,7 @@ const EMPTY_FILTERS = { category: [], job_type: [], work_mode: [], employment_ty
 
 const Jobs = () => {
   const navigate = useNavigate()
+  const jobsLabel = useFeatureLabel('jobs', 'Careers')
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
   const [tab, setTab] = useState('open')
   const [q, setQ] = useState('')
@@ -177,8 +179,8 @@ const Jobs = () => {
             <Briefcase className="w-6 h-6 text-white" />
           </div>
           <div>
-            <h1 className="text-2xl font-display font-bold text-white">Careers</h1>
-            <p className="text-white/80 text-sm">Explore jobs, internships & hackathons, and track your applications</p>
+            <h1 className="text-2xl font-display font-bold text-white">{jobsLabel}</h1>
+            <p className="text-white/80 text-sm">Explore jobs and internships, and track your applications</p>
           </div>
         </div>
       </div>

@@ -85,6 +85,19 @@ export const tenantAdminService = {
         return response.data
     },
 
+    // Advanced behaviour switches: { setting_key: boolean }
+    updateAdvancedSettings: async (advancedSettings) => {
+        const response = await api.patch('/tenant-admin/settings/', { advanced_settings: advancedSettings })
+        return response.data
+    },
+
+    // Custom display names for features: { feature_key: 'Custom Name' }.
+    // An empty string resets that feature back to the platform default name.
+    updateFeatureLabels: async (featureLabels) => {
+        const response = await api.patch('/tenant-admin/settings/', { feature_labels: featureLabels })
+        return response.data
+    },
+
     // Branding text — institution name and tagline.
     updateBranding: async ({ name, tagline }) => {
         const payload = {}

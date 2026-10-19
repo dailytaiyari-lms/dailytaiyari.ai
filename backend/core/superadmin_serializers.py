@@ -266,7 +266,12 @@ class TenantDetailSerializer(serializers.ModelSerializer):
         data['feature_locks'] = instance.get_feature_locks()
         data['locked_features'] = instance.locked_feature_keys()
         data['available_features'] = [
-            {'key': k, 'label': label} for k, label in Tenant.FEATURE_CHOICES.items()
+            {
+                'key': k,
+                'label': label,
+                'tenant_label': instance.get_feature_labels().get(k, label),
+            }
+            for k, label in Tenant.FEATURE_CHOICES.items()
         ]
         data['available_themes'] = [
             {'key': k, 'label': label} for k, label in Tenant.THEME_CHOICES.items()

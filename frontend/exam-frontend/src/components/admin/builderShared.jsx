@@ -1,9 +1,9 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import toast from 'react-hot-toast'
 import {
     Plus, Pencil, Trash2, X, Loader2, Save, AlertTriangle,
-    CheckCircle2, Circle, ImagePlus, Loader, FileText,
+    CheckCircle2, Circle, ImagePlus, Loader, FileText, GripVertical,
 } from 'lucide-react'
 import { contentBuilderService as svc } from '../../services/contentBuilderService'
 import CertificatePreview from '../certificate/CertificatePreview'
@@ -21,6 +21,149 @@ const PANEL_MOTION = {
     animate: { opacity: 1, scale: 1, y: 0 },
     exit: { opacity: 0, scale: 0.97, y: 8 },
     transition: { duration: 0.14, ease: 'easeOut' },
+}
+
+/* ===========================================================================
+ * Drag & drop reordering
+ * ------------------------------------------------------------------------
+ * `useDragReorder` keeps a local copy of a list that is rearranged live while
+ * a row is dragged, then reports the final id sequence once. Dragging only
+ * starts from the grip handle so row clicks and row actions keep working, and
+ * every handler stops propagation so nested lists (subject → chapter → topic)
+ * never steal each other's drags.
+ * ========================================================================= */
+export const useDragReorder = (items, onReorder) => {
+    const [list, setList] = useState(items)
+    const [armedId, setArmedId] = useState(null)     // handle pressed → row is draggable
+    const [draggingId, setDraggingId] = useState(null)
+    const latest = useRef(items)
+    const dirty = useRef(false)
+    const pending = useRef(null)                     // id sequence awaiting server confirmation
+
+    useEffect(() => {
+        if (draggingId) return
+        let next = items
+        const want = pending.current
+        if (want) {
+            const byId = new Map(items.map((it) => [String(it.id), it]))
+            const settled = items.length === want.length &&
+                items.every((it, i) => String(it.id) === String(want[i]))
+            if (settled || want.length !== items.length || want.some((id) => !byId.has(String(id)))) {
+                pending.current = null
+            } else {
+                // Server hasn't caught up yet — keep showing the dropped order.
+                next = want.map((id) => byId.get(String(id)))
+            }
+        }
+        setList(next)
+        latest.current = next
+    }, [items, draggingId])
+
+    const moveOver = (overId) => {
+        setList((prev) => {
+            const from = prev.findIndex((it) => it.id === draggingId)
+            const to = prev.findIndex((it) => it.id === overId)
+            if (from < 0 || to < 0 || from === to) return prev
+            const next = prev.slice()
+            next.splice(to, 0, next.splice(from, 1)[0])
+            dirty.current = true
+            latest.current = next
+            return next
+        })
+    }
+
+    const finish = () => {
+        setArmedId(null)
+        setDraggingId(null)
+        if (!dirty.current) return
+        dirty.current = false
+        const ids = latest.current.map((it) => it.id)
+        pending.current = ids
+        onReorder(ids)
+    }
+
+    /** Spread on the row wrapper. */
+    const rowProps = (id) => ({
+        draggable: armedId === id,
+        onDragStart: (e) => {
+            e.stopPropagation()
+            e.dataTransfer.effectAllowed = 'move'
+            try { e.dataTransfer.setData('text/plain', String(id)) } catch { /* Safari */ }
+            setDraggingId(id)
+        },
+        onDragOver: (e) => {
+            if (!draggingId) return
+            e.preventDefault()
+            e.stopPropagation()
+            e.dataTransfer.dropEffect = 'move'
+            if (draggingId !== id) moveOver(id)
+        },
+        onDrop: (e) => {
+            if (!draggingId) return
+            e.preventDefault()
+            e.stopPropagation()
+        },
+        onDragEnd: (e) => {
+            e.stopPropagation()
+            finish()
+        },
+    })
+
+    /** Spread on the grip button inside the row. */
+    const handleProps = (id) => ({
+        onMouseDown: () => setArmedId(id),
+        onMouseUp: () => setArmedId(null),
+        onClick: (e) => { e.stopPropagation() },
+    })
+
+    return { list, draggingId, rowProps, handleProps }
+}
+
+/** Grip affordance that arms a row for dragging. */
+export const DragHandle = ({ className = '', size = 14, title = 'Drag to reorder', ...props }) => (
+    <span
+        {...props}
+        title={title}
+        aria-label={title}
+        className={`shrink-0 cursor-grab active:cursor-grabbing text-surface-300 hover:text-surface-500 dark:text-surface-600 dark:hover:text-surface-400 touch-none ${className}`}
+    >
+        <GripVertical width={size} height={size} />
+    </span>
+)
+
+/**
+ * Inline status shown next to a drag-sortable list: hints how to reorder, then
+ * confirms the save in place so the change never looks unsaved.
+ */
+export const ReorderStatus = ({ saving, saved, hint = 'Drag the grip handles to reorder', className = '' }) => {
+    if (saving) {
+        return (
+            <span className={`inline-flex items-center gap-1 text-[10px] font-medium text-primary-600 dark:text-primary-400 ${className}`}>
+                <Loader2 className="w-3 h-3 animate-spin" /> Saving order…
+            </span>
+        )
+    }
+    if (saved) {
+        return (
+            <span className={`inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400 ${className}`}>
+                <CheckCircle2 className="w-3 h-3" /> Order saved
+            </span>
+        )
+    }
+    return <span className={`text-[10px] text-surface-400 ${className}`}>{hint}</span>
+}
+
+/** Turn a flag on for a moment (used to flash "Order saved" after a drop). */
+export const useSavedFlash = (ms = 2200) => {
+    const [on, setOn] = useState(false)
+    const timer = useRef(null)
+    useEffect(() => () => clearTimeout(timer.current), [])
+    const flash = () => {
+        setOn(true)
+        clearTimeout(timer.current)
+        timer.current = setTimeout(() => setOn(false), ms)
+    }
+    return [on, flash]
 }
 
 /** Read a File/Blob into a base64 data URL. */
@@ -236,7 +379,6 @@ export const SCHEMAS = {
             { name: 'name', label: 'Name', type: 'text', required: true },
             { name: 'code', label: 'Code', type: 'text', required: true },
             { name: 'weightage', label: 'Weightage (%)', type: 'number', step: '0.01' },
-            { name: 'order', label: 'Order', type: 'number', default: 0 },
             { name: 'color', label: 'Color', type: 'color', default: '#10B981' },
             { name: 'icon', label: 'Icon name', type: 'text' },
             { name: 'description', label: 'Description', type: 'textarea', full: true },
@@ -250,7 +392,6 @@ export const SCHEMAS = {
             { name: 'grade', label: 'Grade', type: 'text', hint: 'e.g. 11, 12' },
             { name: 'book_reference', label: 'Book Reference', type: 'text' },
             { name: 'estimated_hours', label: 'Est. Hours', type: 'number', step: '0.1', default: 2 },
-            { name: 'order', label: 'Order', type: 'number', default: 0 },
             { name: 'description', label: 'Description', type: 'textarea', full: true },
         ],
     },
@@ -262,7 +403,6 @@ export const SCHEMAS = {
             { name: 'difficulty', label: 'Difficulty', type: 'select', options: opt(DIFFICULTY), default: 'medium' },
             { name: 'importance', label: 'Importance', type: 'select', options: opt(IMPORTANCE), default: 'medium' },
             { name: 'estimated_study_hours', label: 'Est. Study Hours', type: 'number', step: '0.1', default: 1 },
-            { name: 'order', label: 'Order', type: 'number', default: 0 },
             { name: 'description', label: 'Description', type: 'textarea', full: true },
         ],
     },
@@ -349,7 +489,7 @@ export const buildInitial = (fields, instance) => {
 /* ===========================================================================
  * Generic entity modal (course/subject/chapter/topic/content/quiz)
  * ========================================================================= */
-export const EntityModal = ({ type, instance, defaults, onClose, onSubmit, saving }) => {
+export const EntityModal = ({ type, instance, defaults, onClose, onSubmit, saving, uploadPct = null }) => {
     const schema = SCHEMAS[type]
     const [values, setValues] = useState(() => ({
         ...buildInitial(schema.fields, instance),
@@ -509,11 +649,35 @@ export const EntityModal = ({ type, instance, defaults, onClose, onSubmit, savin
                         ))}
                     </div>
 
+                    {saving && uploadPct !== null && (
+                        <div className="pt-2">
+                            <div className="flex items-center justify-between text-xs mb-1.5">
+                                <span className="font-semibold text-surface-600 dark:text-surface-300">
+                                    {uploadPct < 100 ? 'Uploading file…' : 'Saving — finishing upload…'}
+                                </span>
+                                <span className="tabular-nums text-surface-500">{uploadPct}%</span>
+                            </div>
+                            <div className="h-1.5 rounded-full bg-surface-200 dark:bg-surface-700 overflow-hidden">
+                                <div
+                                    className="h-full rounded-full bg-primary-500 transition-[width] duration-200"
+                                    style={{ width: `${uploadPct}%` }}
+                                />
+                            </div>
+                            <p className="text-[11px] text-surface-400 mt-1.5">
+                                {uploadPct < 100
+                                    ? 'Keep this tab open until the upload finishes.'
+                                    : 'Storing the file — this can take a moment for a large video.'}
+                            </p>
+                        </div>
+                    )}
+
                     <div className="flex justify-end gap-2 pt-2">
                         <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
                         <button type="submit" disabled={saving} className="btn-primary">
                             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                            {isEdit ? 'Save Changes' : 'Create'}
+                            {saving && uploadPct !== null && uploadPct < 100
+                                ? `Uploading ${uploadPct}%`
+                                : isEdit ? 'Save Changes' : 'Create'}
                         </button>
                     </div>
                 </form>

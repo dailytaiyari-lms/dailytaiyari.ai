@@ -6,6 +6,7 @@ import {
   Loader2, Play, CheckCircle2, XCircle, Send, ListChecks,
 } from 'lucide-react'
 import { mockTestBuilderService } from '../services/mockTestBuilderService'
+import { useFeatureLabel } from '../context/tenantStore'
 import CodeEditor from '../components/coding/CodeEditor'
 import MathRenderer from '../components/chat/MathRenderer'
 
@@ -14,6 +15,7 @@ const MONACO_MODE = { python: 'python', cpp: 'cpp', java: 'java' }
 const qKey = (q) => `${q.kind}:${q.ref_id}`
 
 export default function RichMockAttempt() {
+  const mockLabel = useFeatureLabel('mock_tests', 'Mock Tests')
   const { testId } = useParams()
   const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
@@ -282,7 +284,7 @@ export default function RichMockAttempt() {
             <p className="text-surface-500 mb-6">Your responses were recorded. Results will be released by your faculty.</p>
           )}
           <div className="flex gap-3">
-            <button onClick={() => navigate('/mock-test')} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-700 text-white font-medium">Back to Mock Tests</button>
+            <button onClick={() => navigate('/mock-test')} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-700 text-white font-medium">Back to {mockLabel}</button>
             {attemptId && (
               <button onClick={() => navigate(`/mock-test/live-review/${attemptId}`)} className="flex-1 px-4 py-2.5 rounded-xl border border-surface-200 dark:border-surface-700 font-medium">
                 {result.pending_manual ? 'View status' : 'Review'}

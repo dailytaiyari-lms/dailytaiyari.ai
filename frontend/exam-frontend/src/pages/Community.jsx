@@ -9,6 +9,7 @@ import {
     Maximize2, Minimize2, X
 } from 'lucide-react'
 import { communityService } from '../services/communityService'
+import { useFeatureLabel } from '../context/tenantStore'
 import { useAuthStore } from '../context/authStore'
 import CreatePostModal from '../components/community/CreatePostModal'
 import PostCard from '../components/community/PostCard'
@@ -18,6 +19,7 @@ import toast from 'react-hot-toast'
 
 const Community = () => {
     const navigate = useNavigate()
+    const communityLabel = useFeatureLabel('community', 'Community Forum')
     const queryClient = useQueryClient()
     const [searchParams, setSearchParams] = useSearchParams()
     const { user, profile } = useAuthStore()
@@ -205,7 +207,7 @@ const Community = () => {
             {/* Header */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                    <h1 className="text-2xl font-display font-bold">Community Forum</h1>
+                    <h1 className="text-2xl font-display font-bold">{communityLabel}</h1>
                     <p className="text-surface-500 mt-1">
                         Ask questions, share knowledge, earn XP!
                     </p>

@@ -1,11 +1,15 @@
 """
 Email + OTP helpers for user email verification.
 
-Sending goes through Django's standard email framework (``send_mail``),
-so the underlying transport is controlled entirely by ``EMAIL_BACKEND`` in
+Verification/reset codes are sent through the shared branded email pipeline
+(``notifications.emails.send_branded_email``) so they carry the tenant's logo,
+name and accent colour — the same treatment every other tenant-facing email
+gets. A plain-text ``send_mail`` fallback keeps codes flowing if that path ever
+fails. The underlying transport is controlled entirely by ``EMAIL_BACKEND`` in
 settings. In production this is Azure Communication Services Email; in
 development it falls back to the console backend so no real mail is sent.
 """
+import logging
 import secrets
 from datetime import timedelta
 
@@ -13,8 +17,11 @@ from django.conf import settings
 from django.contrib.auth.hashers import make_password, check_password
 from django.core.mail import send_mail
 from django.utils import timezone
+from django.utils.html import escape
 
 from .models import EmailOTP
+
+logger = logging.getLogger(__name__)
 
 
 def _generate_code(num_digits: int = 6) -> str:
@@ -121,25 +128,69 @@ def verify_otp(user, code: str, purpose: str = 'email_verification'):
 
 
 def _send_otp_email(user, code: str, purpose: str) -> None:
+    """Email ``code`` to ``user`` using their tenant's branding.
+
+    Renders through the shared branded pipeline so the message carries the
+    tenant's logo, name and accent colour. If that path fails for any reason we
+    fall back to a plain-text send rather than leave the user without a code.
+    """
+    from notifications.emails import send_branded_email
+
+    tenant = getattr(user, 'tenant', None)
+    tenant_name = (getattr(tenant, 'name', '') or '').strip() or 'DailyTaiyari'
     minutes = EmailOTP.EXPIRY_MINUTES
     greeting = f"Hi {user.first_name or 'there'},"
-    signature = "— The DailyTaiyari Team"
 
     if purpose == 'password_reset':
-        subject = 'Your DailyTaiyari password reset code'
-        intro = 'We received a request to reset your DailyTaiyari password. Your code is:'
-        footer = "If you didn't request a password reset, you can safely ignore this email."
+        subject = f'Your {tenant_name} password reset code'
+        heading = 'Reset your password'
+        intro = (
+            f'We received a request to reset your {tenant_name} password. '
+            'Your code is:'
+        )
+        footer = ("If you didn't request a password reset, you can safely "
+                  'ignore this email.')
     else:
-        subject = 'Your DailyTaiyari verification code'
-        intro = 'Your DailyTaiyari email verification code is:'
+        subject = f'Your {tenant_name} verification code'
+        heading = 'Verify your email'
+        intro = f'Your {tenant_name} email verification code is:'
         footer = "If you didn't request this, you can safely ignore this email."
 
+    body_html = (
+        f'<p style="margin:0 0 16px;">{escape(greeting)}</p>'
+        f'<p style="margin:0 0 20px;">{escape(intro)}</p>'
+        '<table role="presentation" cellpadding="0" cellspacing="0" '
+        'style="margin:0 0 24px;"><tr><td '
+        'style="padding:16px 28px; border-radius:12px; background-color:#f1f5f9; '
+        'border:1px solid #e2e8f0; font-family:\'Courier New\',Courier,monospace; '
+        'font-size:32px; font-weight:700; letter-spacing:8px; color:#0f172a;">'
+        f'{escape(code)}</td></tr></table>'
+        f'<p style="margin:0 0 8px;">This code expires in {minutes} minutes. '
+        f'{escape(footer)}</p>'
+    )
+
+    sent = send_branded_email(
+        tenant,
+        user.email,
+        subject=subject,
+        heading=heading,
+        body_html=body_html,
+        preheader=f'Your {tenant_name} code expires in {minutes} minutes',
+    )
+    if sent:
+        return
+
+    # Branded render/delivery failed — the code still has to reach the user, so
+    # retry as plain text. This one is allowed to raise: callers treat an
+    # exception as "could not send" and tell the user to try again.
+    logger.warning('Branded OTP email failed for %s; falling back to plain text',
+                   user.email)
     message = (
         f"{greeting}\n\n"
         f"{intro}\n\n"
         f"    {code}\n\n"
         f"This code expires in {minutes} minutes. {footer}\n\n"
-        f"{signature}"
+        f"— The {tenant_name} Team"
     )
     send_mail(
         subject=subject,

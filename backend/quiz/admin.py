@@ -56,9 +56,16 @@ class MockTestAdmin(admin.ModelAdmin):
 
 @admin.register(QuizAttempt)
 class QuizAttemptAdmin(admin.ModelAdmin):
-    list_display = ['student', 'quiz', 'status', 'percentage', 'xp_earned', 'started_at']
-    list_filter = ['status', 'quiz__course']
+    list_display = [
+        'student', 'quiz', 'status', 'percentage',
+        'proctoring_violations', 'xp_earned', 'started_at',
+    ]
+    list_filter = ['status', 'quiz__course', 'proctoring_violations']
     raw_id_fields = ['student', 'quiz']
+    readonly_fields = [
+        'proctoring_violations', 'tab_switch_count', 'fullscreen_exit_count',
+        'restricted_shortcut_count', 'last_proctoring_event_at',
+    ]
 
 
 @admin.register(MockTestAttempt)
@@ -73,4 +80,3 @@ class AnswerAdmin(admin.ModelAdmin):
     list_display = ['id', 'question', 'is_correct', 'marks_obtained', 'time_taken_seconds']
     list_filter = ['is_correct']
     raw_id_fields = ['quiz_attempt', 'mock_test_attempt', 'question']
-

@@ -78,6 +78,7 @@ INSTALLED_APPS = [
     'notifications.apps.NotificationsConfig',
     'notebooks.apps.NotebooksConfig',
     'intelligence.apps.IntelligenceConfig',
+    'hackathons.apps.HackathonsConfig',
 ]
 
 SILENCED_SYSTEM_CHECKS = ["auth.E003"]
@@ -437,6 +438,17 @@ COURSEGEN_ASYNC = config('COURSEGEN_ASYNC', default=True, cast=bool)
 # batched LLM calls. Same contract: queue it, poll the job, fall back to inline.
 MOCKGEN_ASYNC = config('MOCKGEN_ASYNC', default=True, cast=bool)
 
+# --- AI provider network timeouts ---------------------------------------------
+# AI_READ_TIMEOUT applies to calls made during a web request and MUST stay below
+# gunicorn's `timeout` (see gunicorn.conf.py). If a provider may run as long as
+# gunicorn waits, gunicorn kills the worker first and the user gets a dropped
+# connection instead of a readable error. Some large free-tier models take ~100s
+# even for a short reply, so this genuinely fires.
+AI_READ_TIMEOUT = config('AI_READ_TIMEOUT', default=90, cast=int)
+# Celery tasks are not bound by gunicorn, so long-form generation may wait far
+# longer than a web request ever could.
+AI_READ_TIMEOUT_BACKGROUND = config('AI_READ_TIMEOUT_BACKGROUND', default=600, cast=int)
+
 # Celery (broker + result backend on Redis). Result backend stores the task
 # state so the poll endpoint can distinguish queued/running/done.
 CELERY_BROKER_URL = config('CELERY_BROKER_URL', default='redis://redis:6379/0')
@@ -483,6 +495,25 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': crontab(minute='*/15'),
     },
 }
+
+# Redis has no real ack, so kombu re-queues any task still unacked after
+# `visibility_timeout` (default 1h). Video jobs run for hours, so the default
+# hands a still-running encode to a second worker, which duplicates the work
+# and resets the row's progress — and the duplicate is restored to the *head*
+# of the queue, so it jumps ahead of genuinely unprocessed videos. Keep this
+# above the longest task budget (VIDEO_TRANSCODE_TIMEOUT, 6h) so only a truly
+# dead worker triggers redelivery.
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    'visibility_timeout': config('CELERY_VISIBILITY_TIMEOUT', default=25200, cast=int),
+}
+
+# Uploaded lecture videos are remuxed so playback starts immediately (see
+# content/tasks.py). Turn off where ffmpeg is unavailable.
+VIDEO_OPTIMIZATION_ENABLED = config('VIDEO_OPTIMIZATION_ENABLED', default=True, cast=bool)
+
+# Adaptive-bitrate HLS packaging (see content/hls.py). This re-encodes, so it is
+# CPU-heavy and runs on the dedicated `media` queue well after upload.
+VIDEO_HLS_ENABLED = config('VIDEO_HLS_ENABLED', default=True, cast=bool)
 
 # Caching. Prefer a shared Redis cache when REDIS_URL is configured (needed once
 # there are multiple web workers/hosts); otherwise fall back to per-process

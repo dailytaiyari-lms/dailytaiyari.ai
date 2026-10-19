@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { mockTestBuilderService } from '../services/mockTestBuilderService'
 import MockAiJobBanners from '../components/admin/mockAi/MockAiJobBanners'
+import { useFeatureLabel } from '../context/tenantStore'
 
 const STATUS_BADGE = {
   draft: { label: 'Draft', cls: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300', icon: FileEdit },
@@ -17,6 +18,7 @@ const STATUS_BADGE = {
 }
 
 export default function MockTestManager() {
+  const mockLabel = useFeatureLabel('mock_tests', 'Mock Tests')
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [search, setSearch] = useState('')
@@ -65,7 +67,7 @@ export default function MockTestManager() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-surface-900 dark:text-white flex items-center gap-2">
-            <ClipboardList className="w-6 h-6 text-primary-500" /> Mock Tests
+            <ClipboardList className="w-6 h-6 text-primary-500" /> {mockLabel}
           </h1>
           <p className="text-surface-500 text-sm mt-1">
             Create and manage full exams with MCQ, numerical, subjective and coding questions.

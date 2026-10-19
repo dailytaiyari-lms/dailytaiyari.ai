@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useQuery } from '@tanstack/react-query'
 import { quizService } from '../services/quizService'
+import { useFeatureLabel } from '../context/tenantStore'
 import Loading from '../components/common/Loading'
 import {
     FileText,
@@ -20,6 +21,7 @@ import {
 
 const PreviousYearPapers = () => {
     const navigate = useNavigate()
+    const pyqLabel = useFeatureLabel('pyq', 'Previous Year Papers')
     const [expandedYear, setExpandedYear] = useState(null)
     const [selectedYear, setSelectedYear] = useState('')
     const [selectedSession, setSelectedSession] = useState('')
@@ -59,7 +61,7 @@ const PreviousYearPapers = () => {
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-2xl font-display font-bold">Previous Year Papers</h1>
+                    <h1 className="text-2xl font-display font-bold">{pyqLabel}</h1>
                     <p className="text-surface-500 mt-1">Practice with actual exam papers from previous years</p>
                 </div>
                 <button
