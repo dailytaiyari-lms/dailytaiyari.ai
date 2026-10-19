@@ -7,7 +7,8 @@
 #   - remove a tag: set `active: false` (history is kept, it is no longer offered).
 # Skill keys are unique across `universal` and every pack.
 version: 1
-review_confidence_threshold: 0.6
+# Set from the first evaluation (spec §6.4): items below 0.9 were < 65% right.
+review_confidence_threshold: 0.9
 
 thinking_levels:   # exactly one per question: the highest it demands
   - key: recall

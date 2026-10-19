@@ -361,9 +361,13 @@ formats.
   `proposed_subtopic`.
 
 **Decided here (review threshold):** the threshold lives in `tags.yaml`
-(`review_confidence_threshold`, default 0.6). After the first evaluation it
-is reset from the calibration table (§6.3): it becomes the lowest
-confidence bucket whose subtopic accuracy is at least 80%.
+(`review_confidence_threshold`, initially 0.6). It is reset from the
+calibration table (§6.3).
+- Walk the confidence buckets that hold at least 5 items, from the top bucket
+  down.
+- The threshold is the floor of the lowest bucket reached while every bucket
+  visited still has subtopic accuracy of at least 80%.
+- The first evaluation set it to **0.9** (see §6.4).
 
 ### 5.4 Cache, versions, budget
 
@@ -379,9 +383,20 @@ confidence bucket whose subtopic accuracy is at least 80%.
 - **Old tagger:** v1 stays until 2B. The nightly sweep runs v2 for every
   subject that has a syllabus tree, then v1 for the remaining subjects
   only, so untreed production courses keep today's tagging.
-- **Mock items with no resolvable subject** (no `subject`, several
-  subjects across the test's courses, and no topic) are skipped and
-  counted. Plan 2B handles them when generators emit v2 tags.
+- **Ownership of mock items:** one rule decides which mock items v2 owns:
+  - the item's own subject has a tree;
+  - or its topic's subject has one;
+  - or its test's courses have exactly one subject, and that subject has one.
+
+  v1 skips every v2-owned item. Items whose subject cannot be resolved stay
+  with v1, which infers a subject as today. Plan 2B moves them to v2 when
+  generators emit v2 tags.
+- **Re-tagging:** an item is re-tagged when it is untagged or stale, or when
+  the taxonomy version or its subject's tree version has changed.
+- **No topic found:** when stage 1 names no valid topic, the model's answer is
+  stored as a `needs_review` result with reason `invalid_key`. It is not
+  retried until the tree changes. Transient failures (call errors,
+  unparseable replies) leave the item untagged so it is retried.
 - **Module layout:** the pure core is `services/tagging_v2.py`. The
   database shell is `services/tagging_sweep.py`.
 
@@ -458,6 +473,47 @@ deployment default (`gpt-6-luna` accepts only that).
 skills micro-F1 ≥ 0.6, and parse failures under 1%. These are first-pass
 bars, revisited after the first run. Because the model may have memorised
 these papers, Track B results are read alongside.
+
+### 6.4 First results (2026-10-20, `gpt-6-luna`, Azure UAT)
+
+Aggregates only. Gold files and reports are in `data_dumps/` (not committed).
+
+| Track | Mode | n | Topic | Subtopic exact | Subtopic hit | Thinking | Skills F1 | Core F1 | Difficulty (±1) | Errors | Needs review @0.6 | Tokens/q |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| A — JEE location | anchored | 300 | (given) | 0.790 | **0.857** | — | — | — | — | 0 | 6.0% | 928 |
+| A — JEE location | blind | 300 | 0.803 | 0.653 | 0.753 | — | — | — | — | 0 | 13.7% | 396 |
+| A — JEE levels | anchored | 60 | (given) | 0.700 | 0.750 | **0.733** | **0.767** | 0.706 | 0.733 (1.000) | 0 | 10.0% | — |
+| B — DSA sheet | anchored | 30 | (given) | 0.800 | 0.900 | 0.567 | 0.583 | 0.585 | 0.900 (1.000) | 0 | 6.7% | 963 |
+| B — Pygame | anchored | 30 | (given) | 0.933 | 0.967 | 0.633 | 0.667 | 0.667 | 0.900 (1.000) | 0 | 0% | 1,782 |
+| B — Aptitude | anchored | 30 | (given) | 0.933 | 0.967 | 0.867 | 0.659 | 0.676 | 0.933 (1.000) | 0 | 0% | 1,307 |
+| B — Class XI PCM | anchored | 30 | (given) | 0.933 | 1.000 | 0.667 | 0.750 | 0.773 | 0.967 (1.000) | 0 | 0% | — |
+
+- **Targets.** Track A anchored meets all of them: subtopic hit 85.7%, thinking
+  level 73%, skills F1 0.77, and no parse failures after the LaTeX-escape fix
+  in the reply parser.
+- **Calibration.**
+  - **Track A anchored:** items at confidence 0.9 or above are 86.5% right
+    (n=245). Items in 0.8–0.9 are 64.5% right (n=31), and in 0.7–0.8 43%
+    (n=7).
+  - **Track A levels:** 83% at 0.9 or above. **The review threshold becomes
+    0.9.** That sends about 18% of anchored and 21% of blind items to
+    review.
+  - **Track A blind:** even the top bucket is only 72% right, so mock items
+    without a topic need more review, or a better stage 1, in plan 2B.
+- **Special formats.** Assertion–reason, statement-pair and match-list
+  precision and recall are all 1.0 on the levels set, and match-list is 1.0
+  on PCM.
+- **Thinking level.** The model leans towards `multi_concept` and
+  `analytical`: 9 of 41 single-application items were labelled higher. That
+  is the main error, and a candidate for a sharper definition in `tags.yaml`.
+- **Bias notes.** Track B subtopics were proposed by the same model family
+  that tags them, so Track B location scores may read high. Track A papers
+  may be memorised. Track A and Track B anchored scores are similar, so
+  there is no sign of strong memorisation.
+- **Gold labels.** Claude drafted the levels gold and the Track B labels.
+  They still need a human spot-check (about 15 items).
+- **Latency.** p50 is 4–16 s per call (12 questions per call). Prices are
+  unset, so cost reads $0.
 
 ## 7. JEE lab tenant (Track A data in the app)
 
