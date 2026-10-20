@@ -16,7 +16,9 @@ echo "Running migrations..."
 python manage.py migrate --noinput
 
 echo "Loading the tagging vocabulary..."
-python manage.py sync_taxonomy
+# Non-fatal under `set -e`: a taxonomy problem must never stop the web
+# container. The tagging sweep already handles a missing release.
+python manage.py sync_taxonomy || echo "WARNING: taxonomy sync failed; the v2 tagger stays idle until it succeeds"
 
 echo "Collecting static files..."
 python manage.py collectstatic --noinput

@@ -152,7 +152,9 @@ docker compose exec -T web python manage.py sync_taxonomy
 `sync_taxonomy` loads the question-tagging vocabulary
 (`intelligence/taxonomy/tags.yaml`) into the database. It is idempotent, so
 running it on every start is safe. Without it the tagging sweep skips v2 for
-subjects with a syllabus tree.
+subjects with a syllabus tree. A failure is non-fatal: `entrypoint.sh` logs
+`WARNING: taxonomy sync failed` and web still starts, so check the web log
+after a deploy that edits `tags.yaml`.
 
 Deploy **pre-prod from `main`** first; deploy **prod from `production`** only
 after promotion (see branching doc). The canonical, secret-aware runbook lives
