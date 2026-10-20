@@ -458,11 +458,6 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_TASK_TIME_LIMIT = 180
 CELERY_TASK_SOFT_TIME_LIMIT = 150
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
-# Enqueues happen inside student-facing request paths (fail-safe wrapped).
-# Cap connection retries so a dead broker costs milliseconds, not minutes.
-CELERY_BROKER_TRANSPORT_OPTIONS = {
-    'max_retries': 2, 'interval_start': 0, 'interval_step': 0.2, 'interval_max': 0.5,
-}
 
 # Under the test runner there is no broker: run tasks inline so enqueues in
 # request paths neither stall nor get lost.
@@ -503,8 +498,14 @@ CELERY_BEAT_SCHEDULE = {
 # of the queue, so it jumps ahead of genuinely unprocessed videos. Keep this
 # above the longest task budget (VIDEO_TRANSCODE_TIMEOUT, 6h) so only a truly
 # dead worker triggers redelivery.
+#
+# The retry keys cap kombu's connection retries: learning-layer enqueues run
+# inside student-facing request paths (fail-safe wrapped), so a dead broker
+# must cost milliseconds, not seconds. This is the only assignment of this
+# setting — a second one would silently replace the whole dict.
 CELERY_BROKER_TRANSPORT_OPTIONS = {
     'visibility_timeout': config('CELERY_VISIBILITY_TIMEOUT', default=25200, cast=int),
+    'max_retries': 2, 'interval_start': 0, 'interval_step': 0.2, 'interval_max': 0.5,
 }
 
 # Uploaded lecture videos are remuxed so playback starts immediately (see
