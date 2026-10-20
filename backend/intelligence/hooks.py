@@ -2,8 +2,8 @@
 
 Cheap guards first, then a task enqueue — and everything fail-safe, because
 these run inside student-facing request paths. When a feature is disabled the
-hook is a no-op; the foundation (events, states) keeps accruing regardless,
-so flipping a feature on works instantly.
+hook is a no-op. The foundation (events, states) accrues only for tenants
+with at least one learning-layer feature on (see ``api.intelligence_enabled``).
 """
 import logging
 

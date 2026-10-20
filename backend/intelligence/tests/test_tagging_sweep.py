@@ -58,7 +58,9 @@ class FakeCall:
 class SweepTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.tenant = Tenant.objects.create(name='Sweep Academy', is_active=True)
+        # The scheduled sweep only considers tenants with the learning layer on.
+        cls.tenant = Tenant.objects.create(name='Sweep Academy', is_active=True,
+                                           features={'practice': True})
         cls.course = Course.objects.create(
             tenant=cls.tenant, name='Mini Prep', code='sweep-mini', course_type='competitive',
         )
@@ -181,7 +183,8 @@ class SweepTests(TestCase):
         from intelligence import tasks
 
         Question.objects.filter(tenant=self.tenant).update(tagging_status='tagged')
-        idle = Tenant.objects.create(name='No Tree Academy', is_active=True)
+        idle = Tenant.objects.create(name='No Tree Academy', is_active=True,
+                                     features={'practice': True})
         with patch.object(tasks.tag_items_for_tenant, 'delay') as delay:
             tasks.tagging_sweep()
         queued = {call.args[0] for call in delay.call_args_list}

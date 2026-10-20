@@ -165,17 +165,22 @@ MAX_TIMELINE_BODY = 256 * 1024
 class TimelineSyncView(APIView):
     """Browser → raw per-question timeline for an attempt.
 
-    Always on (no feature gate): capture accrues regardless, exactly like the
-    learning-event log, so enabling Answer Diagnosis later has history.
+    Only for tenants with the learning layer on (any of practice, ai_grading,
+    response_diagnosis). Otherwise it answers 204 and writes nothing: a 403
+    would make the client mark its session dead and log noise, and the client
+    gate means it is rarely called anyway.
     """
 
     permission_classes = [permissions.IsAuthenticated]
     throttle_classes = [TimelineThrottle]
 
     def post(self, request):
+        from .api import intelligence_enabled
         from .services.timeline import TimelineError
         from .services.timeline_sync import TimelineFinalized, save_session
 
+        if not intelligence_enabled(getattr(request, 'tenant', None)):
+            return Response(status=status.HTTP_204_NO_CONTENT)
         try:
             length = int(request.META.get('CONTENT_LENGTH') or 0)
         except ValueError:

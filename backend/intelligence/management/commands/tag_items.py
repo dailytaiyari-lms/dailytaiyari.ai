@@ -7,6 +7,7 @@ v2 tags every subject that has a syllabus tree; v1 tags the rest.
 from django.core.management.base import BaseCommand, CommandError
 
 from core.models import Tenant
+from intelligence.api import intelligence_enabled
 from intelligence.services import tagging_sweep
 from intelligence.services.llm import platform_call
 
@@ -32,6 +33,11 @@ class Command(BaseCommand):
 
         total = 0
         for tenant in tenants:
+            if not intelligence_enabled(tenant):
+                # An explicit operator run still tags; the scheduled sweep would not.
+                self.stdout.write(f'{tenant.name}: note: no learning-layer feature enabled '
+                                  '(practice, ai_grading, response_diagnosis); the weekly '
+                                  'sweep skips this tenant.')
             try:
                 call = platform_call(options['model'], tenant) if options['model'] else None
                 result = tagging_sweep.run_sweep(tenant, limit=options['limit'], call=call)

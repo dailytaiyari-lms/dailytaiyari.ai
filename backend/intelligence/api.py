@@ -4,15 +4,69 @@ Every function here is fail-safe: an intelligence failure (Redis blip, bad
 data, bug) must never fail a student's submit or an admin's grading action.
 Missed work is caught up by the nightly sweep, which recomputes from the
 append-only event log.
+
+The whole layer is opt-in per tenant: unless a tenant enables at least one of
+``LEARNING_FEATURES``, every hook here is a no-op, so that tenant's submit and
+grading paths behave exactly as they did before the layer existed.
 """
 import logging
 
 logger = logging.getLogger(__name__)
 
+# Any one of these switches the learning layer on for a tenant.
+LEARNING_FEATURES = ('practice', 'ai_grading', 'response_diagnosis')
+
+
+def intelligence_enabled(tenant):
+    """True when ``tenant`` has at least one learning-layer feature enabled.
+
+    A missing tenant, or any error reading its features, counts as disabled.
+    Never raises.
+    """
+    try:
+        if tenant is None:
+            return False
+        from .hooks import _feature_enabled
+        return any(_feature_enabled(tenant, key) for key in LEARNING_FEATURES)
+    except Exception:
+        logger.exception('intelligence: enabled check failed')
+        return False
+
+
+def enabled_tenant_ids():
+    """Ids of every tenant with the learning layer on (empty set on error)."""
+    try:
+        from core.models import Tenant
+        tenants = Tenant.objects.only('id', 'features', 'feature_locks')
+        return {tenant.id for tenant in tenants if intelligence_enabled(tenant)}
+    except Exception:
+        logger.exception('intelligence: could not list enabled tenants')
+        return set()
+
+
+def _attempt_tenant(attempt):
+    try:
+        return attempt.student.user.tenant
+    except Exception:
+        return None
+
+
+def _item_tenant(item):
+    try:
+        if item.tenant_id:
+            return item.tenant
+        mock_test = getattr(item, 'mock_test', None)
+        return mock_test.tenant if mock_test is not None else None
+    except Exception:
+        return None
+
 
 def record_attempt_events(attempt):
     """Record LearningEvents for a finalized quiz/mock attempt and queue the
-    learner-state update. Idempotent; safe to call more than once."""
+    learner-state update. Idempotent; safe to call more than once. A no-op for
+    tenants without the learning layer."""
+    if not intelligence_enabled(_attempt_tenant(attempt)):
+        return
     try:
         from intelligence.services import events
         events.record_attempt_events(attempt)
@@ -23,19 +77,30 @@ def record_attempt_events(attempt):
 
 
 def record_regrade_event(item_answer):
-    """Record a superseding event after a manual regrade of an inline answer."""
+    """Record a superseding event after a manual regrade of an inline answer.
+    A no-op for tenants without the learning layer."""
+    try:
+        attempt = item_answer.attempt
+    except Exception:
+        logger.exception('intelligence: regrade answer %s has no attempt', item_answer.pk)
+        return
+    if not intelligence_enabled(_attempt_tenant(attempt)):
+        return
     try:
         from intelligence.services import events
         events.record_regrade_event(item_answer)
     except Exception:
         logger.exception('intelligence: failed to record regrade for answer %s', item_answer.pk)
         return
-    _enqueue_state_update(item_answer.attempt)
+    _enqueue_state_update(attempt)
 
 
 def mark_item_stale_if_changed(item):
     """After a manual edit, flag a tagged item for re-tagging when its
-    semantic content changed. Fail-safe; returns True when flipped."""
+    semantic content changed. Fail-safe; returns True when flipped. A no-op
+    (False) for tenants without the learning layer."""
+    if not intelligence_enabled(_item_tenant(item)):
+        return False
     try:
         from intelligence.services.itemtags import mark_stale_if_changed
         return mark_stale_if_changed(item)
@@ -45,6 +110,8 @@ def mark_item_stale_if_changed(item):
 
 
 def _enqueue_state_update(attempt):
+    if not intelligence_enabled(_attempt_tenant(attempt)):
+        return
     try:
         from quiz.models import QuizAttempt
 

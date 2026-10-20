@@ -66,13 +66,20 @@ def refresh_learner_state():
 
     from django.utils import timezone
 
+    from .api import enabled_tenant_ids
     from .models import LearnerConceptState
     from .services import state
 
+    # Only tenants with the learning layer on: backfilled events of a tenant
+    # that has not opted in must stay inert.
+    enabled = enabled_tenant_ids()
     refreshed = 0
     cutoff = timezone.now() - timedelta(hours=24)
     stale = (
-        LearnerConceptState.objects.filter(computed_at__lt=cutoff, effective_evidence__gt=0)
+        LearnerConceptState.objects.filter(
+            computed_at__lt=cutoff, effective_evidence__gt=0,
+            student__user__tenant_id__in=enabled,
+        )
         .select_related('student__user', 'concept')[:5000]
     )
     for row in stale:
@@ -86,7 +93,7 @@ def refresh_learner_state():
     from .versions import CLASSIFIER_VERSION
 
     pairs = list(
-        LearningEvent.objects.filter(created_at__gte=recent)
+        LearningEvent.objects.filter(created_at__gte=recent, tenant_id__in=enabled)
         .values_list('attempt_kind', 'attempt_id').distinct()
     )
     for kind, attempt_id in pairs:
@@ -113,10 +120,19 @@ def refresh_learner_state():
 
 @shared_task(name='intelligence.recompute_item_stats', time_limit=1800)
 def recompute_item_stats():
-    """Nightly: rebuild empirical item statistics from the event log."""
+    """Nightly: rebuild empirical item statistics from the event log.
+
+    Only for tenants with the learning layer on, so backfilled events of a
+    tenant that has not opted in never produce ItemStats rows.
+    """
+    from core.models import Tenant
+
+    from .api import enabled_tenant_ids
     from .services import itemstats
 
-    count = itemstats.recompute_all()
+    count = 0
+    for tenant in Tenant.objects.filter(id__in=enabled_tenant_ids()):
+        count += itemstats.recompute_all(tenant=tenant)
     logger.info('intelligence.recompute_item_stats: %d item(s)', count)
     return count
 
@@ -270,14 +286,23 @@ def run_practice_generation(self, job_id):
     queue='aigen', soft_time_limit=1500, time_limit=1560,
 )
 def tag_items_for_tenant(self, tenant_id, limit=200):
-    """One budget-gated tagging pass for one tenant."""
+    """One budget-gated tagging pass for one tenant.
+
+    A no-op (0) for a tenant without the learning layer, so neither the weekly
+    sweep nor the admin "run tagging" button spends its AI budget.
+    """
     from core.models import Tenant
 
+    from .api import intelligence_enabled
     from .services import tagging_sweep
 
     tenant = Tenant.objects.filter(id=tenant_id).first()
     if tenant is None:
         logger.warning('intelligence.tag_items: tenant %s not found', tenant_id)
+        return 0
+    if not intelligence_enabled(tenant):
+        logger.info('intelligence.tag_items: tenant %s has no learning feature on, skipping',
+                    tenant_id)
         return 0
     try:
         result = tagging_sweep.run_sweep(tenant, limit=limit)
@@ -289,8 +314,10 @@ def tag_items_for_tenant(self, tenant_id, limit=200):
 
 @shared_task(name='intelligence.tagging_sweep', queue='aigen', time_limit=300)
 def tagging_sweep():
-    """Weekly: enqueue a tagging pass for every tenant with untagged items or a syllabus tree.
+    """Weekly: enqueue a tagging pass for every enabled tenant with untagged items or a syllabus tree.
 
+    Only tenants with the learning layer on (see ``api.intelligence_enabled``)
+    are considered; the rest are never tagged and never spend AI budget.
     Treed tenants are always enqueued, so v2 work starts after a tree is created
     or edited even when every item is already v1-tagged; ``run_sweep`` selects
     precisely, so an idle pass is cheap.
@@ -298,6 +325,7 @@ def tagging_sweep():
     from core.models import Tenant
     from quiz.models import MockTestItem, Question
 
+    from .api import intelligence_enabled
     from .models import SyllabusNode
 
     tenant_ids = set(
@@ -310,8 +338,10 @@ def tagging_sweep():
         MockTestItem.objects.filter(tagging_status__in=['', 'stale'], tenant__isnull=False)
         .values_list('tenant_id', flat=True).distinct()
     )
-    active = set(Tenant.objects.filter(id__in=tenant_ids, is_active=True)
-                 .values_list('id', flat=True))
+    active = {
+        tenant.id for tenant in Tenant.objects.filter(id__in=tenant_ids, is_active=True)
+        if intelligence_enabled(tenant)
+    }
     for tenant_id in active:
         tag_items_for_tenant.delay(str(tenant_id))
     logger.info('intelligence.tagging_sweep: %d tenant(s) queued', len(active))
