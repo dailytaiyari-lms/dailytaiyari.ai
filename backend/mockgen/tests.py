@@ -228,6 +228,36 @@ class ApplyTests(_MockStudioTestCase):
         mcq = mock_test.items.get(item_type='mcq')
         self.assertEqual(sum(1 for o in mcq.options if o['is_correct']), 1)
 
+    def _opt_in(self):
+        Tenant.objects.filter(id=self.tenant.id).update(features={'practice': True})
+
+    def test_apply_does_not_tag_for_a_tenant_without_the_learning_layer(self):
+        from intelligence.models import Concept, ConceptLink
+
+        job_id = self.generate(course=str(self.course.id)).data['id']
+        response = self.post(self.admin, f'/jobs/{job_id}/apply/', {'confirm': True})
+        self.assertEqual(response.status_code, 200)
+        for item in MockTest.objects.get(id=response.data['summary']['mock_test']).items.all():
+            self.assertEqual(item.tagging_status, '')
+            self.assertEqual(item.content_hash, '')
+            self.assertEqual(item.cognitive_type, '')
+            self.assertIsNone(item.tagged_at)
+            self.assertIsNone(item.subject_id)
+            self.assertIsNone(item.topic_id)
+        self.assertFalse(Concept.objects.exists())
+        self.assertFalse(ConceptLink.objects.exists())
+
+    def test_apply_tags_items_for_an_opted_in_tenant(self):
+        self._opt_in()
+        job_id = self.generate(course=str(self.course.id)).data['id']
+        response = self.post(self.admin, f'/jobs/{job_id}/apply/', {'confirm': True})
+        self.assertEqual(response.status_code, 200)
+        items = MockTest.objects.get(id=response.data['summary']['mock_test']).items.all()
+        self.assertTrue(items)
+        for item in items:
+            self.assertEqual(item.tagging_status, 'tagged')
+            self.assertEqual(item.subject, self.subject)
+
     def test_a_database_error_while_tagging_does_not_roll_back_the_apply(self):
         from django.db import IntegrityError, transaction
 
@@ -237,7 +267,8 @@ class ApplyTests(_MockStudioTestCase):
             transaction.set_rollback(True)
             raise IntegrityError('duplicate concept')
 
-        # A single-subject course anchors tagging, so the tagger actually runs.
+        # Opted in, and a single-subject course anchors tagging, so the tagger runs.
+        self._opt_in()
         job_id = self.generate(course=str(self.course.id)).data['id']
         with patch('mockgen.apply.set_item_tags', side_effect=broken) as tag:
             response = self.post(self.admin, f'/jobs/{job_id}/apply/', {'confirm': True})

@@ -51,8 +51,14 @@ def _syllabus_anchor(job):
 
 
 def _tag_row(row, draft_item, subject, topic):
-    """Persist the generator's own concept/difficulty/cognitive tags on a row."""
-    if subject is None:
+    """Persist the generator's own concept/difficulty/cognitive tags on a row.
+
+    Only for tenants with the learning layer on; otherwise the row keeps the
+    columns ``_item_fields`` wrote and no Concept/ConceptLink rows appear.
+    """
+    from intelligence.api import intelligence_enabled
+
+    if subject is None or not intelligence_enabled(row.tenant):
         return
     try:
         # Savepoint: a DB error here (e.g. a concept-insert race with the

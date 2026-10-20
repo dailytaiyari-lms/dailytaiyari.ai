@@ -32,9 +32,16 @@ logger = logging.getLogger(__name__)
 
 
 def _tag_question(question, question_data, topic):
-    """Concept-link a generated bank question (fail-safe — never fails apply)."""
+    """Concept-link a generated bank question (fail-safe — never fails apply).
+
+    Only for tenants with the learning layer on; otherwise the question keeps
+    exactly the columns main wrote, and no Concept/ConceptLink rows appear.
+    """
+    from intelligence.api import intelligence_enabled
     from intelligence.services.itemtags import set_item_tags
 
+    if not intelligence_enabled(question.tenant):
+        return
     label = question_data.get('concept')
     try:
         # Savepoint: a DB error here (e.g. a concept-insert race with the
@@ -228,12 +235,15 @@ def apply_outline(job, *, selection=None):
                         updates.append('description')
                     # Objectives were generated and validated but historically
                     # dropped on apply — persist them (without clobbering any
-                    # an admin has already curated).
+                    # an admin has already curated). Filling only this new
+                    # column is not counted in `topics_updated`, so the apply
+                    # summary reports exactly what it did before.
                     if not topic.objectives and topic_data.get('objectives'):
                         topic.objectives = topic_data['objectives']
                         updates.append('objectives')
                     if updates:
                         topic.save(update_fields=updates)
+                    if 'description' in updates:
                         created['topics_updated'] += 1
 
                 ChapterTopic.objects.get_or_create(
