@@ -252,13 +252,21 @@ def pending_manual_count(attempt):
     return attempt.item_answers.filter(needs_manual_grading=True).count()
 
 
-def award_completion_xp(attempt):
+def award_completion_xp(attempt, *, at_submit=False):
     """Award the mock-completion XP for a fully graded attempt, exactly once.
 
     Shared by the submit path (auto-graded attempts), the admin's
     finalize-attempt action and the AI grading task, so XP can never double
-    up whichever of them finishes the grading. Re-attempts earn nothing.
-    Returns the XP awarded (0 when nothing was due).
+    up whichever of them finishes the grading. Returns the XP awarded (0 when
+    nothing was due).
+
+    Re-attempts earn nothing, decided per path:
+    - ``at_submit=True`` (rich submit): any other finished attempt of this mock
+      makes this one a re-attempt — the rule the submit path always had.
+    - grading time (admin finalize, AI grading): another attempt may have
+      finished while this one waited for grading, so refuse only when another
+      attempt of this mock has already *earned* the completion XP. Otherwise
+      two attempts finished before grading would both be refused.
     """
     from core.utils import calculate_xp_for_quiz
     from gamification.models import XPTransaction
@@ -271,11 +279,14 @@ def award_completion_xp(attempt):
         reference_id=attempt.id,
     ).exists():
         return 0
-    already_completed = type(attempt).objects.filter(
+    others = type(attempt).objects.filter(
         student=attempt.student, mock_test=attempt.mock_test,
         status__in=['completed', 'timed_out'],
-    ).exclude(id=attempt.id).exists()
-    if already_completed:
+    ).exclude(id=attempt.id)
+    if at_submit:
+        if others.exists():
+            return 0
+    elif others.filter(xp_earned__gt=0).exists():
         return 0
 
     xp = calculate_xp_for_quiz(

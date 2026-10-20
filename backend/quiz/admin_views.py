@@ -427,8 +427,9 @@ class AdminMockTestViewSet(viewsets.ModelViewSet):
         intelligence_api.record_attempt_events(attempt)
 
         # Award XP once (deferred from submit for manual-grading attempts).
-        # Shared helper — also blocks re-attempts, which previously slipped
-        # through this path and earned XP a second time.
+        # Shared helper — refuses when another attempt of this mock already
+        # earned the completion XP (re-attempts used to slip through this path
+        # and earn it a second time).
         from .mock_grading import award_completion_xp
         awarded = award_completion_xp(attempt)
         return Response({

@@ -1173,7 +1173,7 @@ class MockTestViewSet(TenantAwareReadOnlyViewSet):
         attempt.save()
 
         from .mock_grading import award_completion_xp
-        awarded_xp = award_completion_xp(attempt) if not pending_manual else 0
+        awarded_xp = award_completion_xp(attempt, at_submit=True) if not pending_manual else 0
 
         mock_test.total_attempts += 1
         if attempt.marks_obtained > mock_test.highest_score:
