@@ -222,7 +222,11 @@ const QuizAttempt = () => {
       // Learning-layer capture (opt-in per tenant): send the final timeline
       // first and report real active time per answer. Off, the payload is
       // exactly the pre-capture one (elapsed / question count per answer).
-      if (timeline.capturing) await timeline.flush({ final: true })
+      if (timeline.capturing) {
+        // Under 10 s left, never let the timeline flush delay the submit.
+        const finalFlush = timeline.flush({ final: true })
+        if (timeLeft >= 10) await finalFlush
+      }
       const response = await quizService.submitQuiz(quizId, {
         answers: timeline.capturing
           ? Object.values(answers).map((a) => ({

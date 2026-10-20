@@ -278,7 +278,14 @@ export default function RichMockAttempt() {
     submittedRef.current = true
     setSubmitting(true)
     try {
-      if (timeline.capturing) await timeline.flush({ final: true })
+      if (timeline.capturing) {
+        // A manual submit in the last seconds must not be pushed past
+        // expires_at by a slow timeline POST (the server would record it as
+        // timed_out): under 10 s left, send the flush without waiting for it.
+        const finalFlush = timeline.flush({ final: true })
+        const secsLeft = expiryRef.current ? (expiryRef.current - Date.now()) / 1000 : Infinity
+        if (auto || secsLeft >= 10) await finalFlush
+      }
       const r = await mockTestBuilderService.submitRich(testId, buildPayload())
       setResult(r)
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
