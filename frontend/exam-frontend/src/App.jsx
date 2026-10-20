@@ -178,8 +178,10 @@ const PublicRoute = ({ children }) => {
 // Feature-gated route: redirect to dashboard when the tenant admin has disabled
 // the feature. Defaults to enabled so nothing breaks before the config loads.
 const FeatureRoute = ({ feature, children }) => {
-  const isFeatureEnabled = useTenantStore((s) => s.isFeatureEnabled)
-  if (feature && !isFeatureEnabled(feature)) {
+  // Opt-in (learning-layer) features need an explicit true; others keep
+  // isFeatureEnabled's default-on rule.
+  const isFeatureVisible = useTenantStore((s) => s.isFeatureVisible)
+  if (feature && !isFeatureVisible(feature)) {
     return <Navigate to="/dashboard" replace />
   }
   return children

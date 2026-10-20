@@ -49,6 +49,11 @@ const applyFavicon = (url) => {
     link.href = url;
 };
 
+// Learning-layer features (mirrors core.models.Tenant.OPT_IN_FEATURES). They
+// roll out per tenant, so they count as on only when the loaded tenant config
+// says exactly `true` — never while the config is loading or failed to load.
+export const OPT_IN_FEATURES = ['practice', 'ai_grading', 'response_diagnosis'];
+
 export const useTenantStore = create((set, get) => ({
     tenant: null,
     isLoading: true,
@@ -96,6 +101,18 @@ export const useTenantStore = create((set, get) => ({
         if (!features || !(key in features)) return true;
         return Boolean(features[key]);
     },
+
+    // Opt-in features: on only when the tenant config is loaded and the key is
+    // explicitly true.
+    isOptInFeatureEnabled: (key) => get().tenant?.features?.[key] === true,
+
+    // For nav items and route guards: opt-in keys need an explicit `true`;
+    // every other key keeps isFeatureEnabled's "missing means enabled" rule.
+    isFeatureVisible: (key) => (
+        OPT_IN_FEATURES.includes(key)
+            ? get().isOptInFeatureEnabled(key)
+            : get().isFeatureEnabled(key)
+    ),
 
     // Display name for a feature: the tenant's custom rename when set,
     // otherwise `fallback` (a screen-specific default such as a short nav

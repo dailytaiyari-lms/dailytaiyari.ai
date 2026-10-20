@@ -51,7 +51,8 @@ const AdminSidebar = () => {
   const { profile } = useAuthStore()
   const { closeMobileMenu } = useAppStore()
   const tenant = useTenantStore((s) => s.tenant)
-  const isFeatureEnabled = useTenantStore((s) => s.isFeatureEnabled)
+  // Opt-in items (Learning Insights) need an explicit true in the loaded config.
+  const isFeatureVisible = useTenantStore((s) => s.isFeatureVisible)
 
   const activeTab = searchParams.get('tab') || 'overview'
   const onAdminDashboard = location.pathname === '/admin-dashboard'
@@ -115,7 +116,7 @@ const AdminSidebar = () => {
       {/* Navigation */}
       <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
         {ADMIN_NAV_ITEMS.filter(
-          (item) => !item.feature || isFeatureEnabled(item.feature)
+          (item) => !item.feature || isFeatureVisible(item.feature)
         ).map((item) => {
           const IconComponent = item.icon
 

@@ -50,11 +50,13 @@ const Sidebar = () => {
   const { profile, isAuthenticated } = useAuthStore()
   const { closeMobileMenu } = useAppStore()
   const tenant = useTenantStore((s) => s.tenant)
-  const isFeatureEnabled = useTenantStore((s) => s.isFeatureEnabled)
+  // isFeatureVisible: existing items keep isFeatureEnabled; opt-in items (Smart
+  // Practice) show only once the tenant config explicitly enables them.
+  const isFeatureVisible = useTenantStore((s) => s.isFeatureVisible)
   const featureLabel = useTenantStore((s) => s.featureLabel)
 
   const visibleNavItems = navItems
-    .filter((item) => !item.feature || isFeatureEnabled(item.feature))
+    .filter((item) => !item.feature || isFeatureVisible(item.feature))
     .map((item) => (
       item.feature && item.renamable
         ? { ...item, label: featureLabel(item.feature, item.label) }

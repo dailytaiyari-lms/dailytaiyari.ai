@@ -13,7 +13,10 @@ const CHOICES = [
 
 /** Existing self-reports + never-seen items for one attempt (feature-gated). */
 export function useSelfReports(attemptKind, attemptId) {
-  const enabled = useTenantStore((s) => s.isFeatureEnabled)('response_diagnosis') && !!attemptId
+  // Explicitly enabled in the loaded tenant config only (not while loading or
+  // after a failed load), so no self-report request is ever sent otherwise.
+  const optedIn = useTenantStore((s) => s.tenant?.features?.response_diagnosis === true)
+  const enabled = optedIn && !!attemptId
   const { data, isSuccess } = useQuery({
     queryKey: ['selfReports', attemptKind, attemptId],
     queryFn: () => timelineService.getSelfReports(attemptKind, attemptId),
