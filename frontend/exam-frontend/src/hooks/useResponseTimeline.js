@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { timelineService } from '../services/timelineService'
+import { useTenantStore } from '../context/tenantStore'
 
 /**
  * Records a raw per-question interaction timeline for one attempt and syncs
@@ -16,6 +17,12 @@ import { timelineService } from '../services/timelineService'
  * past MAX_EVENTS / MAX_EVENT_BYTES (answers and clears included), marking the
  * session `truncated`. The server then treats items that were answered but
  * never seen in the timeline as having no timing.
+ *
+ * Opt-in per tenant: capture runs only when the tenant enables one of
+ * LEARNING_FEATURES. Otherwise (and while the tenant config is still loading)
+ * the hook does nothing at all — no periodic sync, no unload beacon, and
+ * flush() resolves at once — and `capturing` is false, so the attempt pages
+ * send exactly the payload they sent before the learning layer existed.
  */
 const SYNC_MS = 30000
 const MAX_EVENTS = 5000
@@ -24,6 +31,17 @@ const COALESCE_MS = 1500        // rapid re-answers (toggling) collapse
 const TYPING_COALESCE_MS = 10000 // free-text / code keystrokes collapse harder
 const KEEPALIVE_LIMIT = 60000   // fetch keepalive bodies must stay small
 const FINAL_WAIT_MS = 4000      // the pre-submit flush never holds the attempt longer than this
+
+const LEARNING_FEATURES = ['practice', 'ai_grading', 'response_diagnosis']
+
+// True once the tenant config is known and enables a learning-layer feature.
+// Unknown features (config still loading) count as off — unlike
+// isFeatureEnabled, which treats a missing config as "everything on".
+export const useLearningCapture = () =>
+  useTenantStore((s) => {
+    const features = s.tenant?.features
+    return Boolean(features && LEARNING_FEATURES.some((key) => Boolean(features[key])))
+  })
 
 const typingKind = (digest) =>
   (digest && typeof digest === 'object') ? (('txt' in digest) ? 'txt' : (('code' in digest) ? 'code' : null)) : null
@@ -34,7 +52,8 @@ const newSessionId = () =>
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`
 
 export default function useResponseTimeline({ attemptKind, attemptId, parentId, currentKey, active }) {
-  const enabled = Boolean(active && (attemptId || parentId))
+  const capture = useLearningCapture()
+  const enabled = Boolean(active && capture && (attemptId || parentId))
   const targetRef = useRef({})
   targetRef.current = { attemptKind, attemptId, parentId, enabled }
 
@@ -135,6 +154,8 @@ export default function useResponseTimeline({ attemptKind, attemptId, parentId, 
   // most FINAL_WAIT_MS so a stalled request can never hold up the submit; the
   // sync itself keeps running.
   const flush = useCallback((options) => {
+    // Not capturing: nothing to send, never hold anything up.
+    if (!targetRef.current.enabled) return Promise.resolve()
     const final = Boolean(options && options.final)
     const run = async () => {
       const s = sessionRef.current
@@ -229,5 +250,5 @@ export default function useResponseTimeline({ attemptKind, attemptId, parentId, 
     return ms / 1000
   }, [])
 
-  return { recordAnswer, clearAnswer, activeSeconds, flush }
+  return { recordAnswer, clearAnswer, activeSeconds, flush, capturing: enabled }
 }

@@ -208,6 +208,7 @@ const QuizAttempt = () => {
       [questionId]: {
         question_id: questionId,
         selected_option: optionIndex.toString(),
+        time_taken_seconds: Math.floor((quiz.duration_minutes * 60 - timeLeft) / quiz.questions.length),
       },
     }))
   }
@@ -218,12 +219,17 @@ const QuizAttempt = () => {
     setIsSubmitting(true)
 
     try {
-      await timeline.flush({ final: true })
+      // Learning-layer capture (opt-in per tenant): send the final timeline
+      // first and report real active time per answer. Off, the payload is
+      // exactly the pre-capture one (elapsed / question count per answer).
+      if (timeline.capturing) await timeline.flush({ final: true })
       const response = await quizService.submitQuiz(quizId, {
-        answers: Object.values(answers).map((a) => ({
-          ...a,
-          time_taken_seconds: Math.round(timeline.activeSeconds(`bank:${a.question_id}`)),
-        })),
+        answers: timeline.capturing
+          ? Object.values(answers).map((a) => ({
+            ...a,
+            time_taken_seconds: Math.round(timeline.activeSeconds(`bank:${a.question_id}`)),
+          }))
+          : Object.values(answers),
         time_taken_seconds: quiz.duration_minutes * 60 - timeLeft,
       })
 

@@ -89,6 +89,7 @@ const MockTestAttempt = () => {
       [questionId]: {
         question_id: questionId,
         selected_option: optionIndex.toString(),
+        time_taken_seconds: 0,
       },
     }))
   }
@@ -98,12 +99,17 @@ const MockTestAttempt = () => {
     setIsSubmitting(true)
 
     try {
-      await timeline.flush({ final: true })
+      // Learning-layer capture (opt-in per tenant): send the final timeline
+      // first and report real active time per answer. Off, the payload is
+      // exactly the pre-capture one (0 per answer).
+      if (timeline.capturing) await timeline.flush({ final: true })
       const response = await quizService.submitMockTest(testId, {
-        answers: Object.values(answers).map((a) => ({
-          ...a,
-          time_taken_seconds: Math.round(timeline.activeSeconds(`bank:${a.question_id}`)),
-        })),
+        answers: timeline.capturing
+          ? Object.values(answers).map((a) => ({
+            ...a,
+            time_taken_seconds: Math.round(timeline.activeSeconds(`bank:${a.question_id}`)),
+          }))
+          : Object.values(answers),
         time_taken_seconds: test.duration_minutes * 60 - timeLeft,
       })
       setResult(response)

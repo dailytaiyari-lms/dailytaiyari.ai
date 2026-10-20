@@ -250,15 +250,18 @@ export default function RichMockAttempt() {
       const a = answers[qKey(question)]
       if (!a) return
       const marked = !!flagged[qKey(question)]
+      // Per-answer active time only while learning-layer capture is on;
+      // otherwise the field is omitted, exactly as before capture existed.
+      const timing = timeline.capturing
+        ? { time_taken_seconds: Math.round(timeline.activeSeconds(qKey(question))) }
+        : {}
       if (question.kind === 'bank') {
-        const entry = { question_id: question.ref_id, is_marked_for_review: marked,
-          time_taken_seconds: Math.round(timeline.activeSeconds(qKey(question))) }
+        const entry = { question_id: question.ref_id, is_marked_for_review: marked, ...timing }
         if (question.item_type === 'numerical') entry.numerical_answer = a.numerical_answer
         else entry.selected_option = a.selected != null && a.selected.length ? String(a.selected[0]) : ''
         bank_answers.push(entry)
       } else {
-        const entry = { item_id: question.ref_id, is_marked_for_review: marked,
-          time_taken_seconds: Math.round(timeline.activeSeconds(qKey(question))) }
+        const entry = { item_id: question.ref_id, is_marked_for_review: marked, ...timing }
         if (['mcq', 'mcq_multi'].includes(question.item_type)) entry.selected_options = a.selected || []
         if (question.item_type === 'numerical') entry.numerical_answer = a.numerical_answer
         if (question.item_type === 'subjective') entry.answer_text = a.answer_text || ''
@@ -275,7 +278,7 @@ export default function RichMockAttempt() {
     submittedRef.current = true
     setSubmitting(true)
     try {
-      await timeline.flush({ final: true })
+      if (timeline.capturing) await timeline.flush({ final: true })
       const r = await mockTestBuilderService.submitRich(testId, buildPayload())
       setResult(r)
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
