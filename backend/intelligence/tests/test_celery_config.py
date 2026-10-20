@@ -10,3 +10,21 @@ class BrokerTransportOptionsTests(SimpleTestCase):
         self.assertEqual(options['max_retries'], 2)
         for key in ('interval_start', 'interval_step', 'interval_max'):
             self.assertIn(key, options)
+
+
+class ScheduleAndQueueTests(SimpleTestCase):
+    def test_beat_schedule_runs_in_ist(self):
+        self.assertEqual(settings.CELERY_TIMEZONE, settings.TIME_ZONE)
+
+    def test_statistical_tasks_run_on_their_own_queue(self):
+        from intelligence import tasks
+
+        for task in (
+            tasks.update_learner_state_for_attempt,
+            tasks.diagnose_and_update_state,
+            tasks.refresh_learner_state,
+            tasks.recompute_item_stats,
+            tasks.recompute_recommendations,
+        ):
+            with self.subTest(task=task.name):
+                self.assertEqual(task.queue, 'intelligence')

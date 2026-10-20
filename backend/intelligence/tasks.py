@@ -3,8 +3,10 @@
 Two kinds of work, on two queues:
 - LLM work (tagging) runs on ``aigen`` beside the course/mock builders, with
   its own generous time limits;
-- statistical work (learner state, item stats) is cheap and runs on the
-  default queue. All of it is recompute-from-events, so redelivery or a
+- statistical work (learner state, diagnosis, item stats, recommendations)
+  runs on its own ``intelligence`` queue and worker, so a burst of submits
+  or a 30-minute nightly job never holds up the default queue (coding judge,
+  notifications). All of it is recompute-from-events, so redelivery or a
   double-enqueue is harmless.
 """
 import logging
@@ -15,10 +17,10 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Learner state + item stats (default queue — cheap, statistical)
+# Learner state + item stats (queue: intelligence — statistical)
 # ─────────────────────────────────────────────────────────────────────────────
 
-@shared_task(name='intelligence.update_learner_state', max_retries=0)
+@shared_task(name='intelligence.update_learner_state', max_retries=0, queue='intelligence')
 def update_learner_state_for_attempt(kind, attempt_id):
     """Recompute the concept states an attempt touched. Idempotent."""
     from .services import state
@@ -30,7 +32,7 @@ def update_learner_state_for_attempt(kind, attempt_id):
         return 0
 
 
-@shared_task(name='intelligence.diagnose_and_update_state', max_retries=0)
+@shared_task(name='intelligence.diagnose_and_update_state', max_retries=0, queue='intelligence')
 def diagnose_and_update_state(kind, attempt_id):
     """Diagnose an attempt's responses, then recompute the states it touched.
 
@@ -53,7 +55,7 @@ def diagnose_and_update_state(kind, attempt_id):
         return 0
 
 
-@shared_task(name='intelligence.refresh_learner_state', time_limit=1800)
+@shared_task(name='intelligence.refresh_learner_state', time_limit=1800, queue='intelligence')
 def refresh_learner_state():
     """Nightly: re-decay stale states and catch up on any missed enqueues.
 
@@ -118,7 +120,7 @@ def refresh_learner_state():
     return refreshed
 
 
-@shared_task(name='intelligence.recompute_item_stats', time_limit=1800)
+@shared_task(name='intelligence.recompute_item_stats', time_limit=1800, queue='intelligence')
 def recompute_item_stats():
     """Nightly: rebuild empirical item statistics from the event log.
 
@@ -138,10 +140,10 @@ def recompute_item_stats():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Practice recommendations (default queue — pure tag algebra)
+# Practice recommendations (queue: intelligence — pure tag algebra)
 # ─────────────────────────────────────────────────────────────────────────────
 
-@shared_task(name='intelligence.recompute_recommendations', max_retries=0)
+@shared_task(name='intelligence.recompute_recommendations', max_retries=0, queue='intelligence')
 def recompute_recommendations(student_id, course_id=None):
     """Refresh a student's suggested practice sets (one course or all)."""
     from exams.models import Course

@@ -470,16 +470,22 @@ if 'test' in sys.argv:
 # Periodic jobs (run by the celery-beat service; schedules are code-defined,
 # so a beat restart simply re-reads them). All of these are recompute-from-
 # events and idempotent — a missed or doubled run changes nothing.
+# Crontabs are read in IST (Celery defaults to UTC), so "nightly" means 02:00
+# and 03:00 IST. Nothing was scheduled before beat, so this affects only these.
 from celery.schedules import crontab  # noqa: E402
+
+CELERY_TIMEZONE = TIME_ZONE
 
 CELERY_BEAT_SCHEDULE = {
     'intelligence-item-stats': {
         'task': 'intelligence.recompute_item_stats',
         'schedule': crontab(hour=2, minute=0),
+        'options': {'queue': 'intelligence'},
     },
     'intelligence-learner-state-refresh': {
         'task': 'intelligence.refresh_learner_state',
         'schedule': crontab(hour=3, minute=0),
+        'options': {'queue': 'intelligence'},
     },
     'intelligence-tagging-sweep': {
         'task': 'intelligence.tagging_sweep',
