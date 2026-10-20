@@ -298,7 +298,23 @@ class RegisterView(generics.CreateAPIView):
 
 ## Response diagnosis (intelligence)
 
-Every attempt screen records a raw per-question timeline
+**Opt-in per tenant.** The whole learning layer runs only for tenants with at
+least one of `practice`, `ai_grading` or `response_diagnosis` on
+(`intelligence.api.intelligence_enabled`; all three are off by default). For
+any other tenant: the attempt screens capture no timeline and send the same
+payload as before the layer existed, `POST /intelligence/timeline/` answers
+204 and writes nothing, submits and grading write no `LearningEvent` and
+enqueue no task, the nightly jobs skip the tenant, and the tagging sweep never
+tags it. Turning a feature on starts accrual from that moment; run
+`manage.py backfill_learning_events` (and `recompute_diagnoses`) for history.
+
+The statistical tasks (`diagnose_and_update_state`, `update_learner_state`,
+`recompute_recommendations`, the nightly `recompute_item_stats` and
+`refresh_learner_state`) run on the `intelligence` queue, consumed by the
+`celery-intelworker` service (concurrency 1), never on the default worker.
+Beat runs in IST: item stats at 02:00, learner-state refresh at 03:00.
+
+On an opted-in tenant, every attempt screen records a raw per-question timeline
 (`POST /api/v1/intelligence/timeline/` → `AttemptTimeline`). When an attempt
 is finalized, the `intelligence.diagnose_and_update_state` task labels every
 item, answered or not, as one of: not_seen, skipped, time_pressure, correct,
@@ -322,7 +338,8 @@ state with guesses and slips down-weighted.
   Running `recompute_learner_state` alone changes nothing about weights,
   because no diagnoses exist yet.
 - Students' "What happened?" taps on review pages need the opt-in tenant
-  feature `response_diagnosis`. Capture and classification run regardless.
+  feature `response_diagnosis`. Capture and classification run for any
+  opted-in tenant (any of the three features).
 - Calibration: `GET /api/v1/tenant-admin/intelligence/diagnosis/calibration/?days=30`
   compares classifier labels with self-reports.
 - Timeline clocks: quizzes and rich mocks are server-clocked (the window
@@ -337,6 +354,19 @@ state with guesses and slips down-weighted.
 
 ---
 
+## Analytics counting fix
+
+The old `quiz/signals.py` re-ran the incremental analytics updates on every
+save of a completed attempt, so each quiz or mock was counted two to three
+times (and every admin grade added another count). The signals are gone and
+each finalization updates analytics exactly once. From the deploy date,
+`TopicMastery` and `SubjectPerformance` totals, accuracy and mastery grow at
+the correct rate, which looks slower than before; history stays inflated
+unless recomputed. Timed-out rich attempts now count too. Tell tenant admins
+before the release.
+
+---
+
 ## Question tagging v2 (intelligence)
 
 A two-stage, tree-bound tagger: stage 1 picks a topic from the subject's
@@ -344,11 +374,18 @@ syllabus tree (only when the item's topic is unknown, e.g. mock items),
 stage 2 picks subtopics, thinking level, skills, format and difficulty
 within that topic. Results go to `ItemTagging` and `ItemSkillTag`; the
 subtopic Concept is the mastery unit. `intelligence.tagging_sweep` runs
-weekly (Sunday 04:00; also on demand: admin 'run tagging' button or
-`manage.py tag_items`). It runs v2 for subjects with an active syllabus tree
-and v1 for the rest (mock items are owned by v2 through one ownership rule).
-Every tenant with a tree is queued, so v2 starts after a tree is created or
-edited.
+weekly (Sunday 04:00 IST, on the `aigen` queue; also on demand: admin 'run
+tagging' button or `manage.py tag_items`). It runs v2 for subjects with an
+active syllabus tree and v1 for the rest (mock items are owned by v2 through
+one ownership rule). Every opted-in tenant with a tree is queued, so v2 starts
+after a tree is created or edited.
+
+- Opt-in: the sweep and the admin button only tag tenants with at least one
+  learning-layer feature on (see Response diagnosis above), so no other
+  tenant's AI budget is ever spent on tagging. `manage.py tag_items --tenant`
+  is an explicit operator action and still runs for any tenant, printing a
+  note when the tenant has not opted in. Manual-edit staleness checks also run
+  only for opted-in tenants.
 
 - Never overwritten: manual tags (`ItemTagging.source='manual'`) are not
   re-tagged, and bank question difficulty is not touched.

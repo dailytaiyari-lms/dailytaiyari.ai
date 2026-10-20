@@ -28,6 +28,7 @@ OPENAI_API_KEY=sk-...
 | `CELERY_RESULT_BACKEND` | No | `redis://redis:6379/1` | Celery result backend |
 | `CELERY_NB_CONCURRENCY` | No | `1` | Workers on the `notebooks` queue. Notebook grading is CPU-bound — keep low |
 | `CELERY_AI_CONCURRENCY` | No | `4` | Workers on the `aigen` queue. LLM calls are I/O-bound — higher is fine |
+| `CELERY_INTEL_CONCURRENCY` | No | `1` | Workers on the `intelligence` queue (learning-layer statistics, nightly jobs) |
 | `CODE_JUDGE_ASYNC` | No | `False` | Grade coding submissions off the request thread |
 | `COURSEGEN_ASYNC` | No | `True` | Run AI course generation on the `aigen` queue |
 
