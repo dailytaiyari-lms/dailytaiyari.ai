@@ -25,10 +25,10 @@ def on_attempt_graded(attempt, course=None):
     if not _feature_enabled(tenant, 'practice'):
         return
     try:
+        from intelligence.api import enqueue
         from intelligence.tasks import recompute_recommendations
-        recompute_recommendations.delay(
-            str(student.id), str(course.id) if course else None,
-        )
+        # Capped publish retries: this runs inside the submit request.
+        enqueue(recompute_recommendations, str(student.id), str(course.id) if course else None)
     except Exception:
         logger.exception('intelligence: failed to enqueue recommendations for %s', student.pk)
 
@@ -44,7 +44,9 @@ def maybe_enqueue_ai_grading(attempt):
     try:
         if not attempt.item_answers.filter(needs_manual_grading=True).exists():
             return
+        from intelligence.api import enqueue
         from intelligence.tasks import grade_subjective_answers
-        grade_subjective_answers.delay(str(attempt.id))
+        # Capped publish retries: this runs inside the submit/grade request.
+        enqueue(grade_subjective_answers, str(attempt.id))
     except Exception:
         logger.exception('intelligence: failed to enqueue AI grading for %s', attempt.pk)

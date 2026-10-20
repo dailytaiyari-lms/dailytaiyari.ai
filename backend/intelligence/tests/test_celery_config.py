@@ -4,12 +4,11 @@ from django.test import SimpleTestCase
 
 
 class BrokerTransportOptionsTests(SimpleTestCase):
-    def test_retry_cap_and_visibility_timeout_live_in_one_dict(self):
-        options = settings.CELERY_BROKER_TRANSPORT_OPTIONS
-        self.assertIn('visibility_timeout', options)
-        self.assertEqual(options['max_retries'], 2)
-        for key in ('interval_start', 'interval_step', 'interval_max'):
-            self.assertIn(key, options)
+    def test_transport_options_are_unchanged_from_main(self):
+        # The learning layer caps its own publish retries per call
+        # (intelligence.api.ENQUEUE_RETRY_POLICY); the global setting, which
+        # every other app's enqueues use, stays exactly as on main.
+        self.assertEqual(set(settings.CELERY_BROKER_TRANSPORT_OPTIONS), {'visibility_timeout'})
 
 
 class ScheduleAndQueueTests(SimpleTestCase):

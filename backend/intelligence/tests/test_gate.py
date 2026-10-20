@@ -161,7 +161,7 @@ class DisabledTenantSubmitTests(GateFixture):
     features = {}
 
     def test_quiz_submit_records_nothing_and_enqueues_nothing(self):
-        with mock.patch.object(tasks.diagnose_and_update_state, 'delay') as delay:
+        with mock.patch.object(tasks.diagnose_and_update_state, 'apply_async') as delay:
             self.submit_quiz()
         delay.assert_not_called()
         self.assertFalse(LearningEvent.objects.exists())
@@ -171,7 +171,7 @@ class DisabledTenantSubmitTests(GateFixture):
         self.assertEqual(Answer.objects.get(quiz_attempt=attempt).time_taken_seconds, 7)
 
     def test_rich_submit_records_nothing_and_enqueues_nothing(self):
-        with mock.patch.object(tasks.diagnose_and_update_state, 'delay') as delay:
+        with mock.patch.object(tasks.diagnose_and_update_state, 'apply_async') as delay:
             self.submit_rich()
         delay.assert_not_called()
         self.assertFalse(LearningEvent.objects.exists())
@@ -186,7 +186,7 @@ class DisabledTenantSubmitTests(GateFixture):
             tenant=self.tenant, attempt=attempt, item=item, selected_options=[0],
             is_correct=True, marks_obtained=4, max_marks=4,
         )
-        with mock.patch.object(tasks.diagnose_and_update_state, 'delay') as delay:
+        with mock.patch.object(tasks.diagnose_and_update_state, 'apply_async') as delay:
             api.record_regrade_event(answer)
         delay.assert_not_called()
         self.assertFalse(LearningEvent.objects.exists())
@@ -218,15 +218,15 @@ class EnabledTenantSubmitTests(GateFixture):
     features = {'response_diagnosis': True}
 
     def test_quiz_submit_records_events_and_enqueues(self):
-        with mock.patch.object(tasks.diagnose_and_update_state, 'delay') as delay:
+        with mock.patch.object(tasks.diagnose_and_update_state, 'apply_async') as delay:
             attempt = self.submit_quiz()
-        delay.assert_called_once_with('quiz', str(attempt.id))
+        delay.assert_called_once_with(args=['quiz', str(attempt.id)], retry=True, retry_policy=POLICY)
         self.assertTrue(LearningEvent.objects.filter(attempt_id=attempt.id).exists())
 
     def test_rich_submit_records_events_and_enqueues(self):
-        with mock.patch.object(tasks.diagnose_and_update_state, 'delay') as delay:
+        with mock.patch.object(tasks.diagnose_and_update_state, 'apply_async') as delay:
             attempt = self.submit_rich()
-        delay.assert_called_once_with('mock', str(attempt.id))
+        delay.assert_called_once_with(args=['mock', str(attempt.id)], retry=True, retry_policy=POLICY)
         self.assertTrue(LearningEvent.objects.filter(attempt_id=attempt.id).exists())
 
     def test_timeline_sync_is_accepted(self):
@@ -326,3 +326,59 @@ class NightlyGateTests(GateFixture):
         Tenant.objects.filter(id=self.tenant.id).update(features={'response_diagnosis': True})
         self.assertGreaterEqual(tasks.recompute_item_stats(), 1)
         self.assertTrue(ItemStats.objects.exists())
+
+
+POLICY = {'max_retries': 1, 'interval_start': 0, 'interval_step': 0.2, 'interval_max': 0.5}
+
+
+class EnqueueRetryPolicyTests(GateFixture):
+    """Request-path enqueues cap their own publish retries, so a dead broker
+    costs an opted-in tenant well under a second (the global setting is
+    main's)."""
+
+    features = {'response_diagnosis': True, 'practice': True, 'ai_grading': True}
+
+    def assert_capped(self, apply_async, args):
+        apply_async.assert_called_once_with(args=args, retry=True, retry_policy=POLICY)
+
+    def test_policy_constant(self):
+        self.assertEqual(api.ENQUEUE_RETRY_POLICY, POLICY)
+
+    def test_state_update_enqueue_is_capped(self):
+        quiz, _question = self.make_quiz()
+        attempt = QuizAttempt.objects.create(
+            tenant=self.tenant, student=self.student, quiz=quiz, status='completed',
+            completed_at=timezone.now(),
+        )
+        with mock.patch.object(tasks.diagnose_and_update_state, 'apply_async') as apply_async:
+            api.record_attempt_events(attempt)
+        self.assert_capped(apply_async, ['quiz', str(attempt.id)])
+
+    def test_recommendation_enqueue_is_capped(self):
+        from intelligence import hooks
+
+        quiz, _question = self.make_quiz()
+        attempt = QuizAttempt.objects.create(
+            tenant=self.tenant, student=self.student, quiz=quiz, status='completed',
+        )
+        with mock.patch.object(tasks.recompute_recommendations, 'apply_async') as apply_async:
+            hooks.on_attempt_graded(attempt, course=self.course)
+        self.assert_capped(apply_async, [str(self.student.id), str(self.course.id)])
+
+    def test_ai_grading_enqueue_is_capped(self):
+        from intelligence import hooks
+
+        mock_test, item = self.make_rich_mock()
+        item.item_type = 'subjective'
+        item.save(update_fields=['item_type'])
+        attempt = MockTestAttempt.objects.create(
+            tenant=self.tenant, student=self.student, mock_test=mock_test,
+            status='completed', completed_at=timezone.now(), grading_status='pending_manual',
+        )
+        MockTestAnswer.objects.create(
+            tenant=self.tenant, attempt=attempt, item=item, answer_text='because',
+            needs_manual_grading=True, max_marks=4,
+        )
+        with mock.patch.object(tasks.grade_subjective_answers, 'apply_async') as apply_async:
+            hooks.maybe_enqueue_ai_grading(attempt)
+        self.assert_capped(apply_async, [str(attempt.id)])

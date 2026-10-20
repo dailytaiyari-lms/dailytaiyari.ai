@@ -504,14 +504,8 @@ CELERY_BEAT_SCHEDULE = {
 # of the queue, so it jumps ahead of genuinely unprocessed videos. Keep this
 # above the longest task budget (VIDEO_TRANSCODE_TIMEOUT, 6h) so only a truly
 # dead worker triggers redelivery.
-#
-# The retry keys cap kombu's connection retries: learning-layer enqueues run
-# inside student-facing request paths (fail-safe wrapped), so a dead broker
-# must cost milliseconds, not seconds. This is the only assignment of this
-# setting — a second one would silently replace the whole dict.
 CELERY_BROKER_TRANSPORT_OPTIONS = {
     'visibility_timeout': config('CELERY_VISIBILITY_TIMEOUT', default=25200, cast=int),
-    'max_retries': 2, 'interval_start': 0, 'interval_step': 0.2, 'interval_max': 0.5,
 }
 
 # Uploaded lecture videos are remuxed so playback starts immediately (see

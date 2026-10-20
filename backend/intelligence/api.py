@@ -16,6 +16,21 @@ logger = logging.getLogger(__name__)
 # Any one of these switches the learning layer on for a tenant.
 LEARNING_FEATURES = ('practice', 'ai_grading', 'response_diagnosis')
 
+# Publish retry cap for enqueues made inside student/admin request paths.
+# The global CELERY_BROKER_TRANSPORT_OPTIONS stay exactly as on main (every
+# other app's enqueues use them), so the cap is applied per call instead: with
+# a dead broker, one fast retry and then give up — well under a second, and
+# only ever for opted-in tenants. The nightly sweep catches up anything lost.
+ENQUEUE_RETRY_POLICY = {
+    'max_retries': 1, 'interval_start': 0, 'interval_step': 0.2, 'interval_max': 0.5,
+}
+
+
+def enqueue(task, *args):
+    """Publish ``task(*args)`` with the request-path retry cap. Raises on a
+    broker failure; callers wrap it in their own fail-safe try/except."""
+    task.apply_async(args=list(args), retry=True, retry_policy=ENQUEUE_RETRY_POLICY)
+
 
 def intelligence_enabled(tenant):
     """True when ``tenant`` has at least one learning-layer feature enabled.
@@ -117,7 +132,7 @@ def _enqueue_state_update(attempt):
 
         from intelligence.tasks import diagnose_and_update_state
         kind = 'quiz' if isinstance(attempt, QuizAttempt) else 'mock'
-        diagnose_and_update_state.delay(kind, str(attempt.pk))
+        enqueue(diagnose_and_update_state, kind, str(attempt.pk))
     except Exception:
         # Broker down or task missing — the nightly sweep recomputes students
         # whose events are newer than their computed state.

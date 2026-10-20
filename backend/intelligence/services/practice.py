@@ -206,8 +206,11 @@ def submit_set(practice_set):
 
     # New evidence may retire or reshuffle the remaining suggestions.
     try:
+        from intelligence.api import enqueue
         from intelligence.tasks import recompute_recommendations
-        recompute_recommendations.delay(
+        # Capped publish retries: this runs inside the practice-submit request.
+        enqueue(
+            recompute_recommendations,
             str(practice_set.student_id), str(practice_set.course_id) if practice_set.course_id else None,
         )
     except Exception:
