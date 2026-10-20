@@ -43,11 +43,15 @@ class TaggingRunView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsTenantAdminOrInstructor]
 
     def post(self, request):
+        from .api import intelligence_enabled
         from .tasks import tag_items_for_tenant
 
         tenant = getattr(request, 'tenant', None)
         if tenant is None:
             return Response({'error': 'Tenant required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not intelligence_enabled(tenant):
+            # The task would be a no-op anyway; say so instead of "queued".
+            return Response({'queued': False, 'reason': 'learning_layer_disabled'})
         tag_items_for_tenant.delay(str(tenant.id))
         return Response({'queued': True})
 

@@ -382,3 +382,33 @@ class EnqueueRetryPolicyTests(GateFixture):
         with mock.patch.object(tasks.grade_subjective_answers, 'apply_async') as apply_async:
             hooks.maybe_enqueue_ai_grading(attempt)
         self.assert_capped(apply_async, [str(attempt.id)])
+
+
+class AdminTaggingRunTests(TestCase):
+    URL = '/api/v1/tenant-admin/intelligence/tagging/run/'
+
+    def post_as_admin(self, features):
+        tenant = Tenant.objects.create(name='Run Academy', is_active=True, features=features)
+        admin = User.objects.create_user(
+            email='run-admin@example.com', password='pw-run-1', tenant=tenant, role='admin',
+        )
+        client = APIClient()
+        client.credentials(
+            HTTP_AUTHORIZATION=f'Bearer {RefreshToken.for_user(admin).access_token}',
+            HTTP_X_TENANT_ID=str(tenant.id),
+        )
+        with mock.patch.object(tasks.tag_items_for_tenant, 'delay') as delay:
+            response = client.post(self.URL, format='json')
+        return tenant, response, delay
+
+    def test_disabled_tenant_is_refused_without_an_enqueue(self):
+        _tenant, response, delay = self.post_as_admin({})
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json(), {'queued': False, 'reason': 'learning_layer_disabled'})
+        delay.assert_not_called()
+
+    def test_enabled_tenant_is_queued(self):
+        tenant, response, delay = self.post_as_admin({'practice': True})
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json(), {'queued': True})
+        delay.assert_called_once_with(str(tenant.id))
