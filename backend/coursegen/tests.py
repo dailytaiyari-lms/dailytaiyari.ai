@@ -284,6 +284,23 @@ class ContentApplyTests(_StudioTestCase):
         self.assertTrue(question.options.get(order=1).is_correct)
         self.assertEqual(question.tags, ['Assignment'])
 
+    def test_a_database_error_while_tagging_does_not_roll_back_the_apply(self):
+        from django.db import IntegrityError, transaction
+
+        def broken(*args, **kwargs):
+            # On Postgres a real DB error aborts the open transaction; mark it
+            # so here too, then raise what the race would raise.
+            transaction.set_rollback(True)
+            raise IntegrityError('duplicate concept')
+
+        job_id = self._content_job()
+        with patch('intelligence.services.itemtags.set_item_tags', side_effect=broken) as tag:
+            response = self.post(self.admin, f'/jobs/{job_id}/apply/', {'confirm': True})
+        tag.assert_called()
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(Question.objects.filter(topic=self.topic).exists())
+        self.assertTrue(Content.objects.filter(topic=self.topic, content_type='notes').exists())
+
     def test_reapplying_updates_the_note_instead_of_duplicating(self):
         self.post(self.admin, f'/jobs/{self._content_job()}/apply/', {'confirm': True})
         self.post(self.admin, f'/jobs/{self._content_job()}/apply/', {'confirm': True})

@@ -228,6 +228,24 @@ class ApplyTests(_MockStudioTestCase):
         mcq = mock_test.items.get(item_type='mcq')
         self.assertEqual(sum(1 for o in mcq.options if o['is_correct']), 1)
 
+    def test_a_database_error_while_tagging_does_not_roll_back_the_apply(self):
+        from django.db import IntegrityError, transaction
+
+        def broken(*args, **kwargs):
+            # On Postgres a real DB error aborts the open transaction; mark it
+            # so here too, then raise what the race would raise.
+            transaction.set_rollback(True)
+            raise IntegrityError('duplicate concept')
+
+        # A single-subject course anchors tagging, so the tagger actually runs.
+        job_id = self.generate(course=str(self.course.id)).data['id']
+        with patch('mockgen.apply.set_item_tags', side_effect=broken) as tag:
+            response = self.post(self.admin, f'/jobs/{job_id}/apply/', {'confirm': True})
+        tag.assert_called()
+        self.assertEqual(response.status_code, 200, response.data)
+        mock_test = MockTest.objects.get(id=response.data['summary']['mock_test'])
+        self.assertEqual(mock_test.items.count(), 4)
+
     def test_apply_writes_only_the_selected_questions(self):
         job = self.generate().data
         keys = [item['key'] for item in job['draft']['items'][:2]]

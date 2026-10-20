@@ -55,16 +55,19 @@ def _tag_row(row, draft_item, subject, topic):
     if subject is None:
         return
     try:
-        set_item_tags(
-            row,
-            concept_labels=draft_item.get('concepts') or ([draft_item['concept']] if draft_item.get('concept') else []),
-            subject=subject,
-            topic=topic,
-            source='generator',
-            difficulty=draft_item.get('difficulty'),
-            cognitive_type=draft_item.get('cognitive_type'),
-            overwrite_difficulty=True,
-        )
+        # Savepoint: a DB error here (e.g. a concept-insert race with the
+        # sweep) rolls back only the tagging, not the whole apply.
+        with transaction.atomic():
+            set_item_tags(
+                row,
+                concept_labels=draft_item.get('concepts') or ([draft_item['concept']] if draft_item.get('concept') else []),
+                subject=subject,
+                topic=topic,
+                source='generator',
+                difficulty=draft_item.get('difficulty'),
+                cognitive_type=draft_item.get('cognitive_type'),
+                overwrite_difficulty=True,
+            )
     except Exception:
         # Tagging must never fail an apply the admin just confirmed; the
         # weekly sweep re-tags anything left untagged.

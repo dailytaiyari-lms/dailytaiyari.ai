@@ -37,15 +37,18 @@ def _tag_question(question, question_data, topic):
 
     label = question_data.get('concept')
     try:
-        set_item_tags(
-            question,
-            concept_labels=[label] if label else [],
-            subject=topic.subject,
-            topic=topic,
-            source='generator',
-            difficulty=question_data.get('difficulty'),
-            overwrite_difficulty=True,
-        )
+        # Savepoint: a DB error here (e.g. a concept-insert race with the
+        # sweep) rolls back only the tagging, not the whole apply.
+        with transaction.atomic():
+            set_item_tags(
+                question,
+                concept_labels=[label] if label else [],
+                subject=topic.subject,
+                topic=topic,
+                source='generator',
+                difficulty=question_data.get('difficulty'),
+                overwrite_difficulty=True,
+            )
     except Exception:
         logger.exception('coursegen: failed to tag question %s at apply', question.id)
 
