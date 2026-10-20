@@ -12,7 +12,9 @@ from quiz.models import MockTest, MockTestItem
 class ItemTagTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.tenant = Tenant.objects.create(name='Tag Academy', is_active=True)
+        # Opted in: the draft round-trip carries tag metadata only for such tenants.
+        cls.tenant = Tenant.objects.create(name='Tag Academy', is_active=True,
+                                           features={'practice': True})
         cls.course = Course.objects.create(
             tenant=cls.tenant, name='Physics', code='physics', course_type='competitive',
         )

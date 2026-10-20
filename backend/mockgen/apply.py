@@ -392,19 +392,23 @@ def draft_from_mock_test(mock_test):
                 'description': section.get('description') or '',
             })
 
+    from intelligence.api import intelligence_enabled
+
+    # Learning-layer tenants round-trip each item's real metadata, so "Modify
+    # with AI" sees (and preserves) what each question tests. Every other
+    # tenant gets exactly main's draft: difficulty 'medium', no concept.
+    tagged = intelligence_enabled(mock_test.tenant)
     items = []
-    rows = (
-        MockTestItem.objects.filter(mock_test=mock_test)
-        .prefetch_related('concept_links__concept')
-        .order_by('section', 'order')
-    )
+    rows = MockTestItem.objects.filter(mock_test=mock_test).order_by('section', 'order')
+    if tagged:
+        rows = rows.prefetch_related('concept_links__concept')
     for order, row in enumerate(rows):
-        # Real metadata round-trips into the draft, so "Modify with AI" sees
-        # (and preserves) what each question tests.
-        links = sorted(
-            row.concept_links.all(), key=lambda link: (not link.is_primary, -link.weight),
-        )
-        concepts = [link.concept.name for link in links][:4]
+        concepts = []
+        if tagged:
+            links = sorted(
+                row.concept_links.all(), key=lambda link: (not link.is_primary, -link.weight),
+            )
+            concepts = [link.concept.name for link in links][:4]
         item = {
             'key': str(row.id),
             'item_type': row.item_type,
@@ -413,14 +417,15 @@ def draft_from_mock_test(mock_test):
             'explanation': row.explanation or '',
             'marks': float(row.marks),
             'negative_marks': float(row.negative_marks),
-            'difficulty': row.difficulty or 'medium',
+            'difficulty': (row.difficulty or 'medium') if tagged else 'medium',
             'concept': concepts[0] if concepts else '',
-            'concepts': concepts,
-            'cognitive_type': row.cognitive_type or 'application',
             'options': [],
             'order': order,
             'include': True,
         }
+        if tagged:
+            item['concepts'] = concepts
+            item['cognitive_type'] = row.cognitive_type or 'application'
         if row.item_type in ('mcq', 'mcq_multi'):
             item['options'] = [
                 {'text': option.get('text') or '', 'is_correct': bool(option.get('is_correct'))}
