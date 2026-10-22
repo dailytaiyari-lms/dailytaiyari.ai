@@ -38,6 +38,11 @@ import MockTest from './pages/MockTest'
 import MockTestAttempt from './pages/MockTestAttempt'
 import MockTestReview from './pages/MockTestReview'
 import Analytics from './pages/Analytics'
+import Practice from './pages/Practice'
+import PracticeSession from './pages/PracticeSession'
+import InsightsHome from './pages/InsightsHome'
+import AssessmentReport from './pages/AssessmentReport'
+import StudentDiagnosis from './pages/StudentDiagnosis'
 import Leaderboard from './pages/Leaderboard'
 import XPHistory from './pages/XPHistory'
 import Profile from './pages/Profile'
@@ -173,8 +178,10 @@ const PublicRoute = ({ children }) => {
 // Feature-gated route: redirect to dashboard when the tenant admin has disabled
 // the feature. Defaults to enabled so nothing breaks before the config loads.
 const FeatureRoute = ({ feature, children }) => {
-  const isFeatureEnabled = useTenantStore((s) => s.isFeatureEnabled)
-  if (feature && !isFeatureEnabled(feature)) {
+  // Opt-in (learning-layer) features need an explicit true; others keep
+  // isFeatureEnabled's default-on rule.
+  const isFeatureVisible = useTenantStore((s) => s.isFeatureVisible)
+  if (feature && !isFeatureVisible(feature)) {
     return <Navigate to="/dashboard" replace />
   }
   return children
@@ -279,6 +286,12 @@ function App() {
           <Route path="/mock-test/:testId" element={<LoginGate><FeatureRoute feature="mock_tests"><MockTestAttempt /></FeatureRoute></LoginGate>} />
           <Route path="/mock-test/review/:attemptId" element={<LoginGate><FeatureRoute feature="mock_tests"><MockTestReview /></FeatureRoute></LoginGate>} />
           <Route path="/pyp" element={<LoginGate><FeatureRoute feature="pyq"><PreviousYearPapers /></FeatureRoute></LoginGate>} />
+          <Route path="/practice" element={<LoginGate><FeatureRoute feature="practice"><Practice /></FeatureRoute></LoginGate>} />
+          <Route path="/practice/:setId" element={<LoginGate><FeatureRoute feature="practice"><PracticeSession /></FeatureRoute></LoginGate>} />
+          {/* Learning insights (teacher-visible: admins + instructors) */}
+          <Route path="/admin/insights" element={<LoginGate><EditorRoute><InsightsHome /></EditorRoute></LoginGate>} />
+          <Route path="/admin/insights/assessments/:kind/:assessmentId" element={<LoginGate><EditorRoute><AssessmentReport /></EditorRoute></LoginGate>} />
+          <Route path="/admin/insights/students/:studentId" element={<LoginGate><EditorRoute><StudentDiagnosis /></EditorRoute></LoginGate>} />
           <Route path="/analytics" element={<LoginGate><FeatureRoute feature="analytics"><Analytics /></FeatureRoute></LoginGate>} />
           <Route path="/leaderboard" element={<LoginGate><FeatureRoute feature="leaderboard"><Leaderboard /></FeatureRoute></LoginGate>} />
           <Route path="/profile" element={<LoginGate><Profile /></LoginGate>} />

@@ -18,7 +18,8 @@ import {
   Users,
   Briefcase,
   Rocket,
-  Bookmark
+  Bookmark,
+  Target
 } from 'lucide-react'
 
 // Navigation items with professional icons.
@@ -32,6 +33,7 @@ const navItems = [
   { path: '/study', label: 'Study', icon: BookOpen, feature: 'study', renamable: true },
   { path: '/revision', label: 'Revision', icon: Bookmark, feature: 'study' },
   { path: '/quiz', label: 'Practice Quiz', icon: PenTool, feature: 'quiz', renamable: true },
+  { path: '/practice', label: 'Smart Practice', icon: Target, feature: 'practice', renamable: true },
   { path: '/mock-test', label: 'Mock Tests', icon: ClipboardList, feature: 'mock_tests', renamable: true },
   { path: '/pyp', label: 'PYQ Papers', icon: FileText, feature: 'pyq', renamable: true },
   { path: '/community', label: 'Community', icon: Users, feature: 'community', renamable: true },
@@ -48,11 +50,13 @@ const Sidebar = () => {
   const { profile, isAuthenticated } = useAuthStore()
   const { closeMobileMenu } = useAppStore()
   const tenant = useTenantStore((s) => s.tenant)
-  const isFeatureEnabled = useTenantStore((s) => s.isFeatureEnabled)
+  // isFeatureVisible: existing items keep isFeatureEnabled; opt-in items (Smart
+  // Practice) show only once the tenant config explicitly enables them.
+  const isFeatureVisible = useTenantStore((s) => s.isFeatureVisible)
   const featureLabel = useTenantStore((s) => s.featureLabel)
 
   const visibleNavItems = navItems
-    .filter((item) => !item.feature || isFeatureEnabled(item.feature))
+    .filter((item) => !item.feature || isFeatureVisible(item.feature))
     .map((item) => (
       item.feature && item.renamable
         ? { ...item, label: featureLabel(item.feature, item.label) }

@@ -252,6 +252,55 @@ def pending_manual_count(attempt):
     return attempt.item_answers.filter(needs_manual_grading=True).count()
 
 
+def award_completion_xp(attempt, *, at_submit=False):
+    """Award the mock-completion XP for a fully graded attempt, exactly once.
+
+    Shared by the submit path (auto-graded attempts), the admin's
+    finalize-attempt action and the AI grading task, so XP can never double
+    up whichever of them finishes the grading. Returns the XP awarded (0 when
+    nothing was due).
+
+    Re-attempts earn nothing, decided per path:
+    - ``at_submit=True`` (rich submit): any other finished attempt of this mock
+      makes this one a re-attempt — the rule the submit path always had.
+    - grading time (admin finalize, AI grading): another attempt may have
+      finished while this one waited for grading, so refuse only when another
+      attempt of this mock has already *earned* the completion XP. Otherwise
+      two attempts finished before grading would both be refused.
+    """
+    from core.utils import calculate_xp_for_quiz
+    from gamification.models import XPTransaction
+    from gamification.services import GamificationService
+
+    if attempt.xp_earned:
+        return 0
+    if XPTransaction.objects.filter(
+        student=attempt.student, transaction_type='mock_complete',
+        reference_id=attempt.id,
+    ).exists():
+        return 0
+    others = type(attempt).objects.filter(
+        student=attempt.student, mock_test=attempt.mock_test,
+        status__in=['completed', 'timed_out'],
+    ).exclude(id=attempt.id)
+    if at_submit:
+        if others.exists():
+            return 0
+    elif others.filter(xp_earned__gt=0).exists():
+        return 0
+
+    xp = calculate_xp_for_quiz(
+        float(attempt.percentage), attempt.total_questions, is_daily_challenge=False,
+    ) * 2
+    attempt.xp_earned = xp
+    attempt.save(update_fields=['xp_earned'])
+    GamificationService.award_xp(
+        attempt.student, xp, 'mock_complete',
+        f'Completed mock test: {attempt.mock_test.title}', str(attempt.id),
+    )
+    return xp
+
+
 # ---------------------------------------------------------------------------
 # Student review (Phase 6)
 # ---------------------------------------------------------------------------
@@ -277,6 +326,7 @@ def _bank_review(answer):
         sel_idx = int(answer.selected_option)
     return {
         'kind': 'bank',
+        'ref_id': str(answer.question_id),
         'item_type': q.question_type,
         'question_text': q.question_text,
         'question_html': getattr(q, 'question_html', '') or '',
@@ -302,6 +352,7 @@ def _item_review(ans):
     item = ans.item
     data = {
         'kind': 'item',
+        'ref_id': str(ans.item_id),
         'item_type': item.item_type,
         'question_text': item.question_text,
         'question_html': item.question_html or '',

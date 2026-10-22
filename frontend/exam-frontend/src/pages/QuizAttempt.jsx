@@ -19,6 +19,7 @@ import {
   Maximize2
 } from 'lucide-react'
 import { quizService } from '../services/quizService'
+import useResponseTimeline from '../hooks/useResponseTimeline'
 import { useAuthStore } from '../context/authStore'
 import Loading from '../components/common/Loading'
 import toast from 'react-hot-toast'
@@ -71,6 +72,14 @@ const QuizAttempt = () => {
   const { data: quiz, isLoading } = useQuery({
     queryKey: ['quizDetail', quizId],
     queryFn: () => quizService.getQuizDetails(quizId),
+  })
+
+  const currentQ = quiz?.questions?.[currentQuestion]
+  const timeline = useResponseTimeline({
+    attemptKind: 'quiz',
+    parentId: quizId,
+    currentKey: currentQ ? `bank:${currentQ.id}` : null,
+    active: Boolean(quiz) && proctoringStarted && !result,
   })
 
   const enterFullscreen = useCallback(async () => {
@@ -193,6 +202,7 @@ const QuizAttempt = () => {
   }
 
   const handleAnswerSelect = (questionId, optionIndex) => {
+    timeline.recordAnswer(`bank:${questionId}`, { sel: [Number(optionIndex)] })
     setAnswers((prev) => ({
       ...prev,
       [questionId]: {
@@ -209,8 +219,21 @@ const QuizAttempt = () => {
     setIsSubmitting(true)
 
     try {
+      // Learning-layer capture (opt-in per tenant): send the final timeline
+      // first and report real active time per answer. Off, the payload is
+      // exactly the pre-capture one (elapsed / question count per answer).
+      if (timeline.capturing) {
+        // Under 10 s left, never let the timeline flush delay the submit.
+        const finalFlush = timeline.flush({ final: true })
+        if (timeLeft >= 10) await finalFlush
+      }
       const response = await quizService.submitQuiz(quizId, {
-        answers: Object.values(answers),
+        answers: timeline.capturing
+          ? Object.values(answers).map((a) => ({
+            ...a,
+            time_taken_seconds: Math.round(timeline.activeSeconds(`bank:${a.question_id}`)),
+          }))
+          : Object.values(answers),
         time_taken_seconds: quiz.duration_minutes * 60 - timeLeft,
       })
 

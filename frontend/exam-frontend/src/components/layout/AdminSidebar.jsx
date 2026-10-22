@@ -20,6 +20,7 @@ import {
   Bell,
   Sparkles,
   Wand2,
+  Brain,
 } from 'lucide-react'
 
 // Admin navigation sections. `tab` items drive the in-page section shown by
@@ -36,6 +37,7 @@ export const ADMIN_NAV_ITEMS = [
   { tab: 'ai-studio', label: 'AI Course Studio', icon: Wand2 },
   { tab: 'landing', label: 'Landing Page', icon: LayoutTemplate },
   { path: '/admin/mock-tests', label: 'Mock Tests', icon: ClipboardList },
+  { path: '/admin/insights', label: 'Learning Insights', icon: Brain, feature: 'practice' },
   { path: '/admin/jobs', label: 'Jobs', icon: Briefcase },
   { path: '/admin/hackathons', label: 'Hackathons', icon: Trophy },
   { tab: 'ai', label: 'AI Features', icon: Sparkles },
@@ -49,6 +51,8 @@ const AdminSidebar = () => {
   const { profile } = useAuthStore()
   const { closeMobileMenu } = useAppStore()
   const tenant = useTenantStore((s) => s.tenant)
+  // Opt-in items (Learning Insights) need an explicit true in the loaded config.
+  const isFeatureVisible = useTenantStore((s) => s.isFeatureVisible)
 
   const activeTab = searchParams.get('tab') || 'overview'
   const onAdminDashboard = location.pathname === '/admin-dashboard'
@@ -111,7 +115,9 @@ const AdminSidebar = () => {
 
       {/* Navigation */}
       <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-        {ADMIN_NAV_ITEMS.map((item) => {
+        {ADMIN_NAV_ITEMS.filter(
+          (item) => !item.feature || isFeatureVisible(item.feature)
+        ).map((item) => {
           const IconComponent = item.icon
 
           // Route-based item (e.g. Mock Tests) — navigate to a separate page.

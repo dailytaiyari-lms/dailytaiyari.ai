@@ -37,16 +37,31 @@ Each VM runs the same Docker Compose stack:
 | `celery-worker`| Async tasks (email, async code judging, etc.)   |
 | `celery-nbworker` | Notebook/lab grading (`notebooks` queue)     |
 | `celery-aiworker` | AI authoring — course + lab generation (`aigen` queue) |
+| `celery-intelworker` | Learning-layer statistics: diagnosis, learner state, recommendations, nightly jobs (`intelligence` queue) |
+| `celery-beat`  | Scheduler for the periodic learning-layer jobs (runs no task itself) |
 | `piston`       | Sandboxed code execution engine                 |
 | `piston-init`  | One-shot: installs Piston's language runtimes   |
 | `nbrunner`     | Sandboxed notebook/lab execution engine         |
 
-The three Celery workers are split by queue so a multi-minute LLM call or a
+The Celery workers are split by queue so a multi-minute LLM call or a
 notebook that trains a model can't head-of-line block a quick coding
 submission. See [Labs](./notebooks-labs.md) for the split and its rationale.
 
+The `intelligence` queue (`celery-intelworker`, concurrency
+`CELERY_INTEL_CONCURRENCY`, default 1) takes the learning layer's
+statistical tasks: `diagnose_and_update_state` / `update_learner_state` after
+each submit, `recompute_recommendations`, and the nightly
+`recompute_item_stats` (02:00 IST) and `refresh_learner_state` (03:00 IST).
+They only run for tenants that enable `practice`, `ai_grading` or
+`response_diagnosis`. Keeping them off the default queue means a cohort
+finishing a mock, or a 30-minute nightly job, never delays coding verdicts or
+notifications. `celery-beat` schedules in IST (`CELERY_TIMEZONE = TIME_ZONE`);
+the weekly tagging sweep (Sunday 04:00 IST) and the 15-minute AI grading
+sweep run on `aigen`.
+
 > **If `celery-aiworker` isn't running**, AI generation jobs are enqueued and
-> then silently never execute — they sit at `queued` with no error. Check all
+> then silently never execute — they sit at `queued` with no error. The same
+> holds for `celery-intelworker` and learning-layer statistics. Check all
 > workers are up after any deploy.
 
 - **Database:** managed **Azure PostgreSQL Flexible Server** (SSL required). The
@@ -128,10 +143,18 @@ docker compose restart web
 docker compose up -d --build web
 
 # 2c. Migration in the release:
-#     entrypoint.sh auto-runs migrate + collectstatic on web start,
-#     so a rebuild/restart applies them. To run manually:
+#     entrypoint.sh auto-runs migrate + sync_taxonomy + collectstatic on
+#     web start, so a rebuild/restart applies them. To run manually:
 docker compose exec -T web python manage.py migrate
+docker compose exec -T web python manage.py sync_taxonomy
 ```
+
+`sync_taxonomy` loads the question-tagging vocabulary
+(`intelligence/taxonomy/tags.yaml`) into the database. It is idempotent, so
+running it on every start is safe. Without it the tagging sweep skips v2 for
+subjects with a syllabus tree. A failure is non-fatal: `entrypoint.sh` logs
+`WARNING: taxonomy sync failed` and web still starts, so check the web log
+after a deploy that edits `tags.yaml`.
 
 Deploy **pre-prod from `main`** first; deploy **prod from `production`** only
 after promotion (see branching doc). The canonical, secret-aware runbook lives
@@ -179,8 +202,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://<hostname>/api/docs/
 # Containers healthy
 docker compose ps
 
-# All three Celery workers consuming their queues
-docker compose logs celery-worker celery-nbworker celery-aiworker | grep -A4 'queues'
+# All Celery workers consuming their queues
+docker compose logs celery-worker celery-nbworker celery-aiworker celery-mediaworker celery-intelworker | grep -A4 'queues'
 
 # Recent logs if anything is off
 docker compose logs web --tail=50

@@ -599,6 +599,12 @@ class AISettings(TimeStampedModel):
     # Appended to the built-in system prompt — tone, syllabus notes, language.
     custom_instructions = models.TextField(blank=True, default='')
 
+    # Cheap-model routing for high-volume mechanical work. Empty = use the
+    # tenant's default model. Resolved the same way as any other model choice,
+    # so platform allocations still apply.
+    tagging_model = models.CharField(max_length=200, blank=True, default='')
+    grading_model = models.CharField(max_length=200, blank=True, default='')
+
     class Meta:
         verbose_name = 'AI Settings'
         verbose_name_plural = 'AI Settings'
@@ -652,6 +658,9 @@ class AIUsageRecord(TimeStampedModel):
     FEATURE_COURSEGEN = 'coursegen'
     FEATURE_NOTEBOOKGEN = 'notebookgen'
     FEATURE_MOCKGEN = 'mockgen'
+    FEATURE_ITEMTAG = 'itemtag'
+    FEATURE_PRACTICEGEN = 'practicegen'
+    FEATURE_GRADING = 'grading'
     FEATURE_HACKATHONGEN = 'hackathongen'
     FEATURE_OTHER = 'other'
     FEATURE_CHOICES = [
@@ -660,6 +669,9 @@ class AIUsageRecord(TimeStampedModel):
         (FEATURE_COURSEGEN, 'Course builder'),
         (FEATURE_NOTEBOOKGEN, 'Notebook builder'),
         (FEATURE_MOCKGEN, 'Mock test builder'),
+        (FEATURE_ITEMTAG, 'Item tagging'),
+        (FEATURE_PRACTICEGEN, 'Practice generator'),
+        (FEATURE_GRADING, 'Subjective grading'),
         (FEATURE_HACKATHONGEN, 'Hackathon builder'),
         (FEATURE_OTHER, 'Other'),
     ]

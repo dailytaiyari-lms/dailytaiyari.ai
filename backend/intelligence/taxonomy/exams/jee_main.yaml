@@ -1,0 +1,3079 @@
+# JEE Main syllabus tree (decision D5): subject → sub-subject → topic → subtopic.
+# Drafted by `manage.py draft_exam_tree` from the chapter/topic labels of the
+# local-only eval_jee dataset, then reviewed by hand. No question content.
+# weightage = share of 2021–2024 JEE Main questions within the parent node.
+# in_syllabus: false marks chapters removed from the NTA JEE Main syllabus (2024).
+# aliases = the dataset's slugs (used to build gold files and to link course topics).
+key: jee_main
+label: JEE Main
+audience: JEE Main (Paper 1, B.E./B.Tech) aspirants, Class 11–12 level
+version: 1
+subjects:
+- key: physics
+  label: Physics
+  aliases:
+  - phy
+  weightage: 0.3333
+  children:
+  - key: mechanics
+    label: Mechanics
+    weightage: 0.3491
+    children:
+    - key: units_and_measurements
+      label: Units and Measurements
+      weightage: 0.1351
+      in_syllabus: true
+      aliases:
+      - units-and-measurements
+      children:
+      - key: dimensions_of_physical_quantities
+        label: Dimensions of Physical Quantities
+        weightage: 0.4118
+        aliases:
+        - dimensions-of-physical-quantities
+      - key: errors_in_measurements
+        label: Errors in Measurements
+        weightage: 0.2451
+        aliases:
+        - errors-in-measurements
+      - key: screw_gauge
+        label: Screw Gauge
+        weightage: 0.0882
+        aliases:
+        - screw-gauge
+      - key: unit_of_physical_quantities
+        label: Unit of Physical Quantities
+        weightage: 0.0686
+        aliases:
+        - unit-of-physical-quantities
+      - key: vernier_calipers
+        label: Vernier Calipers
+        weightage: 0.1863
+        aliases:
+        - vernier-calipers
+    - key: vector_algebra
+      label: Vector Algebra
+      weightage: 0.0278
+      in_syllabus: true
+      aliases:
+      - vector-algebra
+      children:
+      - key: dot_product_and_cross_product
+        label: Dot Product and Cross Product
+        weightage: 0.2381
+        aliases:
+        - dot-product-and-cross-product
+      - key: vector_arithmetic
+        label: Vector Arithmetic
+        weightage: 0.5714
+        aliases:
+        - vector-arithmetic
+      - key: vector_projections
+        label: Vector Projections
+        weightage: 0.1905
+        aliases:
+        - vector-projections
+    - key: motion_in_a_straight_line
+      label: Motion in a Straight Line
+      weightage: 0.0742
+      in_syllabus: true
+      aliases:
+      - motion-in-a-straight-line
+      children:
+      - key: average_acceleration_and_instantaneous_acceleration
+        label: Average Acceleration and Instantaneous Acceleration
+        weightage: 0.0536
+        aliases:
+        - average-acceleration-and-instantaneous-acceleration
+      - key: average_speed_and_instantaneous_speed
+        label: Average Speed and Instantaneous Speed
+        weightage: 0.125
+        aliases:
+        - average-speed-and-instantaneous-speed
+      - key: average_velocity_and_instantaneous_velocity
+        label: Average Velocity and Instantaneous Velocity
+        weightage: 0.0893
+        aliases:
+        - average-velocity-and-instantaneous-velocity
+      - key: constant_acceleration_motion
+        label: Constant Acceleration Motion
+        weightage: 0.1964
+        aliases:
+        - constant-acceleration-motion
+      - key: graph_based_problem
+        label: Graph Based Problem
+        weightage: 0.1429
+        aliases:
+        - graph-based-problem
+      - key: motion_under_gravity
+        label: Motion Under Gravity
+        weightage: 0.25
+        aliases:
+        - motion-under-gravity
+      - key: relative_motion_in_one_dimension
+        label: Relative Motion in One Dimension
+        weightage: 0.0536
+        aliases:
+        - relative-motion-in-one-dimension
+      - key: variable_acceleration_motion
+        label: Variable Acceleration Motion
+        weightage: 0.0893
+        aliases:
+        - variable-acceleration-motion
+    - key: motion_in_a_plane
+      label: Motion in a Plane
+      weightage: 0.053
+      in_syllabus: true
+      aliases:
+      - motion-in-a-plane
+      children:
+      - key: projectile_motion
+        label: Projectile Motion
+        weightage: 0.8
+        aliases:
+        - projectile-motion
+      - key: rain_man_problems
+        label: Rain Man Problems
+        weightage: 0.025
+        aliases:
+        - rain-man-problems
+      - key: relative_motion_in_two_dimension
+        label: Relative Motion in Two Dimension
+        weightage: 0.075
+        aliases:
+        - relative-motion-in-two-dimension
+      - key: river_boat_problems
+        label: River Boat Problems
+        weightage: 0.1
+        aliases:
+        - river-boat-problems
+    - key: laws_of_motion
+      label: Laws of Motion
+      weightage: 0.094
+      in_syllabus: true
+      aliases:
+      - laws-of-motion
+      children:
+      - key: equilibrium_of_a_particle
+        label: Equilibrium of a Particle
+        weightage: 0.0986
+        aliases:
+        - equilibrium-of-a-particle
+      - key: friction_force
+        label: Friction Force
+        weightage: 0.2958
+        aliases:
+        - friction-force
+      - key: motion_of_connected_bodies
+        label: Motion of Connected Bodies
+        weightage: 0.1831
+        aliases:
+        - motion-of-connected-bodies
+      - key: motion_on_an_inclined_plane
+        label: Motion on an Inclined Plane
+        weightage: 0.1127
+        aliases:
+        - motion-on-an-inclined-plane
+      - key: newton_s_laws_of_motion
+        label: Newton's Laws of Motion
+        weightage: 0.3099
+        aliases:
+        - newton's-laws-of-motion
+      - key: spring_force
+        label: Spring Force
+        weightage: 0.0
+        aliases:
+        - spring-force
+    - key: circular_motion
+      label: Circular Motion
+      weightage: 0.053
+      in_syllabus: true
+      aliases:
+      - circular-motion
+      children:
+      - key: non_uniform_circular_motion
+        label: Non Uniform Circular Motion
+        weightage: 0.15
+        aliases:
+        - non-uniform-circular-motion
+      - key: uniform_circular_motion
+        label: Uniform Circular Motion
+        weightage: 0.85
+        aliases:
+        - uniform-circular-motion
+    - key: work_power_and_energy
+      label: Work Power and Energy
+      weightage: 0.0808
+      in_syllabus: true
+      aliases:
+      - work-power-and-energy
+      children:
+      - key: energy
+        label: Energy
+        weightage: 0.6066
+        aliases:
+        - energy
+      - key: power
+        label: Power
+        weightage: 0.1475
+        aliases:
+        - power
+      - key: work
+        label: Work
+        weightage: 0.2459
+        aliases:
+        - work
+    - key: center_of_mass
+      label: Center of Mass
+      weightage: 0.0649
+      in_syllabus: true
+      aliases:
+      - center-of-mass
+      children:
+      - key: cavity_problems
+        label: Cavity Problems
+        weightage: 0.0204
+        aliases:
+        - cavity-problems
+      - key: center_of_mass_of_continuous_mass_distribution
+        label: Center of Mass of Continuous Mass Distribution
+        weightage: 0.0816
+        aliases:
+        - center-of-mass-of-continuous-mass-distribution
+      - key: center_of_mass_of_discrete_particles
+        label: Center of Mass of Discrete Particles
+        weightage: 0.0816
+        aliases:
+        - center-of-mass-of-discrete-particles
+      - key: collision
+        label: Collision
+        weightage: 0.3265
+        aliases:
+        - collision
+      - key: impulse_momentum_theorem
+        label: Impulse Momentum Theorem
+        weightage: 0.4694
+        aliases:
+        - impulse-momentum-theorem
+      - key: motion_of_center_of_mass
+        label: Motion of Center of Mass
+        weightage: 0.0204
+        aliases:
+        - motion-of-center-of-mass
+    - key: rotational_motion
+      label: Rotational Motion
+      weightage: 0.1152
+      in_syllabus: true
+      aliases:
+      - rotational-motion
+      children:
+      - key: angular_momentum
+        label: Angular Momentum
+        weightage: 0.1954
+        aliases:
+        - angular-momentum
+      - key: combined_translational_and_rotational_motion
+        label: Combined Translational and Rotational Motion
+        weightage: 0.3103
+        aliases:
+        - combined-translational-and-rotational-motion
+      - key: moment_of_inertia
+        label: Moment of Inertia
+        weightage: 0.3333
+        aliases:
+        - moment-of-inertia
+      - key: torque
+        label: Torque
+        weightage: 0.1609
+        aliases:
+        - torque
+    - key: gravitation
+      label: Gravitation
+      weightage: 0.1258
+      in_syllabus: true
+      aliases:
+      - gravitation
+      children:
+      - key: acceleration_due_to_gravity_and_its_variation
+        label: Acceleration Due to Gravity and Its Variation
+        weightage: 0.3158
+        aliases:
+        - acceleration-due-to-gravity-and-its-variation
+      - key: escape_speed_and_motion_of_satellites
+        label: Escape Speed and Motion of Satellites
+        weightage: 0.2421
+        aliases:
+        - escape-speed-and-motion-of-satellites
+      - key: gravitational_potential_and_gravitational_potential_energy
+        label: Gravitational Potential and Gravitational Potential Energy
+        weightage: 0.1579
+        aliases:
+        - gravitational-potential-and-gravitational-potential-energy
+      - key: kepler_s_law_and_universal_law_of_gravitation
+        label: Kepler's Law and Universal Law of Gravitation
+        weightage: 0.2842
+        aliases:
+        - kepler's-law-and-universal-law-of-gravitation
+    - key: properties_of_matter
+      label: Properties of Matter
+      weightage: 0.1762
+      in_syllabus: true
+      aliases:
+      - properties-of-matter
+      children:
+      - key: fluid_flow_bernoulli_s_principle_and_viscosity
+        label: Fluid Flow, Bernoulli's Principle and Viscosity
+        weightage: 0.2707
+        aliases:
+        - fluid-flow,-bernoulli's-principle-and-viscosity
+      - key: mechanical_properties_of_solids
+        label: Mechanical Properties of Solids
+        weightage: 0.3308
+        aliases:
+        - mechanical-properties-of-solids
+      - key: newton_s_law_of_cooling
+        label: Newton's Law of Cooling
+        weightage: 0.015
+        aliases:
+        - newton's-law-of-cooling
+      - key: pressure_density_pascal_s_law_and_archimedes_principle
+        label: Pressure, Density, Pascal's Law and Archimedes' Principle
+        weightage: 0.0902
+        aliases:
+        - pressure,-density,-pascal's-law-and-archimede's-principle
+      - key: stress_strain_curve_thermal_stress_and_elastic_potential_energy
+        label: Stress Strain Curve, Thermal Stress and Elastic Potential Energy
+        weightage: 0.0376
+        aliases:
+        - stress-strain-curve,-thermal-stress-and-elastic-pe
+      - key: surface_tension_excess_pressure_and_capillarity
+        label: Surface Tension, Excess Pressure and Capillarity
+        weightage: 0.2556
+        aliases:
+        - surface-tension,-excess-pressure-and-capillarity
+  - key: thermal_physics
+    label: Thermal Physics
+    weightage: 0.0749
+    children:
+    - key: heat_and_thermodynamics
+      label: Heat and Thermodynamics
+      weightage: 1.0
+      in_syllabus: true
+      aliases:
+      - heat-and-thermodynamics
+      children:
+      - key: degree_of_freedom_and_law_of_equipartition_of_energy
+        label: Degree of Freedom and Law of Equipartition of Energy
+        weightage: 0.1481
+        aliases:
+        - degree-of-freedom-and-law-of-equipartition-of-energy
+      - key: heat_engine_second_law_of_thermodynamics_and_carnot_engine
+        label: Heat Engine, Second Law of Thermodynamics and Carnot Engine
+        weightage: 0.0123
+        aliases:
+        - heat-engine,-second-law-of-thermodynamics-and-carnot-engine
+      - key: heat_transfer
+        label: Heat Transfer
+        weightage: 0.0802
+        aliases:
+        - heat-transfer
+      - key: kinetic_theory_of_gases_and_gas_laws
+        label: Kinetic Theory of Gases and Gas Laws
+        weightage: 0.3519
+        aliases:
+        - kinetic-theory-of-gases-and-gas-laws
+      - key: specific_heat_capacity_calorimetry_change_of_state
+        label: Specific Heat Capacity, Calorimetry & Change of State
+        weightage: 0.0679
+        aliases:
+        - specific-heat-capacity,-calorimetry-&-change-of-state
+      - key: thermodynamics_process
+        label: Thermodynamics Process
+        weightage: 0.216
+        aliases:
+        - thermodynamics-process
+      - key: thermometry_and_thermal_expansion
+        label: Thermometry and Thermal Expansion
+        weightage: 0.0617
+        aliases:
+        - thermometry-and-thermal-expansion
+      - key: zeroth_and_first_law_of_thermodynamics
+        label: Zeroth and First Law of Thermodynamics
+        weightage: 0.0617
+        aliases:
+        - zeroth-and-first-law-of-thermodynamics
+  - key: oscillations_waves
+    label: Oscillations and Waves
+    weightage: 0.0592
+    children:
+    - key: simple_harmonic_motion
+      label: Simple Harmonic Motion
+      weightage: 0.5859
+      in_syllabus: true
+      aliases:
+      - simple-harmonic-motion
+      children:
+      - key: forced_damped_oscillations_and_resonance
+        label: Forced, Damped Oscillations and Resonance
+        weightage: 0.0
+        aliases:
+        - forced,-damped-oscillations-and-resonance
+      - key: simple_harmonic_motion
+        label: Simple Harmonic Motion
+        weightage: 0.5467
+        aliases:
+        - simple-harmonic-motion
+      - key: some_systems_of_executing_shm
+        label: Some Systems of Executing SHM
+        weightage: 0.4533
+        aliases:
+        - some-systems-of-executing-shm
+    - key: waves
+      label: Waves
+      weightage: 0.4141
+      in_syllabus: true
+      aliases:
+      - waves
+      children:
+      - key: basic_of_waves_and_progressive_waves
+        label: Basic of Waves and Progressive Waves
+        weightage: 0.4151
+        aliases:
+        - basic-of-waves-and-progressive-waves
+      - key: doppler_effect
+        label: Doppler Effect
+        weightage: 0.2453
+        aliases:
+        - doppler-effect
+      - key: superposition_and_reflection_of_waves
+        label: Superposition and Reflection of Waves
+        weightage: 0.3396
+        aliases:
+        - superposition-and-reflection-of-waves
+  - key: electrodynamics
+    label: Electrodynamics
+    weightage: 0.3107
+    children:
+    - key: electrostatics
+      label: Electrostatics
+      weightage: 0.1607
+      in_syllabus: true
+      aliases:
+      - electrostatics
+      children:
+      - key: electric_charges_and_coulomb_s_law
+        label: Electric Charges and Coulomb's Law
+        weightage: 0.213
+        aliases:
+        - electric-charges-and-coulomb's-law
+      - key: electric_dipole
+        label: Electric Dipole
+        weightage: 0.1019
+        aliases:
+        - electric-dipole
+      - key: electric_field_and_electric_field_intensity
+        label: Electric Field and Electric Field Intensity
+        weightage: 0.3611
+        aliases:
+        - electric-field-and-electric-field-intensity
+      - key: electric_flux_and_gauss_law
+        label: Electric Flux and Gauss Law
+        weightage: 0.1667
+        aliases:
+        - electric-flux-and-gauss-law
+      - key: electric_potential_energy_and_electric_potential
+        label: Electric Potential Energy and Electric Potential
+        weightage: 0.1574
+        aliases:
+        - electric-potential-energy-and-electric-potential
+    - key: capacitor
+      label: Capacitor
+      weightage: 0.0967
+      in_syllabus: true
+      aliases:
+      - capacitor
+      children:
+      - key: capacitance
+        label: Capacitance
+        weightage: 0.0769
+        aliases:
+        - capacitance
+      - key: capacitor_in_circuit
+        label: Capacitor in Circuit
+        weightage: 0.2
+        aliases:
+        - capacitor-in-circuit
+      - key: capacitors_with_dielectric
+        label: Capacitors with Dielectric
+        weightage: 0.3231
+        aliases:
+        - capacitors-with-dielectric
+      - key: combination_of_capacitors
+        label: Combination of Capacitors
+        weightage: 0.1692
+        aliases:
+        - combination-of-capacitors
+      - key: electric_energy_stored_by_capacitor
+        label: Electric Energy Stored by Capacitor
+        weightage: 0.0769
+        aliases:
+        - electric-energy-stored-by-capacitor
+      - key: parallel_plate_capacitor
+        label: Parallel Plate Capacitor
+        weightage: 0.0615
+        aliases:
+        - parallel-plate-capacitor
+      - key: rc_circuit
+        label: RC Circuit
+        weightage: 0.0923
+        aliases:
+        - rc-circuit
+    - key: current_electricity
+      label: Current Electricity
+      weightage: 0.2381
+      in_syllabus: true
+      aliases:
+      - current-electricity
+      children:
+      - key: color_coding_of_resistance
+        label: Color Coding of Resistance
+        weightage: 0.0063
+        aliases:
+        - color-coding-of-resistance
+      - key: combination_of_resistances
+        label: Combination of Resistances
+        weightage: 0.1875
+        aliases:
+        - combination-of-resistances
+      - key: electric_cell_or_battery_and_combination_of_batteries
+        label: Electric Cell or Battery and Combination of Batteries
+        weightage: 0.0437
+        aliases:
+        - electric-cell-or-battery-and-combination-of-batteries
+      - key: electric_current_current_density_and_drift_velocity
+        label: Electric Current, Current Density and Drift Velocity
+        weightage: 0.075
+        aliases:
+        - electric-current,-current-density-and-drift-velocity
+      - key: electric_power_and_heating_effect_of_current
+        label: Electric Power and Heating Effect of Current
+        weightage: 0.1437
+        aliases:
+        - electric-power-and-heating-effect-of-current
+      - key: galvanometer_voltmeter_and_ammeter
+        label: Galvanometer, Voltmeter and Ammeter
+        weightage: 0.1562
+        aliases:
+        - galvanometer,-voltmeter-and-ammeter
+      - key: kirchhoff_s_circuit_laws
+        label: Kirchhoff's Circuit Laws
+        weightage: 0.1
+        aliases:
+        - kirchhoff's-circuit-laws
+      - key: meter_bridge
+        label: Meter Bridge
+        weightage: 0.0437
+        aliases:
+        - meter-bridge
+      - key: ohm_s_law
+        label: Ohm's Law
+        weightage: 0.0187
+        aliases:
+        - ohm's-law
+      - key: potentiometer
+        label: Potentiometer
+        weightage: 0.0813
+        aliases:
+        - potentiometer
+      - key: resistance_and_resistivity
+        label: Resistance and Resistivity
+        weightage: 0.0938
+        aliases:
+        - resistance-and-resistivity
+      - key: wheatstone_bridge
+        label: Wheatstone Bridge
+        weightage: 0.05
+        aliases:
+        - wheatstone-bridge
+    - key: magnetics
+      label: Magnetic Effects of Current
+      weightage: 0.131
+      in_syllabus: true
+      aliases:
+      - magnetics
+      children:
+      - key: ampere_s_circuital_law
+        label: Ampere's Circuital Law
+        weightage: 0.0455
+        aliases:
+        - ampere's-circuital-law
+      - key: biot_savart_s_law_and_magnetic_field_due_to_current_carrying_wire
+        label: Biot Savart's Law and Magnetic Field Due to Current Carrying Wire
+        weightage: 0.3523
+        aliases:
+        - biot-savart's-law-and-magnetic-field-due-to-current-carrying-wire
+      - key: force_and_torque_on_current_carrying_conductor
+        label: Force and Torque on Current Carrying Conductor
+        weightage: 0.2386
+        aliases:
+        - force-and-torque-on-current-carrying-conductor
+      - key: magnetic_field_of_moving_charge
+        label: Magnetic Field of Moving Charge
+        weightage: 0.0341
+        aliases:
+        - magnetic-field-of-moving-charge
+      - key: magnetic_moment
+        label: Magnetic Moment
+        weightage: 0.1023
+        aliases:
+        - magnetic-moment
+      - key: motion_of_charged_particle_inside_magnetic_field
+        label: Motion of Charged Particle Inside Magnetic Field
+        weightage: 0.2045
+        aliases:
+        - motion-of-charged-particle-inside-magnetic-field
+      - key: moving_coil_galvanometer
+        label: Moving Coil Galvanometer
+        weightage: 0.0227
+        aliases:
+        - moving-coil-galvanometer
+    - key: magnetic_properties_of_matter
+      label: Magnetic Properties of Matter
+      weightage: 0.0461
+      in_syllabus: true
+      aliases:
+      - magnetic-properties-of-matter
+      children:
+      - key: bar_magnet_or_magnetic_dipole
+        label: Bar Magnet or Magnetic Dipole
+        weightage: 0.0968
+        aliases:
+        - bar-magnet-or-magnetic-dipole
+      - key: earth_magnetism
+        label: Earth Magnetism
+        weightage: 0.2903
+        aliases:
+        - earth-magnetism
+      - key: magnetic_properties_of_matter
+        label: Magnetic Properties of Matter
+        weightage: 0.6129
+        aliases:
+        - magnetic-properties-of-matter
+    - key: electromagnetic_induction
+      label: Electromagnetic Induction
+      weightage: 0.0744
+      in_syllabus: true
+      aliases:
+      - electromagnetic-induction
+      children:
+      - key: inductance_self_and_mutual
+        label: Inductance (self and Mutual)
+        weightage: 0.3
+        aliases:
+        - inductance-(self-and-mutual)
+      - key: magnetic_flux_faraday_s_and_lenz_s_laws
+        label: Magnetic Flux, Faraday's and Lenz's Laws
+        weightage: 0.36
+        aliases:
+        - magnetic-flux,-faraday's-and-lenz's-laws
+      - key: motional_emf_and_eddy_current
+        label: Motional EMF and Eddy Current
+        weightage: 0.34
+        aliases:
+        - motional-emf-and-eddy-current
+    - key: alternating_current
+      label: Alternating Current
+      weightage: 0.1488
+      in_syllabus: true
+      aliases:
+      - alternating-current
+      children:
+      - key: ac_circuits_and_power_in_ac_circuits
+        label: AC Circuits and Power in AC Circuits
+        weightage: 0.82
+        aliases:
+        - ac-circuits-and-power-in-ac-circuits
+      - key: ac_generator_and_transformer
+        label: AC Generator and Transformer
+        weightage: 0.08
+        aliases:
+        - ac-generator-and-transformer
+      - key: growth_and_decay_of_current
+        label: Growth and Decay of Current
+        weightage: 0.08
+        aliases:
+        - growth-and-decay-of-current
+      - key: quality_factor
+        label: Quality Factor
+        weightage: 0.02
+        aliases:
+        - quality-factor
+    - key: electromagnetic_waves
+      label: Electromagnetic Waves
+      weightage: 0.1042
+      in_syllabus: true
+      aliases:
+      - electromagnetic-waves
+      children:
+      - key: displacement_current_and_properties_of_em_waves
+        label: Displacement Current and Properties of EM Waves
+        weightage: 0.8714
+        aliases:
+        - displacement-current-and-properties-of-em-waves
+      - key: em_spectrum
+        label: EM Spectrum
+        weightage: 0.1286
+        aliases:
+        - em-spectrum
+  - key: optics
+    label: Optics
+    weightage: 0.0689
+    children:
+    - key: geometrical_optics
+      label: Geometrical Optics
+      weightage: 0.5906
+      in_syllabus: true
+      aliases:
+      - geometrical-optics
+      children:
+      - key: lenses
+        label: Lenses
+        weightage: 0.3864
+        aliases:
+        - lenses
+      - key: optical_instruments
+        label: Optical Instruments
+        weightage: 0.1023
+        aliases:
+        - optical-instruments
+      - key: reflection_of_light
+        label: Reflection of Light
+        weightage: 0.1591
+        aliases:
+        - reflection-of-light
+      - key: refraction_tir_and_prism
+        label: Refraction, TIR and Prism
+        weightage: 0.3523
+        aliases:
+        - refraction,-tir-and-prism
+    - key: wave_optics
+      label: Wave Optics
+      weightage: 0.4094
+      in_syllabus: true
+      aliases:
+      - wave-optics
+      children:
+      - key: diffraction_and_doppler_effect_of_light
+        label: Diffraction and Doppler Effect of Light
+        weightage: 0.1639
+        aliases:
+        - diffraction-and-doppler-effect-of-light
+      - key: huygens_principle_and_interference_of_light
+        label: Huygens Principle and Interference of Light
+        weightage: 0.6721
+        aliases:
+        - huygens-principle-and-interference-of-light
+      - key: polarisation
+        label: Polarisation
+        weightage: 0.1639
+        aliases:
+        - polarisation
+  - key: modern_physics
+    label: Modern Physics
+    weightage: 0.1373
+    children:
+    - key: dual_nature_of_radiation
+      label: Dual Nature of Radiation
+      weightage: 0.266
+      in_syllabus: true
+      aliases:
+      - dual-nature-of-radiation
+      children:
+      - key: davisson_and_germer_experiment
+        label: Davisson and Germer Experiment
+        weightage: 0.038
+        aliases:
+        - davisson-and-germer-experiment
+      - key: matter_waves
+        label: Matter Waves
+        weightage: 0.3291
+        aliases:
+        - matter-waves
+      - key: particle_nature_of_light_the_photon
+        label: Particle Nature of Light the Photon
+        weightage: 0.1772
+        aliases:
+        - particle-nature-of-light-the-photon
+      - key: photoelectric_effect
+        label: Photoelectric Effect
+        weightage: 0.4557
+        aliases:
+        - photoelectric-effect
+    - key: atoms_and_nuclei
+      label: Atoms and Nuclei
+      weightage: 0.4074
+      in_syllabus: true
+      aliases:
+      - atoms-and-nuclei
+      children:
+      - key: alpha_particle_scattering_and_rutherford_model_of_atom
+        label: Alpha Particle Scattering and Rutherford Model of Atom
+        weightage: 0.0413
+        aliases:
+        - alpha-particle-scattering-and-rutherford-model-of-atom
+      - key: bohr_s_model_and_hydrogen_spectrum
+        label: Bohr's Model and Hydrogen Spectrum
+        weightage: 0.405
+        aliases:
+        - bohr's-model-and-hydrogen-spectrum
+      - key: nuclear_fission_and_fusion_and_binding_energy
+        label: Nuclear Fission and Fusion and Binding Energy
+        weightage: 0.1818
+        aliases:
+        - nuclear-fission-and-fusion-and-binding-energy
+      - key: nucleus_and_radioactivity
+        label: Nucleus and Radioactivity
+        weightage: 0.3719
+        aliases:
+        - nucleus-and-radioactivity
+    - key: electronic_devices
+      label: Electronic Devices
+      weightage: 0.3266
+      in_syllabus: true
+      aliases:
+      - electronic-devices
+      children:
+      - key: digital_circuits
+        label: Digital Circuits
+        weightage: 0.3093
+        aliases:
+        - digital-circuits
+      - key: semiconductor_and_p_n_junction_diode
+        label: Semiconductor and P N Junction Diode
+        weightage: 0.4948
+        aliases:
+        - semiconductor-and-p-n-junction-diode
+      - key: transistors
+        label: Transistors
+        weightage: 0.1959
+        aliases:
+        - transistors
+    - key: communication_systems
+      label: Communication Systems
+      weightage: 0.0
+      in_syllabus: false
+      aliases:
+      - communication-systems
+      children:
+      - key: elements_of_communication_system_propagation_of_em_wave
+        label: Elements of Communication System & Propagation of EM Wave
+        weightage: 0.0
+        aliases:
+        - elements-of-communication-system-&-propagation-of-em-wave
+      - key: modulation_demodulation
+        label: Modulation & Demodulation
+        weightage: 0.0
+        aliases:
+        - modulation-&-demodulation
+- key: chemistry
+  label: Chemistry
+  aliases:
+  - chem
+  weightage: 0.3333
+  children:
+  - key: physical_chemistry
+    label: Physical Chemistry
+    weightage: 0.3454
+    children:
+    - key: some_basic_concepts_of_chemistry
+      label: Some Basic Concepts of Chemistry
+      weightage: 0.1731
+      in_syllabus: true
+      aliases:
+      - some-basic-concepts-of-chemistry
+      children:
+      - key: concentration_terms
+        label: Concentration Terms
+        weightage: 0.3832
+        aliases:
+        - concentration-terms
+      - key: laws_of_chemical_combination
+        label: Laws of Chemical Combination
+        weightage: 0.0561
+        aliases:
+        - laws-of-chemical-combination
+      - key: mole_concept
+        label: Mole Concept
+        weightage: 0.2804
+        aliases:
+        - mole-concept
+      - key: quantitative_measures_in_chemical_equations
+        label: Quantitative Measures in Chemical Equations
+        weightage: 0.243
+        aliases:
+        - quantitative-measures-in-chemical-equations
+      - key: significant_figures
+        label: Significant Figures
+        weightage: 0.0374
+        aliases:
+        - significant-figures
+    - key: structure_of_atom
+      label: Structure of Atom
+      weightage: 0.144
+      in_syllabus: true
+      aliases:
+      - structure-of-atom
+      children:
+      - key: bohr_s_model_for_hydrogen_atom
+        label: Bohr's Model for Hydrogen Atom
+        weightage: 0.1461
+        aliases:
+        - bohr's-model-for-hydrogen-atom
+      - key: de_broglie_hypothesis
+        label: De Broglie Hypothesis
+        weightage: 0.0337
+        aliases:
+        - de-broglie-hypothesis
+      - key: electronic_configuration_and_nodes
+        label: Electronic Configuration and Nodes
+        weightage: 0.1124
+        aliases:
+        - electronic-configuration-and-nodes
+      - key: heisenberg_uncertainty_principle
+        label: Heisenberg Uncertainty Principle
+        weightage: 0.0562
+        aliases:
+        - heisenberg-uncertainty-principle
+      - key: hydrogen_spectrum
+        label: Hydrogen Spectrum
+        weightage: 0.0899
+        aliases:
+        - hydrogen-spectrum
+      - key: photoelectric_effect
+        label: Photoelectric Effect
+        weightage: 0.1236
+        aliases:
+        - photoelectric-effect
+      - key: quantum_mechanical_model_of_atom
+        label: Quantum Mechanical Model of Atom
+        weightage: 0.1124
+        aliases:
+        - quantum-mechanical-model-of-atom
+      - key: quantum_numbers_and_orbitals
+        label: Quantum Numbers and Orbitals
+        weightage: 0.2697
+        aliases:
+        - quantum-numbers-and-orbitals
+      - key: thomson_s_model_and_rutherford_s_model
+        label: Thomson's Model and Rutherford's Model
+        weightage: 0.0562
+        aliases:
+        - thomson's-model-and-rutherford's-model
+    - key: gaseous_state
+      label: Gaseous State
+      weightage: 0.0
+      in_syllabus: false
+      aliases:
+      - gaseous-state
+      children:
+      - key: critical_phenomenon_and_liquefaction
+        label: Critical Phenomenon and Liquefaction
+        weightage: 0.0
+        aliases:
+        - critical-phenomenon-and-liquefaction
+      - key: dalton_s_law_of_partial_pressure
+        label: Dalton's Law of Partial Pressure
+        weightage: 0.0
+        aliases:
+        - dalton's-law-of-partial-pressure
+      - key: gas_laws
+        label: Gas Laws
+        weightage: 0.0
+        aliases:
+        - gas-laws
+      - key: ideal_gas_equation
+        label: Ideal Gas Equation
+        weightage: 0.0
+        aliases:
+        - ideal-gas-equation
+      - key: kinetic_theory_of_gases
+        label: Kinetic Theory of Gases
+        weightage: 0.0
+        aliases:
+        - kinetic-theory-of-gases
+      - key: maxwell_s_distribution_of_speed
+        label: Maxwell's Distribution of Speed
+        weightage: 0.0
+        aliases:
+        - maxwell's-distribution-of-speed
+      - key: real_gas_and_van_der_waals_equation
+        label: Real Gas and Van der Waals Equation
+        weightage: 0.0
+        aliases:
+        - real-gas-and-van-der-wall's-equation
+    - key: thermodynamics
+      label: Thermodynamics
+      weightage: 0.123
+      in_syllabus: true
+      aliases:
+      - thermodynamics
+      children:
+      - key: entropy_free_energy_change_and_spontaneity
+        label: Entropy, Free Energy Change and Spontaneity
+        weightage: 0.2105
+        aliases:
+        - entropy,-free-energy-change-and-spontaneity
+      - key: first_law_of_thermodynamics
+        label: First Law of Thermodynamics
+        weightage: 0.2368
+        aliases:
+        - first-law-of-thermodynamics
+      - key: fundamentals_of_thermodynamics
+        label: Fundamentals of Thermodynamics
+        weightage: 0.1316
+        aliases:
+        - fundamentals-of-thermodynamics
+      - key: reactions_related_to_enthalpies_and_hess_s_law
+        label: Reactions Related to Enthalpies and Hess's Law
+        weightage: 0.4079
+        aliases:
+        - reactions-related-to-enthalpies-and-hess's-law
+      - key: second_law_of_thermodynamics
+        label: Second Law of Thermodynamics
+        weightage: 0.0132
+        aliases:
+        - second-law-of-thermodynamics
+    - key: chemical_equilibrium
+      label: Chemical Equilibrium
+      weightage: 0.0712
+      in_syllabus: true
+      aliases:
+      - chemical-equilibrium
+      children:
+      - key: chemical_equilibrium_law_of_mass_action_and_equilibrium_constant
+        label: Chemical Equilibrium, Law of Mass Action and Equilibrium Constant
+        weightage: 0.9091
+        aliases:
+        - chemical-equilibrium,-law-of-mass-action-and-equilibrium-constant
+      - key: le_chatelier_s_principle_and_factors_affecting_chemical_equilibrium
+        label: Le Chatelier's Principle and Factors Affecting Chemical Equilibrium
+        weightage: 0.0909
+        aliases:
+        - le-chatelier's-principle-and-factors-affecting-chemical-equilibrium
+    - key: ionic_equilibrium
+      label: Ionic Equilibrium
+      weightage: 0.0663
+      in_syllabus: true
+      aliases:
+      - ionic-equilibrium
+      children:
+      - key: ostwald_s_dilution_law_and_concept_of_acid_and_base
+        label: Ostwald's Dilution Law and Concept of Acid and Base
+        weightage: 0.0976
+        aliases:
+        - ostwald's-dilution-law-and-concept-of-acid-and-base
+      - key: ph_buffer_and_indicators
+        label: pH, Buffer and Indicators
+        weightage: 0.4878
+        aliases:
+        - ph,-buffer-and-indicators
+      - key: salt_hydrolysis
+        label: Salt Hydrolysis
+        weightage: 0.0488
+        aliases:
+        - salt-hydrolysis
+      - key: solubility_product_and_common_ion_effect
+        label: Solubility Product and Common Ion Effect
+        weightage: 0.3659
+        aliases:
+        - solubility-product-and-common-ion-effect
+    - key: redox_reactions
+      label: Redox Reactions
+      weightage: 0.0518
+      in_syllabus: true
+      aliases:
+      - redox-reactions
+      children:
+      - key: balancing_of_redox_reactions
+        label: Balancing of Redox Reactions
+        weightage: 0.125
+        aliases:
+        - balancing-of-redox-reactions
+      - key: equivalence
+        label: Equivalence
+        weightage: 0.0938
+        aliases:
+        - equivalence
+      - key: oxidation_and_reduction_reactions
+        label: Oxidation and Reduction Reactions
+        weightage: 0.1562
+        aliases:
+        - oxidation-and-reduction-reactions
+      - key: oxidation_number
+        label: Oxidation Number
+        weightage: 0.25
+        aliases:
+        - oxidation-number
+      - key: redox_titration
+        label: Redox Titration
+        weightage: 0.2188
+        aliases:
+        - redox-titration
+      - key: types_of_redox_reactions
+        label: Types of Redox Reactions
+        weightage: 0.1562
+        aliases:
+        - types-of-redox-reactions
+    - key: solutions
+      label: Solutions
+      weightage: 0.1181
+      in_syllabus: true
+      aliases:
+      - solutions
+      children:
+      - key: abnormal_colligative_property_and_van_t_hoff_factor
+        label: Abnormal Colligative Property and Van't Hoff Factor
+        weightage: 0.3699
+        aliases:
+        - abnormal-colligative-property-and-van't-hoff-factor
+      - key: depression_in_freezing_point
+        label: Depression in Freezing Point
+        weightage: 0.1644
+        aliases:
+        - depression-in-freezing-point
+      - key: elevation_in_boiling_point
+        label: Elevation in Boiling Point
+        weightage: 0.137
+        aliases:
+        - elevation-in-boiling-point
+      - key: henry_s_law
+        label: Henry's Law
+        weightage: 0.0548
+        aliases:
+        - henry's-law
+      - key: osmotic_pressure
+        label: Osmotic Pressure
+        weightage: 0.1233
+        aliases:
+        - osmotic-pressure
+      - key: relative_lowering_of_vapour_pressure_and_raoult_s_law
+        label: Relative Lowering of Vapour Pressure and Raoult’s Law
+        weightage: 0.1507
+        aliases:
+        - relative-lowering-of-vapour-pressure-and-roult’s-law
+    - key: electrochemistry
+      label: Electrochemistry
+      weightage: 0.1343
+      in_syllabus: true
+      aliases:
+      - electrochemistry
+      children:
+      - key: batteries_fuel_cells_and_corrosion
+        label: Batteries, Fuel Cells and Corrosion
+        weightage: 0.0602
+        aliases:
+        - batteries,-fuel-cells-and-corrosion
+      - key: conductance_and_electrolysis
+        label: Conductance and Electrolysis
+        weightage: 0.4217
+        aliases:
+        - conductance-and-electrolysis
+      - key: electrochemical_series_cell_and_their_emf
+        label: Electrochemical Series, Cell and Their EMF
+        weightage: 0.5181
+        aliases:
+        - electrochemical-series,-cell-and-their-emf
+    - key: chemical_kinetics_and_nuclear_chemistry
+      label: Chemical Kinetics and Nuclear Chemistry
+      weightage: 0.1181
+      in_syllabus: true
+      aliases:
+      - chemical-kinetics-and-nuclear-chemistry
+      children:
+      - key: arrhenius_equation
+        label: Arrhenius Equation
+        weightage: 0.2603
+        aliases:
+        - arrhenius-equation
+      - key: different_methods_to_determine_order_of_reaction
+        label: Different Methods to Determine Order of Reaction
+        weightage: 0.1507
+        aliases:
+        - different-methods-to-determine-order-of-reaction
+      - key: integrated_rate_law_equations
+        label: Integrated Rate Law Equations
+        weightage: 0.411
+        aliases:
+        - integrated-rate-law-equations
+      - key: nuclear_chemistry
+        label: Nuclear Chemistry
+        weightage: 0.0411
+        aliases:
+        - nuclear-chemistry
+      - key: rate_laws_and_rate_constant
+        label: Rate Laws and Rate Constant
+        weightage: 0.0685
+        aliases:
+        - rate-laws-and-rate-constant
+      - key: rate_of_reaction
+        label: Rate of Reaction
+        weightage: 0.0685
+        aliases:
+        - rate-of-reaction
+    - key: solid_state
+      label: Solid State
+      weightage: 0.0
+      in_syllabus: false
+      aliases:
+      - solid-state
+      children:
+      - key: close_packing_in_crystals
+        label: Close Packing in Crystals
+        weightage: 0.0
+        aliases:
+        - close-packing-in-crystals
+      - key: crystal_structure_of_solids
+        label: Crystal Structure of Solids
+        weightage: 0.0
+        aliases:
+        - crystal-structure-of-solids
+      - key: defects_in_crystal
+        label: Defects in Crystal
+        weightage: 0.0
+        aliases:
+        - defects-in-crystal
+      - key: interstitial_voids
+        label: Interstitial Voids
+        weightage: 0.0
+        aliases:
+        - interestitial-voids
+      - key: structure_of_ionic_compounds
+        label: Structure of Ionic Compounds
+        weightage: 0.0
+        aliases:
+        - structure-of-ionic-compounds
+      - key: type_of_solids_and_their_properties
+        label: Type of Solids and Their Properties
+        weightage: 0.0
+        aliases:
+        - type-of-solids-and-their-properties
+    - key: surface_chemistry
+      label: Surface Chemistry
+      weightage: 0.0
+      in_syllabus: false
+      aliases:
+      - surface-chemistry
+      children:
+      - key: adsorption
+        label: Adsorption
+        weightage: 0.0
+        aliases:
+        - adsorption
+      - key: catalysis
+        label: Catalysis
+        weightage: 0.0
+        aliases:
+        - catalysis
+      - key: colloids
+        label: Colloids
+        weightage: 0.0
+        aliases:
+        - colloids
+  - key: inorganic_chemistry
+    label: Inorganic Chemistry
+    weightage: 0.2711
+    children:
+    - key: periodic_table_and_periodicity
+      label: Periodic Table and Periodicity
+      weightage: 0.1175
+      in_syllabus: true
+      aliases:
+      - periodic-table-and-periodicity
+      children:
+      - key: atomic_and_ionic_radius
+        label: Atomic and Ionic Radius
+        weightage: 0.1754
+        aliases:
+        - atomic-and-ionic-radius
+      - key: effective_nuclear_charge
+        label: Effective Nuclear Charge
+        weightage: 0.0
+        aliases:
+        - effective-nuclear-charge
+      - key: electron_gain_enthalpy
+        label: Electron Gain Enthalpy
+        weightage: 0.1404
+        aliases:
+        - electron-gain-enthalpy
+      - key: electronegativity
+        label: Electronegativity
+        weightage: 0.0
+        aliases:
+        - electronegativity
+      - key: ionization_energy
+        label: Ionization Energy
+        weightage: 0.2982
+        aliases:
+        - ionization-energy
+      - key: nature_of_oxide
+        label: Nature of Oxide
+        weightage: 0.1404
+        aliases:
+        - nature-of-oxide
+      - key: periodic_table_and_its_features
+        label: Periodic Table and Its Features
+        weightage: 0.2456
+        aliases:
+        - periodic-table-and-its-features
+    - key: chemical_bonding_and_molecular_structure
+      label: Chemical Bonding and Molecular Structure
+      weightage: 0.2412
+      in_syllabus: true
+      aliases:
+      - chemical-bonding-and-molecular-structure
+      children:
+      - key: back_bonding
+        label: Back Bonding
+        weightage: 0.0
+        aliases:
+        - back-bonding
+      - key: bond_parameters
+        label: Bond Parameters
+        weightage: 0.0513
+        aliases:
+        - bond-parameters
+      - key: covalent_and_co_ordinate_bond
+        label: Covalent and Co Ordinate Bond
+        weightage: 0.0342
+        aliases:
+        - covalent-and-co-ordinate-bond
+      - key: dipole_moment
+        label: Dipole Moment
+        weightage: 0.094
+        aliases:
+        - dipole-moment
+      - key: hybridization_and_vsepr_theory
+        label: Hybridization and VSEPR Theory
+        weightage: 0.4188
+        aliases:
+        - hybridization-and-vsepr-theory
+      - key: hydrogen_bonding
+        label: Hydrogen Bonding
+        weightage: 0.0769
+        aliases:
+        - hydrogen-bonding
+      - key: hydrolysis
+        label: Hydrolysis
+        weightage: 0.0085
+        aliases:
+        - hydrolysis
+      - key: ionic_bond
+        label: Ionic Bond
+        weightage: 0.0171
+        aliases:
+        - ionic-bond
+      - key: lewis_theory
+        label: Lewis Theory
+        weightage: 0.0256
+        aliases:
+        - lewis-theory
+      - key: molecular_orbital_theory
+        label: Molecular Orbital Theory
+        weightage: 0.2479
+        aliases:
+        - molecular-orbital-theory
+      - key: resonance
+        label: Resonance
+        weightage: 0.0171
+        aliases:
+        - resonance
+      - key: valence_bond_theory
+        label: Valence Bond Theory
+        weightage: 0.0085
+        aliases:
+        - valence-bond-theory
+      - key: van_der_waals_forces
+        label: Van der Waals Forces
+        weightage: 0.0
+        aliases:
+        - van-der-walls-forces
+    - key: hydrogen
+      label: Hydrogen
+      weightage: 0.0
+      in_syllabus: false
+      aliases:
+      - hydrogen
+      children:
+      - key: hard_and_soft_water
+        label: Hard and Soft Water
+        weightage: 0.0
+        aliases:
+        - hard-and-soft-water
+      - key: hydrides
+        label: Hydrides
+        weightage: 0.0
+        aliases:
+        - hydrides
+      - key: hydrogen_peroxide
+        label: Hydrogen Peroxide
+        weightage: 0.0
+        aliases:
+        - hydrogen-peroxide
+      - key: preparation_and_properties_of_hydrogen
+        label: Preparation and Properties of Hydrogen
+        weightage: 0.0
+        aliases:
+        - preparation-and-properties-of-hydrogen
+      - key: water_and_heavy_water
+        label: Water and Heavy Water
+        weightage: 0.0
+        aliases:
+        - water-and-heavy-water
+    - key: s_block_elements
+      label: s-Block Elements
+      weightage: 0.0
+      in_syllabus: false
+      aliases:
+      - s-block-elements
+      children:
+      - key: compounds_of_alkali_metals
+        label: Compounds of Alkali Metals
+        weightage: 0.0
+        aliases:
+        - compounds-of-alkali-metals
+      - key: physicochemical_trends_in_alkali_metals
+        label: Physicochemical Trends in Alkali Metals
+        weightage: 0.0
+        aliases:
+        - physiochemical-trends-in-alkali-metals
+      - key: physicochemical_trends_in_alkaline_earth_metals
+        label: Physicochemical Trends in Alkaline Earth Metals
+        weightage: 0.0
+        aliases:
+        - physiochemical-trends-in-alkaline-earth-metals
+    - key: p_block_elements
+      label: p-Block Elements
+      weightage: 0.1196
+      in_syllabus: true
+      aliases:
+      - p-block-elements
+      children:
+      - key: group_13_elements_boron_family
+        label: Group 13 Elements (boron Family)
+        weightage: 0.2241
+        aliases:
+        - group-13-elements-(boron-family)
+      - key: group_14_elements_carbon_family
+        label: Group 14 Elements (carbon Family)
+        weightage: 0.1207
+        aliases:
+        - group-14-elements-(carbon-family)
+      - key: group_15_elements_nitrogen_family
+        label: Group 15 Elements (nitrogen Family)
+        weightage: 0.2069
+        aliases:
+        - group-15-elements-(nitrogen-family)
+      - key: group_16_elements_oxygen_family
+        label: Group 16 Elements (oxygen Family)
+        weightage: 0.3103
+        aliases:
+        - group-16-elements-(oxygen-family)
+      - key: group_17_elements_halogen_family
+        label: Group 17 Elements (halogen Family)
+        weightage: 0.1207
+        aliases:
+        - group-17-elements-(halogen-family)
+      - key: group_18_elements_inert_or_noble_gases
+        label: Group 18 Elements (inert or Noble Gases)
+        weightage: 0.0172
+        aliases:
+        - group-18-elements-(inert-or-noble-gases)
+    - key: d_and_f_block_elements
+      label: d- and f-Block Elements
+      weightage: 0.2227
+      in_syllabus: true
+      aliases:
+      - d-and-f-block-elements
+      children:
+      - key: important_compounds_of_transition_elements
+        label: Important Compounds of Transition Elements
+        weightage: 0.3796
+        aliases:
+        - important-compounds-of-transition-elements
+      - key: inner_transition_elements_lanthanoids_and_actinoids
+        label: Inner Transition Elements (lanthanoids and Actinoids)
+        weightage: 0.2222
+        aliases:
+        - inner-transition-elements-(lanthanoids-and-actinoids)
+      - key: properties_of_transition_elements
+        label: Properties of Transition Elements
+        weightage: 0.3981
+        aliases:
+        - properties-of-transition-elements
+    - key: coordination_compounds
+      label: Coordination Compounds
+      weightage: 0.299
+      in_syllabus: true
+      aliases:
+      - coordination-compounds
+      children:
+      - key: application_of_coordination_compound_and_organometallic_compounds
+        label: Application of Coordination Compound and Organometallic Compounds
+        weightage: 0.1241
+        aliases:
+        - application-of-coordination-compound-and-organometallic-compounds
+      - key: coordination_number
+        label: Coordination Number
+        weightage: 0.1172
+        aliases:
+        - coordination-number
+      - key: crystal_field_theory_cft
+        label: Crystal Field Theory (CFT)
+        weightage: 0.3655
+        aliases:
+        - crystal-field-theory-(cft)
+      - key: isomerism_of_coordination_compounds
+        label: Isomerism of Coordination Compounds
+        weightage: 0.1172
+        aliases:
+        - isomerism-of-coordination-compounds
+      - key: nomenclature_of_coordination_compounds
+        label: Nomenclature of Coordination Compounds
+        weightage: 0.0207
+        aliases:
+        - nomenclature-of-coordination-compounds
+      - key: werner_s_theory_and_valence_bond_theory
+        label: Werner's Theory and Valence Bond Theory
+        weightage: 0.2552
+        aliases:
+        - warner's-theory-and-valence-bond-theory
+    - key: isolation_of_elements
+      label: Isolation of Elements
+      weightage: 0.0
+      in_syllabus: false
+      aliases:
+      - isolation-of-elements
+      children:
+      - key: concentration_of_ore
+        label: Concentration of Ore
+        weightage: 0.0
+        aliases:
+        - concentration-of-ore
+      - key: ellingham_diagram
+        label: Ellingham Diagram
+        weightage: 0.0
+        aliases:
+        - ellingham-diagram
+      - key: extractions_of_metals
+        label: Extractions of Metals
+        weightage: 0.0
+        aliases:
+        - extractions-of-metals
+      - key: minerals_and_ores
+        label: Minerals and Ores
+        weightage: 0.0
+        aliases:
+        - minerals-and-ores
+      - key: refining_or_purification_of_metal
+        label: Refining or Purification of Metal
+        weightage: 0.0
+        aliases:
+        - refining-or-purification-of-metal
+    - key: environmental_chemistry
+      label: Environmental Chemistry
+      weightage: 0.0
+      in_syllabus: false
+      aliases:
+      - environmental-chemistry
+      children:
+      - key: air_pollution
+        label: Air Pollution
+        weightage: 0.0
+        aliases:
+        - air-pollution
+      - key: environmental_pollution
+        label: Environmental Pollution
+        weightage: 0.0
+        aliases:
+        - environmental-pollution
+      - key: soil_pollution
+        label: Soil Pollution
+        weightage: 0.0
+        aliases:
+        - soil-pollution
+      - key: water_pollution
+        label: Water Pollution
+        weightage: 0.0
+        aliases:
+        - water-pollution
+  - key: organic_chemistry
+    label: Organic Chemistry
+    weightage: 0.3835
+    children:
+    - key: basics_of_organic_chemistry
+      label: Basics of Organic Chemistry
+      weightage: 0.1633
+      in_syllabus: true
+      aliases:
+      - basics-of-organic-chemistry
+      children:
+      - key: acid_and_base_strength
+        label: Acid and Base Strength
+        weightage: 0.1071
+        aliases:
+        - acid-and-base-strength
+      - key: aromaticity
+        label: Aromaticity
+        weightage: 0.1339
+        aliases:
+        - aromaticity
+      - key: electron_displacement_effect
+        label: Electron Displacement Effect
+        weightage: 0.1518
+        aliases:
+        - electron-displacement-effect
+      - key: isomerism
+        label: Isomerism
+        weightage: 0.2411
+        aliases:
+        - isomerism
+      - key: iupac_nomenclature
+        label: IUPAC Nomenclature
+        weightage: 0.1071
+        aliases:
+        - iupac-nomenclature
+      - key: purification_of_organic_compounds
+        label: Purification of Organic Compounds
+        weightage: 0.1875
+        aliases:
+        - purification-of-organic-compounds
+      - key: stability_of_intermediate
+        label: Stability of Intermediate
+        weightage: 0.0714
+        aliases:
+        - stability-of-intermediate
+    - key: hydrocarbons
+      label: Hydrocarbons
+      weightage: 0.0918
+      in_syllabus: true
+      aliases:
+      - hydrocarbons
+      children:
+      - key: aromatic_hydrocarbons
+        label: Aromatic Hydrocarbons
+        weightage: 0.1111
+        aliases:
+        - aromatic-hydrocarbons
+      - key: properties_and_preparation_of_alkanes
+        label: Properties and Preparation of Alkanes
+        weightage: 0.0476
+        aliases:
+        - properties-and-preparation-of-alkanes
+      - key: properties_and_preparation_of_alkenes
+        label: Properties and Preparation of Alkenes
+        weightage: 0.0317
+        aliases:
+        - properties-and-preparation-of-alkenes
+      - key: properties_and_preparation_of_alkynes
+        label: Properties and Preparation of Alkynes
+        weightage: 0.0317
+        aliases:
+        - properties-and-preparation-of-alkynes
+      - key: reaction_of_alkanes
+        label: Reaction of Alkanes
+        weightage: 0.1429
+        aliases:
+        - reaction-of-alkanes
+      - key: reaction_of_alkenes
+        label: Reaction of Alkenes
+        weightage: 0.4921
+        aliases:
+        - reaction-of-alkenes
+      - key: reaction_of_alkynes
+        label: Reaction of Alkynes
+        weightage: 0.1429
+        aliases:
+        - reaction-of-alkynes
+    - key: haloalkanes_and_haloarenes
+      label: Haloalkanes and Haloarenes
+      weightage: 0.1035
+      in_syllabus: true
+      aliases:
+      - haloalkanes-and-haloarenes
+      children:
+      - key: haloalkanes
+        label: Haloalkanes
+        weightage: 0.6338
+        aliases:
+        - haloalkanes
+      - key: haloarenes
+        label: Haloarenes
+        weightage: 0.3662
+        aliases:
+        - haloarenes
+      - key: some_important_polyhalogens_compounds
+        label: Some Important Polyhalogens Compounds
+        weightage: 0.0
+        aliases:
+        - some-important-polyhalogens-compounds
+    - key: alcohols_phenols_and_ethers
+      label: Alcohols Phenols and Ethers
+      weightage: 0.1268
+      in_syllabus: true
+      aliases:
+      - alcohols-phenols-and-ethers
+      children:
+      - key: properties_preparation_and_uses_of_alcohols
+        label: Properties, Preparation and Uses of Alcohols
+        weightage: 0.3908
+        aliases:
+        - properties,-preparation-and-uses-of-alcohols
+      - key: properties_preparation_and_uses_of_ethers
+        label: Properties, Preparation and Uses of Ethers
+        weightage: 0.0805
+        aliases:
+        - properties,-preparation-and-uses-of-ethers
+      - key: properties_preparation_and_uses_of_phenols
+        label: Properties, Preparation and Uses of Phenols
+        weightage: 0.5287
+        aliases:
+        - properties,-preparation-and-uses-of-phenols
+    - key: aldehydes_ketones_and_carboxylic_acids
+      label: Aldehydes Ketones and Carboxylic Acids
+      weightage: 0.156
+      in_syllabus: true
+      aliases:
+      - aldehydes-ketones-and-carboxylic-acids
+      children:
+      - key: chemical_reactions_for_aldehydes_and_ketones
+        label: Chemical Reactions for Aldehydes and Ketones
+        weightage: 0.3551
+        aliases:
+        - chemical-reactions-for-aldehydes-and-ketones
+      - key: method_of_preparation_for_aldehydes
+        label: Method of Preparation for Aldehydes
+        weightage: 0.0561
+        aliases:
+        - method-of-preparation-for-aldehydes
+      - key: preparation_properties_and_uses_of_carboxylic_acids
+        label: Preparation, Properties and Uses of Carboxylic Acids
+        weightage: 0.3178
+        aliases:
+        - preparation,-properties-and-uses-of-carboxylic-acids
+      - key: preparation_methods_for_both_aldehydes_and_ketones
+        label: Preparation Methods for Both Aldehydes and Ketones
+        weightage: 0.1215
+        aliases:
+        - preparation-methods-for-both-aldehydes-and-ketones
+      - key: reactions_involving_aldehydes
+        label: Reactions Involving Aldehydes
+        weightage: 0.0374
+        aliases:
+        - reactions-involving-aldehydes
+      - key: tests_for_aldehyde_and_ketones
+        label: Tests for Aldehyde and Ketones
+        weightage: 0.1121
+        aliases:
+        - tests-for-aldehyde-and-ketones
+    - key: compounds_containing_nitrogen
+      label: Compounds Containing Nitrogen
+      weightage: 0.1574
+      in_syllabus: true
+      aliases:
+      - compounds-containing-nitrogen
+      children:
+      - key: aliphatic_amines
+        label: Aliphatic Amines
+        weightage: 0.287
+        aliases:
+        - aliphatic-amines
+      - key: aromatic_amines
+        label: Aromatic Amines
+        weightage: 0.3981
+        aliases:
+        - aromatic-amines
+      - key: diazonium_salts_and_other_nitrogen_containing_compounds
+        label: Diazonium Salts and Other Nitrogen Containing Compounds
+        weightage: 0.3148
+        aliases:
+        - diazonium-salts-and-other-nitrogen-containing-compounds
+    - key: biomolecules
+      label: Biomolecules
+      weightage: 0.1093
+      in_syllabus: true
+      aliases:
+      - biomolecules
+      children:
+      - key: carbohydrates
+        label: Carbohydrates
+        weightage: 0.4
+        aliases:
+        - carbohydrates
+      - key: proteins_and_enzymes
+        label: Proteins and Enzymes
+        weightage: 0.3067
+        aliases:
+        - proteins-and-enzymes
+      - key: vitamins_and_nucleic_acids
+        label: Vitamins and Nucleic Acids
+        weightage: 0.2933
+        aliases:
+        - vitamins-and-nucleic-acids
+    - key: polymers
+      label: Polymers
+      weightage: 0.0
+      in_syllabus: false
+      aliases:
+      - polymers
+      children:
+      - key: classification_preparations_and_properties_of_polymers
+        label: Classification, Preparations and Properties of Polymers
+        weightage: 0.0
+        aliases:
+        - classification,-preparations-and-properties-of-polymers
+      - key: uses_of_polymers
+        label: Uses of Polymers
+        weightage: 0.0
+        aliases:
+        - uses-of-polymers
+    - key: chemistry_in_everyday_life
+      label: Chemistry in Everyday Life
+      weightage: 0.0
+      in_syllabus: false
+      aliases:
+      - chemistry-in-everyday-life
+      children:
+      - key: chemicals_in_foods
+        label: Chemicals in Foods
+        weightage: 0.0
+        aliases:
+        - chemicals-in-foods
+      - key: chemicals_in_medicines
+        label: Chemicals in Medicines
+        weightage: 0.0
+        aliases:
+        - chemicals-in-medicines
+      - key: cleansing_agents
+        label: Cleansing Agents
+        weightage: 0.0
+        aliases:
+        - cleansing-agents
+    - key: practical_organic_chemistry
+      label: Practical Organic Chemistry
+      weightage: 0.0918
+      in_syllabus: true
+      aliases:
+      - practical-organic-chemistry
+      children:
+      - key: chemistry_involved_in_the_preparation_of_organic_and_inorganic_compounds
+        label: Chemistry Involved in the Preparation of Organic and Inorganic Compounds
+        weightage: 0.2857
+        aliases:
+        - chemistry-involved-in-the-preparation-of-organic-and-inorganic-compounds
+      - key: chemistry_involved_in_titrimetric_experiments
+        label: Chemistry Involved in Titrimetric Experiments
+        weightage: 0.127
+        aliases:
+        - chemistry-involved-in-titrimetric-experiments
+      - key: detection_of_extra_elements_and_functional_groups
+        label: Detection of Extra Elements and Functional Groups
+        weightage: 0.3016
+        aliases:
+        - detection-of-extra-elements-and-functional-groups
+      - key: experiments_involving_physical_chemistry
+        label: Experiments Involving Physical Chemistry
+        weightage: 0.0159
+        aliases:
+        - experiments-involving-physical-chemistry
+      - key: qualitative_salt_analysis
+        label: Qualitative Salt Analysis
+        weightage: 0.2698
+        aliases:
+        - qualitative-salt-analysis
+- key: maths
+  label: Mathematics
+  aliases:
+  - mathematics
+  - math
+  weightage: 0.3333
+  children:
+  - key: algebra
+    label: Algebra
+    weightage: 0.3168
+    children:
+    - key: sets_and_relations
+      label: Sets and Relations
+      weightage: 0.0702
+      in_syllabus: true
+      aliases:
+      - sets-and-relations
+      children:
+      - key: number_of_sets_and_relations
+        label: Number of Sets and Relations
+        weightage: 0.375
+        aliases:
+        - number-of-sets-and-relations
+      - key: symmetric_transitive_and_reflexive_properties
+        label: Symmetric, Transitive and Reflexive Properties
+        weightage: 0.5208
+        aliases:
+        - symmetric,-transitive-and-reflexive-properties
+      - key: venn_diagram
+        label: Venn Diagram
+        weightage: 0.1042
+        aliases:
+        - venn-diagram
+    - key: complex_numbers
+      label: Complex Numbers
+      weightage: 0.1213
+      in_syllabus: true
+      aliases:
+      - complex-numbers
+      children:
+      - key: algebra_of_complex_numbers
+        label: Algebra of Complex Numbers
+        weightage: 0.253
+        aliases:
+        - algebra-of-complex-numbers
+      - key: applications_of_complex_numbers_in_coordinate_geometry
+        label: Applications of Complex Numbers in Coordinate Geometry
+        weightage: 0.2771
+        aliases:
+        - applications-of-complex-numbers-in-coordinate-geometry
+      - key: argument_of_complex_numbers
+        label: Argument of Complex Numbers
+        weightage: 0.0964
+        aliases:
+        - argument-of-complex-numbers
+      - key: conjugate_of_complex_numbers
+        label: Conjugate of Complex Numbers
+        weightage: 0.0964
+        aliases:
+        - conjugate-of-complex-numbers
+      - key: cube_roots_of_unity
+        label: Cube Roots of Unity
+        weightage: 0.0
+        aliases:
+        - cube-roots-of-unity
+      - key: de_moivre_s_theorem
+        label: De Moivre's Theorem
+        weightage: 0.0602
+        aliases:
+        - de-moivre's-theorem
+      - key: modulus_of_complex_numbers
+        label: Modulus of Complex Numbers
+        weightage: 0.1928
+        aliases:
+        - modulus-of-complex-numbers
+      - key: nth_roots_of_unity
+        label: Nth Roots of Unity
+        weightage: 0.0241
+        aliases:
+        - nth-roots-of-unity
+      - key: square_root_of_a_complex_number
+        label: Square Root of a Complex Number
+        weightage: 0.0
+        aliases:
+        - square-root-of-a-complex-number
+    - key: quadratic_equation_and_inequalities
+      label: Quadratic Equation and Inequalities
+      weightage: 0.1038
+      in_syllabus: true
+      aliases:
+      - quadratic-equation-and-inequalities
+      children:
+      - key: algebraic_equations_of_higher_degree
+        label: Algebraic Equations of Higher Degree
+        weightage: 0.1268
+        aliases:
+        - algebraic-equations-of-higher-degree
+      - key: common_roots
+        label: Common Roots
+        weightage: 0.0423
+        aliases:
+        - common-roots
+      - key: graph_and_sign_of_quadratic_expression
+        label: Graph and Sign of Quadratic Expression
+        weightage: 0.0
+        aliases:
+        - graph-and-sign-of-quadratic-expression
+      - key: greatest_integer_and_fractional_part_functions
+        label: Greatest Integer and Fractional Part Functions
+        weightage: 0.0563
+        aliases:
+        - greatest-integer-and-fractional-part-functions
+      - key: inequalities
+        label: Inequalities
+        weightage: 0.0563
+        aliases:
+        - inequalities
+      - key: location_of_roots
+        label: Location of Roots
+        weightage: 0.0141
+        aliases:
+        - location-of-roots
+      - key: modulus_function
+        label: Modulus Function
+        weightage: 0.1127
+        aliases:
+        - modulus-function
+      - key: nature_of_roots
+        label: Nature of Roots
+        weightage: 0.1549
+        aliases:
+        - nature-of-roots
+      - key: range_of_quadratic_expression
+        label: Range of Quadratic Expression
+        weightage: 0.0141
+        aliases:
+        - range-of-quadratic-expression
+      - key: relation_between_roots_and_coefficients
+        label: Relation Between Roots and Coefficients
+        weightage: 0.4225
+        aliases:
+        - relation-between-roots-and-coefficients
+    - key: sequences_and_series
+      label: Sequences and Series
+      weightage: 0.1827
+      in_syllabus: true
+      aliases:
+      - sequences-and-series
+      children:
+      - key: am_gm_and_hm
+        label: AM, GM and HM
+        weightage: 0.072
+        aliases:
+        - am,-gm-and-hm
+      - key: arithmetic_progression_a_p
+        label: Arithmetic Progression (AP)
+        weightage: 0.232
+        aliases:
+        - arithmetic-progression-(a.p)
+      - key: arithmetico_geometric_progression
+        label: Arithmetico Geometric Progression
+        weightage: 0.04
+        aliases:
+        - arithmetico-geometric-progression
+      - key: geometric_progression_g_p
+        label: Geometric Progression (GP)
+        weightage: 0.224
+        aliases:
+        - geometric-progression-(g.p)
+      - key: harmonic_progression_h_p
+        label: Harmonic Progression (HP)
+        weightage: 0.008
+        aliases:
+        - harmonic-progression-(h.p)
+      - key: summation_of_series
+        label: Summation of Series
+        weightage: 0.424
+        aliases:
+        - summation-of-series
+    - key: binomial_theorem
+      label: Binomial Theorem
+      weightage: 0.1594
+      in_syllabus: true
+      aliases:
+      - binomial-theorem
+      children:
+      - key: binomial_theorem_for_any_index
+        label: Binomial Theorem for Any Index
+        weightage: 0.0275
+        aliases:
+        - binomial-theorem-for-any-index
+      - key: divisibility_concept_and_remainder_concept
+        label: Divisibility Concept and Remainder Concept
+        weightage: 0.1468
+        aliases:
+        - divisibility-concept-and-remainder-concept
+      - key: general_term
+        label: General Term
+        weightage: 0.3761
+        aliases:
+        - general-term
+      - key: integral_and_fractional_part_of_a_number
+        label: Integral and Fractional Part of a Number
+        weightage: 0.0092
+        aliases:
+        - integral-and-fractional-part-of-a-number
+      - key: middle_term
+        label: Middle Term
+        weightage: 0.0183
+        aliases:
+        - middle-term
+      - key: multinomial_theorem
+        label: Multinomial Theorem
+        weightage: 0.0459
+        aliases:
+        - multinomial-theorem
+      - key: negative_and_fractional_index
+        label: Negative and Fractional Index
+        weightage: 0.0092
+        aliases:
+        - negative-and-fractional-index
+      - key: problems_based_on_binomial_co_efficient_and_collection_of_binomial_co_efficient
+        label: Problems Based on Binomial Co Efficient and Collection of Binomial Co Efficient
+        weightage: 0.367
+        aliases:
+        - problems-based-on-binomial-co-efficient-and-collection-of-binomial-co-efficient
+    - key: permutations_and_combinations
+      label: Permutations and Combinations
+      weightage: 0.1316
+      in_syllabus: true
+      aliases:
+      - permutations-and-combinations
+      children:
+      - key: application_of_permutations_and_combination_in_geometry
+        label: Application of Permutations and Combination in Geometry
+        weightage: 0.0556
+        aliases:
+        - application-of-permutations-and-combination-in-geometry
+      - key: circular_permutations
+        label: Circular Permutations
+        weightage: 0.0111
+        aliases:
+        - circular-permutations
+      - key: conditional_combinations
+        label: Conditional Combinations
+        weightage: 0.2222
+        aliases:
+        - conditional-combinations
+      - key: conditional_permutations
+        label: Conditional Permutations
+        weightage: 0.2889
+        aliases:
+        - conditional-permutations
+      - key: derangement
+        label: Derangement
+        weightage: 0.0111
+        aliases:
+        - dearrangement
+      - key: divisibility_of_numbers
+        label: Divisibility of Numbers
+        weightage: 0.0333
+        aliases:
+        - divisibility-of-numbers
+      - key: factorial
+        label: Factorial
+        weightage: 0.0222
+        aliases:
+        - factorial
+      - key: number_of_combinations
+        label: Number of Combinations
+        weightage: 0.1444
+        aliases:
+        - number-of-combinations
+      - key: number_of_permutations
+        label: Number of Permutations
+        weightage: 0.2111
+        aliases:
+        - number-of-permutations
+    - key: matrices_and_determinants
+      label: Matrices and Determinants
+      weightage: 0.2237
+      in_syllabus: true
+      aliases:
+      - matrices-and-determinants
+      children:
+      - key: adjoint_of_a_matrix
+        label: Adjoint of a Matrix
+        weightage: 0.0327
+        aliases:
+        - adjoint-of-a-matrix
+      - key: basic_of_matrix
+        label: Basic of Matrix
+        weightage: 0.0065
+        aliases:
+        - basic-of-matrix
+      - key: expansion_of_determinant
+        label: Expansion of Determinant
+        weightage: 0.1046
+        aliases:
+        - expansion-of-determinant
+      - key: inverse_of_a_matrix
+        label: Inverse of a Matrix
+        weightage: 0.0654
+        aliases:
+        - inverse-of-a-matrix
+      - key: multiplication_of_matrices
+        label: Multiplication of Matrices
+        weightage: 0.0719
+        aliases:
+        - multiplication-of-matrices
+      - key: operations_on_matrices
+        label: Operations on Matrices
+        weightage: 0.1046
+        aliases:
+        - operations-on-matrices
+      - key: properties_of_determinants
+        label: Properties of Determinants
+        weightage: 0.1699
+        aliases:
+        - properties-of-determinants
+      - key: solutions_of_system_of_linear_equations_in_two_or_three_variables_using_determinants_and_matrices
+        label: Solutions of System of Linear Equations in Two or Three Variables Using Determinants and
+          Matrices
+        weightage: 0.3595
+        aliases:
+        - solutions-of-system-of-linear-equations-in-two-or-three-variables-using-determinants-and-matrices
+      - key: symmetric_and_skew_symmetric_matrices
+        label: Symmetric and Skew Symmetric Matrices
+        weightage: 0.0392
+        aliases:
+        - symmetric-and-skew-symmetric-matrices
+      - key: trace_of_a_matrix
+        label: Trace of a Matrix
+        weightage: 0.0196
+        aliases:
+        - trace-of-a-matrix
+      - key: transpose_of_a_matrix
+        label: Transpose of a Matrix
+        weightage: 0.0261
+        aliases:
+        - transpose-of-a-matrix
+    - key: mathematical_induction
+      label: Mathematical Induction
+      weightage: 0.0
+      in_syllabus: false
+      aliases:
+      - mathematical-induction
+      children:
+      - key: mathematical_induction
+        label: Mathematical Induction
+        weightage: 0.0
+        aliases:
+        - mathematical-induction
+    - key: mathematical_reasoning
+      label: Mathematical Reasoning
+      weightage: 0.0
+      in_syllabus: false
+      aliases:
+      - mathematical-reasoning
+      children:
+      - key: logical_connectives
+        label: Logical Connectives
+        weightage: 0.0
+        aliases:
+        - logical-connectives
+      - key: logical_statement
+        label: Logical Statement
+        weightage: 0.0
+        aliases:
+        - logical-statement
+    - key: logarithm
+      label: Logarithm
+      weightage: 0.0073
+      in_syllabus: true
+      aliases:
+      - logarithm
+      children:
+      - key: logarithm_inequalities
+        label: Logarithm Inequalities
+        weightage: 0.2
+        aliases:
+        - logarithm-inequalities
+      - key: logarithmic_equations
+        label: Logarithmic Equations
+        weightage: 0.8
+        aliases:
+        - logarithmic-equations
+  - key: trigonometry
+    label: Trigonometry
+    weightage: 0.0412
+    children:
+    - key: trigonometric_ratios_and_identities
+      label: Trigonometric Ratios and Identities
+      weightage: 0.2697
+      in_syllabus: true
+      aliases:
+      - trigonometric-ratio-and-identites
+      children:
+      - key: addition_and_subtraction_formula
+        label: Addition and Subtraction Formula
+        weightage: 0.2083
+        aliases:
+        - addition-and-subtraction-formula
+      - key: basic_definition_of_trigonometric_function
+        label: Basic Definition of Trigonometric Function
+        weightage: 0.0417
+        aliases:
+        - basic-definition-of-trigonometric-function
+      - key: fundamental_identities
+        label: Fundamental Identities
+        weightage: 0.125
+        aliases:
+        - fundamental-identities
+      - key: multiple_and_sub_multiple_angle_formula
+        label: Multiple and Sub Multiple Angle Formula
+        weightage: 0.125
+        aliases:
+        - multiple-and-sub-multiple-angle-formula
+      - key: range_of_trigonometric_functions
+        label: Range of Trigonometric Functions
+        weightage: 0.0417
+        aliases:
+        - range-of-trigonometric-functions
+      - key: reduction_formula
+        label: Reduction Formula
+        weightage: 0.0417
+        aliases:
+        - reduction-formula
+      - key: summation_series_problems
+        label: Summation Series Problems
+        weightage: 0.0417
+        aliases:
+        - summation-series-problems
+      - key: transformation_formula
+        label: Transformation Formula
+        weightage: 0.125
+        aliases:
+        - transformation-formula
+      - key: trigonometric_ratio_of_standard_angles
+        label: Trigonometric Ratio of Standard Angles
+        weightage: 0.2083
+        aliases:
+        - trigonometric-ratio-of-standard-angles
+      - key: trigonometric_series
+        label: Trigonometric Series
+        weightage: 0.0417
+        aliases:
+        - trigonometric-series
+    - key: trigonometric_functions_and_equations
+      label: Trigonometric Functions and Equations
+      weightage: 0.0562
+      in_syllabus: true
+      aliases:
+      - trigonometric-functions-and-equations
+      children:
+      - key: general_solution_and_principal_solution_of_the_equation
+        label: General Solution and Principal Solution of the Equation
+        weightage: 0.0
+        aliases:
+        - general-solution-and-principal-solution-of-the-equation
+      - key: solving_trigonometric_equations
+        label: Solving Trigonometric Equations
+        weightage: 1.0
+        aliases:
+        - solving-trigonometric-equations
+    - key: inverse_trigonometric_functions
+      label: Inverse Trigonometric Functions
+      weightage: 0.5281
+      in_syllabus: true
+      aliases:
+      - inverse-trigonometric-functions
+      children:
+      - key: domain_and_range_of_inverse_trigonometric_functions
+        label: Domain and Range of Inverse Trigonometric Functions
+        weightage: 0.2128
+        aliases:
+        - domain-and-range-of-inverse-trigonometric-functions
+      - key: principal_value_of_inverse_trigonometric_functions
+        label: Principal Value of Inverse Trigonometric Functions
+        weightage: 0.234
+        aliases:
+        - principal-value-of-inverse-trigonometric-functions
+      - key: properties_of_inverse_trigonometric_functions
+        label: Properties of Inverse Trigonometric Functions
+        weightage: 0.5106
+        aliases:
+        - properties-of-inverse-trigonometric-functions
+      - key: sum_upto_n_terms_and_infinite_terms_of_inverse_series
+        label: Sum Upto N Terms and Infinite Terms of Inverse Series
+        weightage: 0.0426
+        aliases:
+        - sum-upto-n-terms-and-infinite-terms-of-inverse-series
+    - key: properties_of_triangle
+      label: Properties of Triangle
+      weightage: 0.1461
+      in_syllabus: true
+      aliases:
+      - properties-of-triangle
+      children:
+      - key: area_of_triangle
+        label: Area of Triangle
+        weightage: 0.4615
+        aliases:
+        - area-of-triangle
+      - key: circumcenter_incenter_and_orthocenter
+        label: Circumcenter, Incenter and Orthocenter
+        weightage: 0.1538
+        aliases:
+        - circumcenter,-incenter-and-orthocenter
+      - key: cosine_rule
+        label: Cosine Rule
+        weightage: 0.1538
+        aliases:
+        - cosine-rule
+      - key: half_angle_formulae
+        label: Half Angle Formulae
+        weightage: 0.0769
+        aliases:
+        - half-angle-formulae
+      - key: median_and_angle_bisector
+        label: Median and Angle Bisector
+        weightage: 0.0
+        aliases:
+        - mediun-and-angle-bisector
+      - key: sine_rule
+        label: Sine Rule
+        weightage: 0.1538
+        aliases:
+        - sine-rule
+    - key: height_and_distance
+      label: Height and Distance
+      weightage: 0.0
+      in_syllabus: false
+      aliases:
+      - height-and-distance
+      children:
+      - key: height_and_distance
+        label: Height and Distance
+        weightage: 0.0
+        aliases:
+        - height-and-distance
+  - key: coordinate_geometry
+    label: Coordinate Geometry
+    weightage: 0.1232
+    children:
+    - key: straight_lines_and_pair_of_straight_lines
+      label: Straight Lines and Pair of Straight Lines
+      weightage: 0.2331
+      in_syllabus: true
+      aliases:
+      - straight-lines-and-pair-of-straight-lines
+      children:
+      - key: angle_between_two_lines
+        label: Angle Between Two Lines
+        weightage: 0.0968
+        aliases:
+        - angle-between-two-lines
+      - key: angle_bisector
+        label: Angle Bisector
+        weightage: 0.0484
+        aliases:
+        - angle-bisector
+      - key: area_of_triangle_and_condition_of_collinearity
+        label: Area of Triangle and Condition of Collinearity
+        weightage: 0.1452
+        aliases:
+        - area-of-triangle-and-condition-of-collinearity
+      - key: centers_of_triangle
+        label: Centers of Triangle
+        weightage: 0.1935
+        aliases:
+        - centers-of-triangle
+      - key: distance_formula
+        label: Distance Formula
+        weightage: 0.0323
+        aliases:
+        - distance-formula
+      - key: distance_of_a_point_from_a_line
+        label: Distance of a Point From a Line
+        weightage: 0.0968
+        aliases:
+        - distance-of-a-point-from-a-line
+      - key: family_of_straight_line
+        label: Family of Straight Line
+        weightage: 0.0
+        aliases:
+        - family-of-straight-line
+      - key: locus
+        label: Locus
+        weightage: 0.0806
+        aliases:
+        - locus
+      - key: pair_of_straight_lines
+        label: Pair of Straight Lines
+        weightage: 0.0323
+        aliases:
+        - pair-of-straight-lines
+      - key: position_of_a_point_with_respect_to_a_line
+        label: Position of a Point with Respect to a Line
+        weightage: 0.0161
+        aliases:
+        - position-of-a-point-with-respect-to-a-line
+      - key: section_formula
+        label: Section Formula
+        weightage: 0.0323
+        aliases:
+        - section-formula
+      - key: various_forms_of_straight_line
+        label: Various Forms of Straight Line
+        weightage: 0.2258
+        aliases:
+        - various-forms-of-straight-line
+    - key: circle
+      label: Circle
+      weightage: 0.2895
+      in_syllabus: true
+      aliases:
+      - circle
+      children:
+      - key: basic_theorems_of_a_circle
+        label: Basic Theorems of a Circle
+        weightage: 0.1948
+        aliases:
+        - basic-theorems-of-a-circle
+      - key: chord_of_contact
+        label: Chord of Contact
+        weightage: 0.0649
+        aliases:
+        - chord-of-contact
+      - key: chord_with_a_given_middle_point
+        label: Chord with a Given Middle Point
+        weightage: 0.1558
+        aliases:
+        - chord-with-a-given-middle-point
+      - key: family_of_circle
+        label: Family of Circle
+        weightage: 0.0649
+        aliases:
+        - family-of-circle
+      - key: intercepts_of_a_circle
+        label: Intercepts of a Circle
+        weightage: 0.0909
+        aliases:
+        - intercepts-of-a-circle
+      - key: number_of_common_tangents_and_position_of_two_circle
+        label: Number of Common Tangents and Position of Two Circle
+        weightage: 0.0649
+        aliases:
+        - number-of-common-tangents-and-position-of-two-circle
+      - key: orthogonality_of_two_circles
+        label: Orthogonality of Two Circles
+        weightage: 0.013
+        aliases:
+        - orthogonality-of-two-circles
+      - key: pair_of_tangents
+        label: Pair of Tangents
+        weightage: 0.026
+        aliases:
+        - pair-of-tangents
+      - key: position_of_a_point_with_respect_to_circle
+        label: Position of a Point with Respect to Circle
+        weightage: 0.1039
+        aliases:
+        - position-of-a-point-with-respect-to-circle
+      - key: radical_axis
+        label: Radical Axis
+        weightage: 0.026
+        aliases:
+        - radical-axis
+      - key: tangent_and_normal
+        label: Tangent and Normal
+        weightage: 0.1948
+        aliases:
+        - tangent-and-normal
+    - key: parabola
+      label: Parabola
+      weightage: 0.2068
+      in_syllabus: true
+      aliases:
+      - parabola
+      children:
+      - key: chord_of_parabola
+        label: Chord of Parabola
+        weightage: 0.1455
+        aliases:
+        - chord-of-parabola
+      - key: common_tangent
+        label: Common Tangent
+        weightage: 0.2
+        aliases:
+        - common-tangent
+      - key: locus
+        label: Locus
+        weightage: 0.0545
+        aliases:
+        - locus
+      - key: normal_to_parabola
+        label: Normal to Parabola
+        weightage: 0.1273
+        aliases:
+        - normal-to-parabola
+      - key: pair_of_tangents
+        label: Pair of Tangents
+        weightage: 0.0182
+        aliases:
+        - pair-of-tangents
+      - key: position_of_point_and_chord_joining_of_two_points
+        label: Position of Point and Chord Joining of Two Points
+        weightage: 0.0364
+        aliases:
+        - position-of-point-and-chord-joining-of-two-points
+      - key: question_based_on_basic_definition_and_parametric_representation
+        label: Question Based on Basic Definition and Parametric Representation
+        weightage: 0.1273
+        aliases:
+        - question-based-on-basic-definition-and-parametric-representation
+      - key: tangent_to_parabola
+        label: Tangent to Parabola
+        weightage: 0.2909
+        aliases:
+        - tangent-to-parabola
+    - key: ellipse
+      label: Ellipse
+      weightage: 0.1466
+      in_syllabus: true
+      aliases:
+      - ellipse
+      children:
+      - key: chord_of_ellipse
+        label: Chord of Ellipse
+        weightage: 0.1026
+        aliases:
+        - chord-of-ellipse
+      - key: common_tangent
+        label: Common Tangent
+        weightage: 0.0513
+        aliases:
+        - common-tangent
+      - key: locus
+        label: Locus
+        weightage: 0.0513
+        aliases:
+        - locus
+      - key: normal_to_ellipse
+        label: Normal to Ellipse
+        weightage: 0.0513
+        aliases:
+        - normal-to-ellipse
+      - key: position_of_point_and_chord_joining_of_two_points
+        label: Position of Point and Chord Joining of Two Points
+        weightage: 0.0769
+        aliases:
+        - position-of-point-and-chord-joining-of-two-points
+      - key: question_based_on_basic_definition_and_parametric_representation
+        label: Question Based on Basic Definition and Parametric Representation
+        weightage: 0.359
+        aliases:
+        - question-based-on-basic-definition-and-parametric-representation
+      - key: tangent_to_ellipse
+        label: Tangent to Ellipse
+        weightage: 0.3077
+        aliases:
+        - tangent-to-ellipse
+    - key: hyperbola
+      label: Hyperbola
+      weightage: 0.1241
+      in_syllabus: true
+      aliases:
+      - hyperbola
+      children:
+      - key: common_tangent
+        label: Common Tangent
+        weightage: 0.0606
+        aliases:
+        - common-tangent
+      - key: locus
+        label: Locus
+        weightage: 0.1515
+        aliases:
+        - locus
+      - key: normal_to_hyperbola
+        label: Normal to Hyperbola
+        weightage: 0.1212
+        aliases:
+        - normal-to-hyperbola
+      - key: question_based_on_basic_definition_and_parametric_representation
+        label: Question Based on Basic Definition and Parametric Representation
+        weightage: 0.4545
+        aliases:
+        - question-based-on-basic-definition-and-parametric-representation
+      - key: tangent_to_hyperbola
+        label: Tangent to Hyperbola
+        weightage: 0.2121
+        aliases:
+        - tangent-to-hyperbola
+  - key: calculus
+    label: Calculus
+    weightage: 0.3062
+    children:
+    - key: functions
+      label: Functions
+      weightage: 0.1165
+      in_syllabus: true
+      aliases:
+      - functions
+      children:
+      - key: classification_of_functions
+        label: Classification of Functions
+        weightage: 0.2078
+        aliases:
+        - classification-of-functions
+      - key: composite_functions
+        label: Composite Functions
+        weightage: 0.2338
+        aliases:
+        - composite-functions
+      - key: domain
+        label: Domain
+        weightage: 0.1299
+        aliases:
+        - domain
+      - key: even_and_odd_functions
+        label: Even and Odd Functions
+        weightage: 0.013
+        aliases:
+        - even-and-odd-functions
+      - key: functional_equations
+        label: Functional Equations
+        weightage: 0.2468
+        aliases:
+        - functional-equations
+      - key: inverse_functions
+        label: Inverse Functions
+        weightage: 0.039
+        aliases:
+        - inverse-functions
+      - key: periodic_functions
+        label: Periodic Functions
+        weightage: 0.0
+        aliases:
+        - periodic-functions
+      - key: range
+        label: Range
+        weightage: 0.1299
+        aliases:
+        - range
+    - key: limits_continuity_and_differentiability
+      label: Limits Continuity and Differentiability
+      weightage: 0.1573
+      in_syllabus: true
+      aliases:
+      - limits-continuity-and-differentiability
+      children:
+      - key: continuity
+        label: Continuity
+        weightage: 0.2692
+        aliases:
+        - continuity
+      - key: differentiability
+        label: Differentiability
+        weightage: 0.2692
+        aliases:
+        - differentiability
+      - key: existence_of_limits
+        label: Existence of Limits
+        weightage: 0.0096
+        aliases:
+        - existance-of-limits
+      - key: limits_of_algebraic_function
+        label: Limits of Algebraic Function
+        weightage: 0.1442
+        aliases:
+        - limits-of-algebric-function
+      - key: limits_of_exponential_functions
+        label: Limits of Exponential Functions
+        weightage: 0.0673
+        aliases:
+        - limits-of-exponential-functions
+      - key: limits_of_logarithmic_functions
+        label: Limits of Logarithmic Functions
+        weightage: 0.0096
+        aliases:
+        - limits-of-logarithmic-functions
+      - key: limits_of_trigonometric_functions
+        label: Limits of Trigonometric Functions
+        weightage: 0.2308
+        aliases:
+        - limits-of-trigonometric-functions
+    - key: differentiation
+      label: Differentiation
+      weightage: 0.0454
+      in_syllabus: true
+      aliases:
+      - differentiation
+      children:
+      - key: differentiation_of_a_function_with_respect_to_another_function
+        label: Differentiation of a Function with Respect to Another Function
+        weightage: 0.0
+        aliases:
+        - differentiation-of-a-function-with-respect-to-another-function
+      - key: differentiation_of_composite_function
+        label: Differentiation of Composite Function
+        weightage: 0.0667
+        aliases:
+        - differentiation-of-composite-function
+      - key: differentiation_of_implicit_function
+        label: Differentiation of Implicit Function
+        weightage: 0.1
+        aliases:
+        - differentiation-of-implicit-function
+      - key: differentiation_of_inverse_trigonometric_function
+        label: Differentiation of Inverse Trigonometric Function
+        weightage: 0.1333
+        aliases:
+        - differentiation-of-inverse-trigonometric-function
+      - key: differentiation_of_logarithmic_function
+        label: Differentiation of Logarithmic Function
+        weightage: 0.1667
+        aliases:
+        - differentiation-of-logarithmic-function
+      - key: differentiation_of_parametric_function
+        label: Differentiation of Parametric Function
+        weightage: 0.0333
+        aliases:
+        - differentiation-of-parametric-function
+      - key: methods_of_differentiation
+        label: Methods of Differentiation
+        weightage: 0.2
+        aliases:
+        - methods-of-differentiation
+      - key: successive_differentiation
+        label: Successive Differentiation
+        weightage: 0.3
+        aliases:
+        - successive-differentiation
+    - key: application_of_derivatives
+      label: Application of Derivatives
+      weightage: 0.1316
+      in_syllabus: true
+      aliases:
+      - application-of-derivatives
+      children:
+      - key: maxima_and_minima
+        label: Maxima and Minima
+        weightage: 0.4713
+        aliases:
+        - maxima-and-minima
+      - key: mean_value_theorem
+        label: Mean Value Theorem
+        weightage: 0.0345
+        aliases:
+        - mean-value-theorem
+      - key: monotonicity
+        label: Monotonicity
+        weightage: 0.2299
+        aliases:
+        - monotonicity
+      - key: rate_of_change_of_quantity
+        label: Rate of Change of Quantity
+        weightage: 0.069
+        aliases:
+        - rate-of-change-of-quantity
+      - key: tangent_and_normal
+        label: Tangent and Normal
+        weightage: 0.1954
+        aliases:
+        - tangent-and-normal
+    - key: indefinite_integrals
+      label: Indefinite Integrals
+      weightage: 0.0378
+      in_syllabus: true
+      aliases:
+      - indefinite-integrals
+      children:
+      - key: integration_by_partial_fraction
+        label: Integration by Partial Fraction
+        weightage: 0.04
+        aliases:
+        - integration-by-partial-fraction
+      - key: integration_by_parts
+        label: Integration by Parts
+        weightage: 0.16
+        aliases:
+        - integration-by-parts
+      - key: integration_by_substitution
+        label: Integration by Substitution
+        weightage: 0.64
+        aliases:
+        - integration-by-substitution
+      - key: standard_integral
+        label: Standard Integral
+        weightage: 0.16
+        aliases:
+        - standard-integral
+    - key: definite_integration
+      label: Definite Integration
+      weightage: 0.2315
+      in_syllabus: true
+      aliases:
+      - definite-integration
+      children:
+      - key: definite_integral_as_a_limit_of_sum
+        label: Definite Integral as a Limit of Sum
+        weightage: 0.0784
+        aliases:
+        - definite-integral-as-a-limit-of-sum
+      - key: newton_leibnitz_rule_of_differentiation
+        label: Newton Leibnitz Rule of Differentiation
+        weightage: 0.1242
+        aliases:
+        - newton-lebnitz-rule-of-differentiation
+      - key: properties_of_definite_integration
+        label: Properties of Definite Integration
+        weightage: 0.7974
+        aliases:
+        - properties-of-definite-integration
+    - key: area_under_the_curves
+      label: Area Under the Curves
+      weightage: 0.1014
+      in_syllabus: true
+      aliases:
+      - area-under-the-curves
+      children:
+      - key: area_bounded_between_the_curves
+        label: Area Bounded Between the Curves
+        weightage: 0.9552
+        aliases:
+        - area-bounded-between-the-curves
+      - key: area_under_simple_curves_in_standard_forms
+        label: Area Under Simple Curves in Standard Forms
+        weightage: 0.0448
+        aliases:
+        - area-under-simple-curves-in-standard-forms
+    - key: differential_equations
+      label: Differential Equations
+      weightage: 0.1785
+      in_syllabus: true
+      aliases:
+      - differential-equations
+      children:
+      - key: formation_of_differential_equations
+        label: Formation of Differential Equations
+        weightage: 0.1102
+        aliases:
+        - formation-of-differential-equations
+      - key: linear_differential_equations
+        label: Linear Differential Equations
+        weightage: 0.4153
+        aliases:
+        - linear-differential-equations
+      - key: order_and_degree
+        label: Order and Degree
+        weightage: 0.0085
+        aliases:
+        - order-and-degree
+      - key: solution_of_differential_equations_by_method_of_separation_variables_and_homogeneous
+        label: Solution of Differential Equations by Method of Separation Variables and Homogeneous
+        weightage: 0.4661
+        aliases:
+        - solution-of-differential-equations-by-method-of-separation-variables-and-homogeneous
+  - key: vectors_3d
+    label: Vectors and 3D Geometry
+    weightage: 0.1394
+    children:
+    - key: vector_algebra
+      label: Vector Algebra
+      weightage: 0.412
+      in_syllabus: true
+      aliases:
+      - vector-algebra
+      children:
+      - key: algebra_and_modulus_of_vectors
+        label: Algebra and Modulus of Vectors
+        weightage: 0.0887
+        aliases:
+        - algebra-and-modulus-of-vectors
+      - key: scalar_and_vector_triple_product
+        label: Scalar and Vector Triple Product
+        weightage: 0.25
+        aliases:
+        - scalar-and-vector-triple-product
+      - key: scalar_or_dot_product_of_two_vectors_and_its_applications
+        label: Scalar or Dot Product of Two Vectors and Its Applications
+        weightage: 0.1532
+        aliases:
+        - scalar-or-dot-product-of-two-vectors-and-its-applications
+      - key: vector_or_cross_product_of_two_vectors_and_its_applications
+        label: Vector or Cross Product of Two Vectors and Its Applications
+        weightage: 0.5081
+        aliases:
+        - vector-or-cross-product-of-two-vectors-and-its-applications
+    - key: 3d_geometry
+      label: 3D Geometry
+      weightage: 0.588
+      in_syllabus: true
+      aliases:
+      - 3d-geometry
+      children:
+      - key: direction_cosines_and_direction_ratios_of_a_line
+        label: Direction Cosines and Direction Ratios of a Line
+        weightage: 0.0508
+        aliases:
+        - direction-cosines-and-direction-ratios-of-a-line
+      - key: lines_and_plane
+        label: Lines and Plane
+        weightage: 0.3842
+        aliases:
+        - lines-and-plane
+      - key: lines_in_space
+        label: Lines in Space
+        weightage: 0.3333
+        aliases:
+        - lines-in-space
+      - key: plane_in_space
+        label: Plane in Space
+        weightage: 0.2316
+        aliases:
+        - plane-in-space
+  - key: statistics_probability
+    label: Statistics and Probability
+    weightage: 0.0732
+    children:
+    - key: statistics
+      label: Statistics
+      weightage: 0.3734
+      in_syllabus: true
+      aliases:
+      - statistics
+      children:
+      - key: calculation_of_mean_median_and_mode_of_grouped_and_ungrouped_data
+        label: Calculation of Mean, Median and Mode of Grouped and Ungrouped Data
+        weightage: 0.0847
+        aliases:
+        - calculation-of-mean,-median-and-mode-of-grouped-and-ungrouped-data
+      - key: calculation_of_standard_deviation_variance_and_mean_deviation_of_grouped_and_ungrouped_data
+        label: Calculation of Standard Deviation, Variance and Mean Deviation of Grouped and Ungrouped
+          Data
+        weightage: 0.9153
+        aliases:
+        - calculation-of-standard-deviation,-variance-and-mean-deviation-of-grouped-and-ungrouped-data
+    - key: probability
+      label: Probability
+      weightage: 0.6266
+      in_syllabus: true
+      aliases:
+      - probability
+      children:
+      - key: bayes_theorem
+        label: Bayes Theorem
+        weightage: 0.0808
+        aliases:
+        - bayes-theorem
+      - key: binomial_distribution
+        label: Binomial Distribution
+        weightage: 0.1717
+        aliases:
+        - binomial-distribution
+      - key: classical_definition_of_probability
+        label: Classical Definition of Probability
+        weightage: 0.2626
+        aliases:
+        - classical-defininition-of-probability
+      - key: conditional_probability_and_multiplication_theorem
+        label: Conditional Probability and Multiplication Theorem
+        weightage: 0.1313
+        aliases:
+        - conditional-probability-and-multiplication-theorem
+      - key: permutation_and_combination_based_problem
+        label: Permutation and Combination Based Problem
+        weightage: 0.1111
+        aliases:
+        - permutation-and-combination-based-problem
+      - key: probability_distribution_of_a_random_variable
+        label: Probability Distribution of a Random Variable
+        weightage: 0.1616
+        aliases:
+        - probability-distribution-of-a-random-variable
+      - key: total_probability_theorem
+        label: Total Probability Theorem
+        weightage: 0.0202
+        aliases:
+        - total-probability-theorem
+      - key: venn_diagram_and_set_theory
+        label: Venn Diagram and Set Theory
+        weightage: 0.0606
+        aliases:
+        - venn-diagram-and-set-theory

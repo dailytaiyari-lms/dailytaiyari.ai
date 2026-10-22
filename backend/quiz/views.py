@@ -29,6 +29,8 @@ from core.utils import calculate_xp_for_quiz
 from analytics.services import AnalyticsService
 from gamification.services import GamificationService
 from core.views import TenantAwareViewSet, TenantAwareReadOnlyViewSet
+from intelligence import api as intelligence_api
+from intelligence import hooks as intelligence_hooks
 
 
 class QuizSubmitThrottle(UserRateThrottle):
@@ -532,9 +534,13 @@ class QuizViewSet(TenantAwareReadOnlyViewSet):
         # Also update profile study time
         student.total_study_time_minutes += study_minutes
         student.save(update_fields=['total_study_time_minutes'])
-        
+
         # Update topic mastery
         AnalyticsService.update_topic_mastery_from_attempt(attempt)
+
+        # Record learning events for the intelligence layer (fail-safe)
+        intelligence_api.record_attempt_events(attempt)
+        intelligence_hooks.on_attempt_graded(attempt, course=quiz.course)
         
         # Build badge context for accurate badge awarding
         badge_context = {
@@ -919,7 +925,11 @@ class MockTestViewSet(TenantAwareReadOnlyViewSet):
         
         # Update topic mastery and subject performance
         AnalyticsService.update_mock_test_analytics(attempt)
-        
+
+        # Record learning events for the intelligence layer (fail-safe)
+        intelligence_api.record_attempt_events(attempt)
+        intelligence_hooks.on_attempt_graded(attempt, course=mock_test.course)
+
         # Build badge context for accurate badge awarding
         badge_context = {
             'perfect_quiz': attempt.percentage == 100,
@@ -1162,27 +1172,29 @@ class MockTestViewSet(TenantAwareReadOnlyViewSet):
         attempt.time_taken_seconds = min(elapsed, cap) if cap else elapsed
         attempt.save()
 
-        awarded_xp = 0
-        if not pending_manual:
-            already = MockTestAttempt.objects.filter(
-                student=student, mock_test=mock_test,
-                status__in=['completed', 'timed_out'],
-            ).exclude(id=attempt.id).exists()
-            if not already:
-                awarded_xp = calculate_xp_for_quiz(
-                    attempt.percentage, attempt.total_questions, is_daily_challenge=False
-                ) * 2
-                attempt.xp_earned = awarded_xp
-                attempt.save(update_fields=['xp_earned'])
-                GamificationService.award_xp(
-                    student, awarded_xp, 'mock_complete',
-                    f'Completed mock test: {mock_test.title}', str(attempt.id),
-                )
+        from .mock_grading import award_completion_xp
+        awarded_xp = award_completion_xp(attempt, at_submit=True) if not pending_manual else 0
 
         mock_test.total_attempts += 1
         if attempt.marks_obtained > mock_test.highest_score:
             mock_test.highest_score = attempt.marks_obtained
         mock_test.save(update_fields=['total_attempts', 'highest_score'])
+
+        # One explicit analytics update per finalization (signals were removed
+        # because they fired on every save of a completed attempt). Also covers
+        # timed-out attempts, which the old signal skipped.
+        AnalyticsService.update_mock_test_analytics(attempt)
+
+        # Record learning events for the intelligence layer (fail-safe)
+        intelligence_api.record_attempt_events(attempt)
+        intelligence_hooks.on_attempt_graded(
+            attempt, course=mock_test.course or mock_test.courses.first(),
+        )
+
+        # AI grading of pending subjective answers (opt-in per tenant; no-op
+        # otherwise). Runs async — the attempt stays pending_manual meanwhile.
+        if pending_manual:
+            intelligence_hooks.maybe_enqueue_ai_grading(attempt)
 
         results_visible = (
             mock_test.result_visibility == 'immediate' and not pending_manual
@@ -1405,6 +1417,67 @@ class MockTestViewSet(TenantAwareReadOnlyViewSet):
         except EngineError as exc:
             return Response({'error': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         return Response(result)
+
+    @action(detail=False, methods=['post'],
+            url_path='attempts/(?P<attempt_id>[^/.]+)/request-regrade')
+    def request_regrade(self, request, attempt_id=None):
+        """Dispute an AI-graded subjective answer: return it to the human queue.
+
+        Once per answer. The AI's suggestion and feedback are kept for the
+        grader's context; the attempt drops back to pending_manual so the
+        existing grading flow picks it up.
+        """
+        import uuid as uuid_module
+
+        from django.db import transaction
+
+        attempt = MockTestAttempt.objects.filter(
+            id=attempt_id, student=request.user.profile,
+        ).first()
+        if not attempt:
+            return Response({'error': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            answer_id = uuid_module.UUID(str(request.data.get('answer_id')))
+        except (TypeError, ValueError):
+            return Response({'error': 'A valid answer_id is required.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        answer = attempt.item_answers.filter(
+            id=answer_id, item__item_type='subjective',
+        ).first()
+        if not answer:
+            return Response({'error': 'Answer not found.'}, status=status.HTTP_404_NOT_FOUND)
+        # ai_graded implies the answer is not already pending; disputed answers
+        # have ai_graded=False, so this also enforces once-per-answer.
+        if not answer.ai_graded:
+            return Response(
+                {'error': 'Only AI-graded answers can be sent for re-checking.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Withdraw the disputed marks until a human decides; the AI suggestion
+        # stays on ai_suggested_marks/ai_feedback for the grader's context.
+        # Note the deliberate tradeoff: the attempt returns to pending_manual
+        # (that is what the admin grading queue lists), which also withholds
+        # the result view until the re-check — same semantics as any other
+        # pending-manual attempt.
+        from .mock_grading import recompute_attempt
+
+        with transaction.atomic():
+            answer.needs_manual_grading = True
+            answer.ai_graded = False
+            answer.marks_obtained = 0
+            answer.is_correct = False
+            answer.save(update_fields=[
+                'needs_manual_grading', 'ai_graded', 'marks_obtained', 'is_correct',
+                'updated_at',
+            ])
+            recompute_attempt(attempt)
+            attempt.grading_status = 'pending_manual'
+            attempt.save(update_fields=[
+                'marks_obtained', 'attempted_questions', 'correct_answers',
+                'wrong_answers', 'percentage', 'grading_status', 'updated_at',
+            ])
+        return Response({'status': 'requested'})
 
     @action(detail=False, methods=['get'], url_path='attempts/(?P<attempt_id>[^/.]+)/review')
     def rich_review(self, request, attempt_id=None):

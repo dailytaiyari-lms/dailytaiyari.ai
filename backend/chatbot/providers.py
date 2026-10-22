@@ -355,20 +355,46 @@ def _swap_token_param(exc, rp: ResolvedProvider):
     return other
 
 
+# (endpoint, model) pairs that answered an explicit temperature with a 400. The
+# rejection is a property of the deployment, so it is remembered for the rest of
+# the process instead of costing a failed round trip on every request.
+_NO_TEMPERATURE: set[tuple[str, str]] = set()
+
+
+def _temperature_key(rp: ResolvedProvider) -> tuple[str, str]:
+    return ((rp.base_url or '').rstrip('/').lower(), (rp.model or '').strip().lower())
+
+
+def _rejects_temperature(exc) -> bool:
+    """True if ``exc`` is a 400 saying the model won't take an explicit temperature."""
+    return (getattr(exc, 'status_code', None) == 400
+            and 'temperature' in str(getattr(exc, 'message', '') or exc).lower())
+
+
 def _openai_create(client, rp: ResolvedProvider, kwargs):
-    """``chat.completions.create`` that retries once with the other token param."""
+    """``chat.completions.create`` that adapts to what the model accepts: retries
+    with the other token param, and without ``temperature`` (reasoning models
+    take only their default). Each adaptation is applied at most once."""
     attempt = dict(kwargs)
     attempt[_token_param_for(rp)] = rp.max_tokens
-    try:
-        return client.chat.completions.create(**attempt)
-    except Exception as exc:  # noqa: BLE001 - inspected, then re-raised
-        corrected = _swap_token_param(exc, rp)
-        if not corrected:
-            raise
-        attempt.pop('max_tokens', None)
-        attempt.pop('max_completion_tokens', None)
-        attempt[corrected] = rp.max_tokens
-        return client.chat.completions.create(**attempt)
+    if _temperature_key(rp) in _NO_TEMPERATURE:
+        attempt.pop('temperature', None)
+    swapped_tokens = False
+    while True:
+        try:
+            return client.chat.completions.create(**attempt)
+        except Exception as exc:  # noqa: BLE001 - inspected, then re-raised
+            if 'temperature' in attempt and _rejects_temperature(exc):
+                attempt.pop('temperature')
+                _NO_TEMPERATURE.add(_temperature_key(rp))
+                continue
+            corrected = None if swapped_tokens else _swap_token_param(exc, rp)
+            if not corrected:
+                raise
+            swapped_tokens = True
+            attempt.pop('max_tokens', None)
+            attempt.pop('max_completion_tokens', None)
+            attempt[corrected] = rp.max_tokens
 
 
 def _openai_complete(rp: ResolvedProvider, messages):

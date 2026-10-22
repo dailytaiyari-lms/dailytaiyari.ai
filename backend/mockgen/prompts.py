@@ -20,14 +20,33 @@ OUTPUT RULES (strict):
 """.strip()
 
 
-ITEM_SCHEMA = """
-Every question is one object in "items". The keys depend on "item_type":
-
+_MCQ_SCHEMA = """
   MCQ (exactly one correct option):
   {"key": "q1", "item_type": "mcq", "section": 0, "question_text": "...",
    "options": [{"text": "...", "is_correct": true}, {"text": "...", "is_correct": false}],
    "explanation": "Why the right answer is right AND why the others are wrong.",
    "marks": 4, "negative_marks": 1, "difficulty": "easy|medium|hard", "concept": "short label"}
+""".strip('\n')
+
+# Learning-layer variant (opted-in tenants only): concept list + cognitive type,
+# which apply-time tagging stores on each item.
+_MCQ_SCHEMA_TAGGED = """
+  MCQ (exactly one correct option):
+  {"key": "q1", "item_type": "mcq", "section": 0, "question_text": "...",
+   "options": [{"text": "...", "is_correct": true}, {"text": "...", "is_correct": false}],
+   "explanation": "Why the right answer is right AND why the others are wrong.",
+   "marks": 4, "negative_marks": 1, "difficulty": "easy|medium|hard",
+   "concepts": ["primary concept", "secondary concept (only if genuinely tested)"],
+   "cognitive_type": "recall|application|multi_concept"}
+
+  "concepts" lists 1-4 short concept names the question actually tests, most
+  central first — reuse the syllabus topic names where they fit. Use
+  "cognitive_type": "recall" for remembering a fact/definition, "application"
+  for applying one concept, and "multi_concept" when solving genuinely requires
+  combining two or more concepts (then list each in "concepts").
+""".strip('\n')
+
+_OTHER_TYPES_SCHEMA = """
 
   MCQ multi (two or more correct options):
   {"key": "q2", "item_type": "mcq_multi", ... same keys, several options with "is_correct": true}
@@ -52,7 +71,19 @@ Every question is one object in "items". The keys depend on "item_type":
    ],
    "time_limit_ms": 3000, "memory_limit_mb": 256,
    "explanation": "The intended approach and its complexity.", "marks": 20}
-""".strip()
+""".strip('\n')
+
+
+def _item_schema(mcq_schema):
+    return (
+        'Every question is one object in "items". The keys depend on "item_type":\n\n'
+        + mcq_schema + '\n\n' + _OTHER_TYPES_SCHEMA
+    ).strip()
+
+
+# main's schema text, used for every tenant without the learning layer.
+ITEM_SCHEMA = _item_schema(_MCQ_SCHEMA)
+ITEM_SCHEMA_TAGGED = _item_schema(_MCQ_SCHEMA_TAGGED)
 
 
 QUALITY_RULES = """
@@ -70,7 +101,8 @@ QUALITY RULES:
 """.strip()
 
 
-MOCK_SYSTEM = f"""
+def _mock_system(item_schema):
+    return f"""
 You are a senior assessment designer for an Indian online learning platform. You
 write exam papers that are fair, unambiguous and genuinely discriminating — the
 kind a serious institute would put in front of paying students.
@@ -91,13 +123,14 @@ SCHEMA:
   "items": [ ... ]
 }}
 
-{ITEM_SCHEMA}
+{item_schema}
 
 {QUALITY_RULES}
 """.strip()
 
 
-MODIFY_SYSTEM = f"""
+def _modify_system(item_schema):
+    return f"""
 You are a senior assessment designer revising an existing exam paper for an
 Indian online learning platform. You make exactly the change that was asked for
 and nothing else: untouched questions come back byte-identical, with the same
@@ -108,7 +141,7 @@ and nothing else: untouched questions come back byte-identical, with the same
 SCHEMA: identical to the paper you are given — a "test" object, a "sections"
 list and an "items" list.
 
-{ITEM_SCHEMA}
+{item_schema}
 
 {QUALITY_RULES}
 
@@ -120,6 +153,24 @@ REVISION RULES:
 - Never change the marking scheme, duration or section structure unless the
   instruction asks you to.
 """.strip()
+
+
+# main's prompts — every tenant without the learning layer gets these, byte for byte.
+MOCK_SYSTEM = _mock_system(ITEM_SCHEMA)
+MODIFY_SYSTEM = _modify_system(ITEM_SCHEMA)
+# Opted-in tenants: the same prompts asking for concepts[] + cognitive_type.
+MOCK_SYSTEM_TAGGED = _mock_system(ITEM_SCHEMA_TAGGED)
+MODIFY_SYSTEM_TAGGED = _modify_system(ITEM_SCHEMA_TAGGED)
+
+
+def mock_system(*, tagged):
+    """System prompt for a new paper; ``tagged`` = the tenant has the learning layer."""
+    return MOCK_SYSTEM_TAGGED if tagged else MOCK_SYSTEM
+
+
+def modify_system(*, tagged):
+    """System prompt for "Modify with AI" / a modify-job refine."""
+    return MODIFY_SYSTEM_TAGGED if tagged else MODIFY_SYSTEM
 
 
 def _blueprint_lines(options):

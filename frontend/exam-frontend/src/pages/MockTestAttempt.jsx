@@ -16,6 +16,7 @@ import {
   ChevronRight
 } from 'lucide-react'
 import { quizService } from '../services/quizService'
+import useResponseTimeline from '../hooks/useResponseTimeline'
 import { useAuthStore } from '../context/authStore'
 import Loading from '../components/common/Loading'
 import toast from 'react-hot-toast'
@@ -42,6 +43,14 @@ const MockTestAttempt = () => {
   const { data: test, isLoading } = useQuery({
     queryKey: ['mockTestDetail', testId],
     queryFn: () => quizService.getMockTestDetails(testId),
+  })
+
+  const currentQ = test?.questions?.[currentQuestion]
+  const timeline = useResponseTimeline({
+    attemptKind: 'mock',
+    parentId: testId,
+    currentKey: currentQ ? `bank:${currentQ.id}` : null,
+    active: Boolean(test) && !result,
   })
 
   useEffect(() => {
@@ -74,6 +83,7 @@ const MockTestAttempt = () => {
   }
 
   const handleAnswerSelect = (questionId, optionIndex) => {
+    timeline.recordAnswer(`bank:${questionId}`, { sel: [Number(optionIndex)] })
     setAnswers((prev) => ({
       ...prev,
       [questionId]: {
@@ -89,8 +99,21 @@ const MockTestAttempt = () => {
     setIsSubmitting(true)
 
     try {
+      // Learning-layer capture (opt-in per tenant): send the final timeline
+      // first and report real active time per answer. Off, the payload is
+      // exactly the pre-capture one (0 per answer).
+      if (timeline.capturing) {
+        // Under 10 s left, never let the timeline flush delay the submit.
+        const finalFlush = timeline.flush({ final: true })
+        if (timeLeft >= 10) await finalFlush
+      }
       const response = await quizService.submitMockTest(testId, {
-        answers: Object.values(answers),
+        answers: timeline.capturing
+          ? Object.values(answers).map((a) => ({
+            ...a,
+            time_taken_seconds: Math.round(timeline.activeSeconds(`bank:${a.question_id}`)),
+          }))
+          : Object.values(answers),
         time_taken_seconds: test.duration_minutes * 60 - timeLeft,
       })
       setResult(response)

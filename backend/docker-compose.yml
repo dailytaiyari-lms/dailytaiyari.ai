@@ -152,6 +152,49 @@ services:
       redis:
         condition: service_healthy
 
+  # Dedicated worker for the `intelligence` queue: learning-layer statistics
+  # (per-attempt diagnosis + learner-state update, practice recommendations,
+  # the nightly item-stats and learner-state jobs). Only tenants that enable a
+  # learning-layer feature produce this work. Its own worker keeps a cohort's
+  # burst of submits, or a 30-minute nightly job, from head-of-line blocking
+  # coding grading and notifications on the default queue. Concurrency 1: the
+  # work is cheap and DB-bound, and every task is idempotent.
+  celery-intelworker:
+    build: .
+    restart: unless-stopped
+    entrypoint: []
+    command: >
+      celery -A dailytaiyari worker --loglevel=info
+      --queues=intelligence
+      --concurrency=${CELERY_INTEL_CONCURRENCY:-1}
+    volumes:
+      - .:/app
+      - media_volume:/app/media
+    environment: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Celery beat — the scheduler for periodic intelligence jobs (nightly item
+  # stats + learner-state refresh, weekly tagging sweep). Runs no task itself;
+  # it only enqueues onto the existing workers. Schedules live in settings.py
+  # (CELERY_BEAT_SCHEDULE), so the schedule file in /tmp is disposable.
+  celery-beat:
+    build: .
+    restart: unless-stopped
+    entrypoint: []
+    command: celery -A dailytaiyari beat --loglevel=info --schedule=/tmp/celerybeat-schedule
+    volumes:
+      - .:/app
+    environment: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   # Dedicated worker for the `media` queue: faststart remuxing of uploaded
   # lecture videos. A two hour file is I/O heavy and can run for many minutes,
   # so it gets its own worker — a big upload must never head-of-line block

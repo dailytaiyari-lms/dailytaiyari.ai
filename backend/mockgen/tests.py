@@ -228,6 +228,55 @@ class ApplyTests(_MockStudioTestCase):
         mcq = mock_test.items.get(item_type='mcq')
         self.assertEqual(sum(1 for o in mcq.options if o['is_correct']), 1)
 
+    def _opt_in(self):
+        Tenant.objects.filter(id=self.tenant.id).update(features={'practice': True})
+
+    def test_apply_does_not_tag_for_a_tenant_without_the_learning_layer(self):
+        from intelligence.models import Concept, ConceptLink
+
+        job_id = self.generate(course=str(self.course.id)).data['id']
+        response = self.post(self.admin, f'/jobs/{job_id}/apply/', {'confirm': True})
+        self.assertEqual(response.status_code, 200)
+        for item in MockTest.objects.get(id=response.data['summary']['mock_test']).items.all():
+            self.assertEqual(item.tagging_status, '')
+            self.assertEqual(item.content_hash, '')
+            self.assertEqual(item.cognitive_type, '')
+            self.assertIsNone(item.tagged_at)
+            self.assertIsNone(item.subject_id)
+            self.assertIsNone(item.topic_id)
+        self.assertFalse(Concept.objects.exists())
+        self.assertFalse(ConceptLink.objects.exists())
+
+    def test_apply_tags_items_for_an_opted_in_tenant(self):
+        self._opt_in()
+        job_id = self.generate(course=str(self.course.id)).data['id']
+        response = self.post(self.admin, f'/jobs/{job_id}/apply/', {'confirm': True})
+        self.assertEqual(response.status_code, 200)
+        items = MockTest.objects.get(id=response.data['summary']['mock_test']).items.all()
+        self.assertTrue(items)
+        for item in items:
+            self.assertEqual(item.tagging_status, 'tagged')
+            self.assertEqual(item.subject, self.subject)
+
+    def test_a_database_error_while_tagging_does_not_roll_back_the_apply(self):
+        from django.db import IntegrityError, transaction
+
+        def broken(*args, **kwargs):
+            # On Postgres a real DB error aborts the open transaction; mark it
+            # so here too, then raise what the race would raise.
+            transaction.set_rollback(True)
+            raise IntegrityError('duplicate concept')
+
+        # Opted in, and a single-subject course anchors tagging, so the tagger runs.
+        self._opt_in()
+        job_id = self.generate(course=str(self.course.id)).data['id']
+        with patch('mockgen.apply.set_item_tags', side_effect=broken) as tag:
+            response = self.post(self.admin, f'/jobs/{job_id}/apply/', {'confirm': True})
+        tag.assert_called()
+        self.assertEqual(response.status_code, 200, response.data)
+        mock_test = MockTest.objects.get(id=response.data['summary']['mock_test'])
+        self.assertEqual(mock_test.items.count(), 4)
+
     def test_apply_writes_only_the_selected_questions(self):
         job = self.generate().data
         keys = [item['key'] for item in job['draft']['items'][:2]]
@@ -675,3 +724,122 @@ class AsyncGenerationTests(_MockStudioTestCase):
         self.assertIsNone(run_generation_job(str(job.id)))
         job.refresh_from_db()
         self.assertEqual(job.status, MockTestGenerationJob.STATUS_APPLIED)
+
+
+# sha256 of main's MOCK_SYSTEM / MODIFY_SYSTEM (6ef5a04, mockgen/prompts.py).
+# A tenant without the learning layer must get exactly these prompts.
+MAIN_MOCK_SYSTEM_SHA256 = '501b63541d84dcb154a3854c8e22379a0efce05135495756268e0829ae30f413'
+MAIN_MODIFY_SYSTEM_SHA256 = 'aee1df700d206e3f1989cb3f28b4f121b3cad175a7395e485bb35b1e0750b239'
+# The keys main's normalize_item produced for an MCQ item.
+MAIN_MCQ_KEYS = {
+    'key', 'item_type', 'section', 'question_text', 'explanation', 'marks',
+    'negative_marks', 'difficulty', 'concept', 'options', 'order', 'include',
+}
+NEW_KEYS = {'concepts', 'cognitive_type'}
+
+
+def _sha256(text):
+    import hashlib
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+class PerTenantPromptTests(_MockStudioTestCase):
+    """The tagging-aware prompt and draft shape are for opted-in tenants only."""
+
+    def _opt_in(self):
+        Tenant.objects.filter(id=self.tenant.id).update(features={'response_diagnosis': True})
+
+    def _system_prompt_of(self, llm):
+        return llm.call_args.args[1][0]['content']
+
+    def test_prompt_builders_return_mains_text_when_not_tagged(self):
+        from mockgen import prompts
+
+        self.assertEqual(_sha256(prompts.mock_system(tagged=False)), MAIN_MOCK_SYSTEM_SHA256)
+        self.assertEqual(_sha256(prompts.modify_system(tagged=False)), MAIN_MODIFY_SYSTEM_SHA256)
+        self.assertEqual(prompts.MOCK_SYSTEM, prompts.mock_system(tagged=False))
+        self.assertEqual(prompts.MODIFY_SYSTEM, prompts.modify_system(tagged=False))
+        for text in (prompts.mock_system(tagged=True), prompts.modify_system(tagged=True)):
+            self.assertIn('"concepts"', text)
+            self.assertIn('cognitive_type', text)
+
+    def test_non_enabled_tenant_generates_with_mains_prompt_and_draft_shape(self):
+        with self.stub_provider(), self.stub_llm(PAPER_RESPONSE) as llm:
+            job = self.post(self.admin, '/jobs/', {
+                'kind': 'create', 'prompt': 'A 45-minute kinematics unit test',
+                'options': {'blueprint': BLUEPRINT, 'duration_minutes': 45},
+            }).data
+        self.assertEqual(_sha256(self._system_prompt_of(llm)), MAIN_MOCK_SYSTEM_SHA256)
+        stored = MockTestGenerationJob.objects.get(id=job['id']).draft
+        for item in stored['items']:
+            self.assertFalse(NEW_KEYS & set(item), item)
+        mcq = next(item for item in stored['items'] if item['item_type'] == 'mcq')
+        self.assertEqual(set(mcq), MAIN_MCQ_KEYS)
+
+    def test_enabled_tenant_generates_with_the_tagging_prompt(self):
+        self._opt_in()
+        with self.stub_provider(), self.stub_llm(PAPER_RESPONSE) as llm:
+            job = self.post(self.admin, '/jobs/', {
+                'kind': 'create', 'prompt': 'A 45-minute kinematics unit test',
+                'options': {'blueprint': BLUEPRINT, 'duration_minutes': 45},
+            }).data
+        system = self._system_prompt_of(llm)
+        self.assertNotEqual(_sha256(system), MAIN_MOCK_SYSTEM_SHA256)
+        self.assertIn('cognitive_type', system)
+        stored = MockTestGenerationJob.objects.get(id=job['id']).draft
+        for item in stored['items']:
+            self.assertTrue(NEW_KEYS <= set(item), item)
+
+    def test_modify_round_trip_uses_mains_values_for_a_non_enabled_tenant(self):
+        from mockgen.apply import draft_from_mock_test
+
+        mock_test = self.make_mock_test()
+        MockTestItem.objects.create(
+            tenant=self.tenant, mock_test=mock_test, item_type='mcq', order=0,
+            question_text='What is 2 + 2?', marks=2, difficulty='hard',
+            cognitive_type='recall',
+            options=[{'text': '3', 'is_correct': False}, {'text': '4', 'is_correct': True}],
+        )
+        item = draft_from_mock_test(mock_test)['items'][0]
+        self.assertEqual(item['difficulty'], 'medium')
+        self.assertEqual(item['concept'], '')
+        self.assertFalse(NEW_KEYS & set(item))
+
+        self._opt_in()
+        mock_test.tenant.refresh_from_db()
+        item = draft_from_mock_test(mock_test)['items'][0]
+        self.assertEqual(item['difficulty'], 'hard')
+        self.assertEqual(item['cognitive_type'], 'recall')
+        self.assertEqual(item['concepts'], [])
+
+    def test_modify_sends_mains_prompt_for_a_non_enabled_tenant(self):
+        mock_test = self.make_mock_test()
+        row = MockTestItem.objects.create(
+            tenant=self.tenant, mock_test=mock_test, item_type='mcq', order=0,
+            question_text='What is 2 + 2?', marks=2,
+            options=[{'text': '3', 'is_correct': False}, {'text': '4', 'is_correct': True}],
+        )
+        response = json.dumps({'test': {'title': 'Hand-typed Paper'}, 'items': [{
+            'key': str(row.id), 'item_type': 'mcq', 'question_text': 'What is 2 + 3?',
+            'options': [{'text': '5', 'is_correct': True}, {'text': '4', 'is_correct': False}],
+            'concepts': ['Addition'], 'cognitive_type': 'recall',
+        }]})
+        with self.stub_provider(), self.stub_llm(response) as llm:
+            job = self.post(self.admin, '/jobs/', {
+                'kind': 'modify', 'mock_test': str(mock_test.id), 'prompt': 'Change it to 2 + 3',
+            }).data
+        self.assertEqual(_sha256(self._system_prompt_of(llm)), MAIN_MODIFY_SYSTEM_SHA256)
+        item = MockTestGenerationJob.objects.get(id=job['id']).draft['items'][0]
+        self.assertFalse(NEW_KEYS & set(item))
+        # Both shapes still parse: a list-form reply fills the single concept.
+        self.assertEqual(item['concept'], 'Addition')
+
+    def test_admin_draft_edit_keeps_the_tenants_shape(self):
+        job = self.generate().data
+        draft = MockTestGenerationJob.objects.get(id=job['id']).draft
+        draft['items'][0]['concepts'] = ['Velocity']
+        response = self.patch(self.admin, f'/jobs/{job["id"]}/', {'draft': draft})
+        self.assertEqual(response.status_code, 200)
+        stored = MockTestGenerationJob.objects.get(id=job['id']).draft
+        for item in stored['items']:
+            self.assertFalse(NEW_KEYS & set(item), item)

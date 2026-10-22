@@ -6,6 +6,7 @@ import { quizService } from '../services/quizService'
 import { courseService } from '../services/courseService'
 import Loading from '../components/common/Loading'
 import toast from 'react-hot-toast'
+import WhatHappened, { useSelfReports } from '../components/review/WhatHappened'
 import {
   XCircle,
   HelpCircle,
@@ -64,6 +65,8 @@ const QuizReview = () => {
     queryKey: ['attemptReview', attemptId],
     queryFn: () => quizService.getAttemptReview(attemptId),
   })
+
+  const selfReports = useSelfReports('quiz', attemptId)
 
   const { data: leaderboard } = useQuery({
     queryKey: ['quizLeaderboard', attempt?.quiz],
@@ -326,6 +329,9 @@ const QuizReview = () => {
             const questionStatus = item.status
             const isCorrect = questionStatus === 'correct'
             const isSkipped = questionStatus === 'skipped'
+            const reviewKey = `bank:${question?.id}`
+            const showWhatHappened = selfReports.enabled && selfReports.ready && !isCorrect && question?.id &&
+              !selfReports.notSeen.has(reviewKey)
             const selectedOption = userAnswer?.selected_option
 
             let borderClass = ''
@@ -479,6 +485,15 @@ const QuizReview = () => {
                       </span>
                     )}
                   </div>
+                )}
+                {showWhatHappened && (
+                  <WhatHappened
+                    attemptKind="quiz"
+                    attemptId={attemptId}
+                    itemKind="bank"
+                    itemId={question.id}
+                    initial={selfReports.reports[reviewKey]}
+                  />
                 )}
               </motion.div>
             )

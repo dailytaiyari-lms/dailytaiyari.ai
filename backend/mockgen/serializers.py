@@ -208,6 +208,8 @@ class DraftUpdateSerializer(serializers.Serializer):
     draft = serializers.DictField()
 
     def update(self, instance, validated_data):
+        from intelligence.api import intelligence_enabled
+
         instance.draft = normalize_mock(
             validated_data['draft'],
             existing_test=(
@@ -215,6 +217,8 @@ class DraftUpdateSerializer(serializers.Serializer):
                 if instance.kind == MockTestGenerationJob.KIND_MODIFY else None
             ),
             options=instance.options,
+            # Keep the tenant's draft shape (main's unless it has the learning layer).
+            tagged=intelligence_enabled(instance.tenant),
         )
         instance.record_revision('edited', 'Draft edited by admin')
         instance.save(update_fields=['draft', 'revisions', 'updated_at'])

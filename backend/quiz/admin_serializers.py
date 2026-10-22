@@ -154,6 +154,10 @@ class AdminQuestionSerializer(serializers.ModelSerializer):
         if options is not None:
             self._sync_options(instance, options)
         self._link_quiz(instance, quiz)
+
+        # A content edit invalidates the item's concept/difficulty tags.
+        from intelligence import api as intelligence_api
+        intelligence_api.mark_item_stale_if_changed(instance)
         return instance
 
 
@@ -259,6 +263,13 @@ class AdminMockTestItemSerializer(serializers.ModelSerializer):
         if not isinstance(value, list):
             raise serializers.ValidationError('Test cases must be a list.')
         return value
+
+    def update(self, instance, validated_data):
+        instance = super().update(instance, validated_data)
+        # A content edit invalidates the item's concept/difficulty tags.
+        from intelligence import api as intelligence_api
+        intelligence_api.mark_item_stale_if_changed(instance)
+        return instance
 
 
 class AdminMockTestQuestionSerializer(serializers.ModelSerializer):

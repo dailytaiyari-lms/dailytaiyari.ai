@@ -170,6 +170,9 @@ def generate_paper(job):
     )
     meter = _Meter()
     syllabus = syllabus_text_for(job)
+    # Learning-layer tenants get the tagging-aware prompt and draft shape;
+    # every other tenant gets exactly main's.
+    tagged = _tagged(tenant)
 
     test_meta = None
     sections = schema.normalize_sections(options.get('sections'))
@@ -186,8 +189,9 @@ def generate_paper(job):
             already_written=stems,
         )
         try:
-            raw = _call(resolved, prompts.MOCK_SYSTEM, user, meter, tenant, feature=FEATURE)
-            partial = schema.normalize_mock(extract_json(raw), options=options)
+            raw = _call(resolved, prompts.mock_system(tagged=tagged), user, meter, tenant,
+                        feature=FEATURE)
+            partial = schema.normalize_mock(extract_json(raw), options=options, tagged=tagged)
         except GenerationError as exc:
             # One bad batch must not throw away the batches that succeeded.
             logger.warning('mockgen: batch failed: %s', exc)
@@ -210,7 +214,7 @@ def generate_paper(job):
 
     draft = schema.normalize_mock(
         {'test': test_meta or {}, 'sections': sections, 'items': items},
-        options=options,
+        options=options, tagged=tagged,
     )
     if failures:
         draft['partial_failures'] = failures
@@ -256,9 +260,11 @@ def generate_modification(job):
         targets=targets,
         add_plan=options.get('add_blueprint') or [],
     )
-    raw = _call(resolved, prompts.MODIFY_SYSTEM, user, meter, tenant, feature=FEATURE)
+    tagged = _tagged(tenant)
+    raw = _call(resolved, prompts.modify_system(tagged=tagged), user, meter, tenant,
+                feature=FEATURE)
     draft = schema.normalize_mock(
-        extract_json(raw), existing_test=mock_test, options=job.options
+        extract_json(raw), existing_test=mock_test, options=job.options, tagged=tagged,
     )
     if not draft.get('items'):
         raise GenerationError(
@@ -278,9 +284,10 @@ def refine(job, instruction):
     meter = _Meter()
 
     current = json.dumps(_for_prompt(job.draft or {}), ensure_ascii=False)[:60000]
+    tagged = _tagged(tenant)
     system = (
-        prompts.MODIFY_SYSTEM if job.kind == MockTestGenerationJob.KIND_MODIFY
-        else prompts.MOCK_SYSTEM
+        prompts.modify_system(tagged=tagged) if job.kind == MockTestGenerationJob.KIND_MODIFY
+        else prompts.mock_system(tagged=tagged)
     )
     user = prompts.refine_user_prompt(instruction=instruction, current_json=current)
     raw = _call(resolved, system, user, meter, tenant, feature=FEATURE)
@@ -288,11 +295,18 @@ def refine(job, instruction):
     draft = schema.normalize_mock(
         extract_json(raw),
         existing_test=job.mock_test if job.kind == MockTestGenerationJob.KIND_MODIFY else None,
-        options=job.options,
+        options=job.options, tagged=tagged,
     )
     if not draft.get('items'):
         raise GenerationError('The revised paper had no questions — the change was not applied.')
     return draft, meter, resolved
+
+
+def _tagged(tenant):
+    """Whether this tenant's papers use the learning-layer prompt and draft shape."""
+    from intelligence.api import intelligence_enabled
+
+    return intelligence_enabled(tenant)
 
 
 def _for_prompt(draft):

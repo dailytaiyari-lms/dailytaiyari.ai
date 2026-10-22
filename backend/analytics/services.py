@@ -43,7 +43,8 @@ class AnalyticsService:
         for topic_id, stats in topic_stats.items():
             mastery, created = TopicMastery.objects.get_or_create(
                 student=student,
-                topic_id=topic_id
+                topic_id=topic_id,
+                defaults={'tenant': student.user.tenant},
             )
             avg_time = stats['time'] // stats['total'] if stats['total'] > 0 else 0
             mastery.update_mastery(stats['correct'], stats['total'], avg_time)
@@ -76,7 +77,8 @@ class AnalyticsService:
             perf, created = SubjectPerformance.objects.get_or_create(
                 student=student,
                 subject_id=subject_id,
-                course=mock_attempt.mock_test.course
+                course=mock_attempt.mock_test.course,
+                defaults={'tenant': student.user.tenant},
             )
             perf.total_questions += stats['total']
             perf.correct_answers += stats['correct']
@@ -94,7 +96,10 @@ class AnalyticsService:
         """
         today = timezone.now().date()
         with transaction.atomic():
-            DailyActivity.objects.get_or_create(student=student, date=today)
+            DailyActivity.objects.get_or_create(
+                student=student, date=today,
+                defaults={'tenant': student.user.tenant},
+            )
             activity = DailyActivity.objects.select_for_update().get(
                 student=student, date=today
             )
@@ -125,7 +130,8 @@ class AnalyticsService:
         """
         streak, created = Streak.objects.get_or_create(
             student=student,
-            course=course
+            course=course,
+            defaults={'tenant': student.user.tenant},
         )
         streak.update_streak(activity_date)
         return streak
@@ -303,6 +309,7 @@ class AnalyticsService:
         # Create report
         report = WeeklyReport.objects.create(
             student=student,
+            tenant=student.user.tenant,
             week_start=week_start,
             week_end=week_end,
             total_study_minutes=total_study_minutes,

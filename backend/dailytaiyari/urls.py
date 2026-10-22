@@ -54,6 +54,8 @@ urlpatterns = [
     path('api/v1/marketing/', include('marketing.urls')),
     path('api/v1/notifications/', include('notifications.urls')),
     path('api/v1/notebooks/', include('notebooks.urls')),
+    path('api/v1/intelligence/', include('intelligence.urls')),
+    path('api/v1/tenant-admin/intelligence/', include('intelligence.admin_urls')),
     path('api/v1/hackathons/', include('hackathons.urls')),
     
     # API Documentation

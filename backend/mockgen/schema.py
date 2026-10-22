@@ -157,8 +157,14 @@ def _apply_correct_index(options, raw):
     return False
 
 
-def normalize_item(raw, index=0, *, used_keys=None, section_count=1, negative_marking=True):
-    """One question of any supported type, or ``None`` when unsalvageable."""
+def normalize_item(raw, index=0, *, used_keys=None, section_count=1, negative_marking=True,
+                   tagged=False):
+    """One question of any supported type, or ``None`` when unsalvageable.
+
+    ``tagged`` (the tenant has the learning layer) adds ``concepts`` and
+    ``cognitive_type``. Without it the item has exactly main's keys. Either
+    reply shape parses: a single ``concept`` or a ``concepts`` list.
+    """
     if not isinstance(raw, dict):
         return None
 
@@ -171,6 +177,16 @@ def normalize_item(raw, index=0, *, used_keys=None, section_count=1, negative_ma
     marks = _number(raw.get('marks'), 1, 0, 1000)
     negative = _number(raw.get('negative_marks'), 0, 0, 1000) if negative_marking else 0
 
+    # Concepts: prefer the list form; fall back to the legacy single string.
+    concepts = []
+    raw_concepts = raw.get('concepts')
+    if not isinstance(raw_concepts, list):
+        raw_concepts = [raw.get('concept') or raw.get('topic')]
+    for entry in raw_concepts[:4]:
+        label = _text(entry, 200)
+        if label and label.casefold() not in {c.casefold() for c in concepts}:
+            concepts.append(label)
+
     item = {
         'key': _key(raw.get('key'), index, used_keys),
         'item_type': item_type,
@@ -180,11 +196,21 @@ def normalize_item(raw, index=0, *, used_keys=None, section_count=1, negative_ma
         'marks': marks,
         'negative_marks': negative,
         'difficulty': _choice(raw.get('difficulty'), {'easy', 'medium', 'hard'}, 'medium'),
-        'concept': _text(raw.get('concept') or raw.get('topic'), 200),
+        'concept': (
+            concepts[0] if concepts else ''
+        ) if tagged else (
+            _text(raw.get('concept') or raw.get('topic'), 200) or (concepts[0] if concepts else '')
+        ),
+        'concepts': concepts,
+        'cognitive_type': _choice(
+            raw.get('cognitive_type'), {'recall', 'application', 'multi_concept'}, 'application',
+        ),
         'options': [],
         'order': index,
         'include': True,
     }
+    if not tagged:
+        del item['concepts'], item['cognitive_type']
 
     if item_type in ('mcq', 'mcq_multi'):
         prepared = _normalize_options(raw.get('options'), multi=item_type == 'mcq_multi')
@@ -288,7 +314,7 @@ def normalize_sections(raw, *, fallback_name='Section'):
     return sections
 
 
-def normalize_mock(payload, *, existing_test=None, options=None):
+def normalize_mock(payload, *, existing_test=None, options=None, tagged=False):
     """Coerce a model's JSON into the canonical mock-test draft.
 
     ``existing_test`` fills the paper's settings for a *modify* job, so an admin
@@ -331,6 +357,7 @@ def normalize_mock(payload, *, existing_test=None, options=None):
             raw_item, index=len(items), used_keys=used_keys,
             section_count=max(1, len(sections)),
             negative_marking=negative_marking,
+            tagged=tagged,
         )
         if item is None:
             continue

@@ -255,6 +255,43 @@ class ApplyRequiresConfirmationTests(_StudioTestCase):
         self.assertEqual(names, {'Variables'})
 
 
+OUTLINE_WITH_OBJECTIVES = """
+{"course": {"name": "Python", "code": "python-test", "course_type": "skill"},
+ "subjects": [{"name": "Foundations", "code": "foundations",
+   "chapters": [{"name": "Getting Started", "code": "getting-started",
+     "topics": [{"name": "Variables", "code": "variables", "difficulty": "easy",
+                 "objectives": ["Bind a name to a value"]},
+                {"name": "Loops", "code": "loops", "difficulty": "medium"}]}]}]}
+"""
+
+
+class OutlineObjectivesTests(_StudioTestCase):
+    def test_filling_objectives_keeps_mains_topics_updated_count(self):
+        subject = Subject.objects.create(
+            tenant=self.tenant, course=self.course, name='Foundations', code='foundations',
+        )
+        chapter = Chapter.objects.create(
+            tenant=self.tenant, subject=subject, name='Getting Started', code='getting-started',
+        )
+        topic = Topic.objects.create(
+            tenant=self.tenant, subject=subject, name='Variables', code='variables',
+            description='Curated by an admin.',
+        )
+        ChapterTopic.objects.create(tenant=self.tenant, chapter=chapter, topic=topic, order=0)
+        with self.stub_provider(), self.stub_llm(OUTLINE_WITH_OBJECTIVES):
+            job_id = self.post(self.admin, '/jobs/', {
+                'kind': 'outline', 'prompt': 'Extend it', 'course': str(self.course.id),
+            }).data['id']
+        response = self.post(self.admin, f'/jobs/{job_id}/apply/', {'confirm': True})
+        self.assertEqual(response.status_code, 200, response.data)
+        # main counted an existing topic as updated only when its description
+        # was filled; the new objectives column must not change that number.
+        self.assertEqual(response.data['summary']['topics_updated'], 0)
+        topic.refresh_from_db()
+        self.assertEqual(topic.objectives, ['Bind a name to a value'])
+        self.assertEqual(topic.description, 'Curated by an admin.')
+
+
 class ContentApplyTests(_StudioTestCase):
     def _content_job(self):
         with self.stub_provider(), self.stub_llm(CONTENT_RESPONSE):
@@ -283,6 +320,53 @@ class ContentApplyTests(_StudioTestCase):
         self.assertEqual(question.correct_answer, '1')
         self.assertTrue(question.options.get(order=1).is_correct)
         self.assertEqual(question.tags, ['Assignment'])
+
+    def _opt_in(self):
+        Tenant.objects.filter(id=self.tenant.id).update(features={'response_diagnosis': True})
+
+    def test_apply_does_not_tag_for_a_tenant_without_the_learning_layer(self):
+        from intelligence.models import Concept, ConceptLink
+
+        response = self.post(self.admin, f'/jobs/{self._content_job()}/apply/', {'confirm': True})
+        self.assertEqual(response.status_code, 200)
+        question = Question.objects.get(topic=self.topic)
+        # Exactly what main wrote: no tagging columns, no concept rows.
+        self.assertEqual(question.tagging_status, '')
+        self.assertEqual(question.content_hash, '')
+        self.assertEqual(question.cognitive_type, '')
+        self.assertIsNone(question.tagged_at)
+        self.assertFalse(Concept.objects.exists())
+        self.assertFalse(ConceptLink.objects.exists())
+
+    def test_apply_tags_questions_for_an_opted_in_tenant(self):
+        from intelligence.models import ConceptLink
+
+        self._opt_in()
+        response = self.post(self.admin, f'/jobs/{self._content_job()}/apply/', {'confirm': True})
+        self.assertEqual(response.status_code, 200)
+        question = Question.objects.get(topic=self.topic)
+        self.assertEqual(question.tagging_status, 'tagged')
+        self.assertTrue(question.content_hash)
+        link = ConceptLink.objects.get(question=question)
+        self.assertEqual(link.concept.name, 'Assignment')
+
+    def test_a_database_error_while_tagging_does_not_roll_back_the_apply(self):
+        from django.db import IntegrityError, transaction
+
+        def broken(*args, **kwargs):
+            # On Postgres a real DB error aborts the open transaction; mark it
+            # so here too, then raise what the race would raise.
+            transaction.set_rollback(True)
+            raise IntegrityError('duplicate concept')
+
+        self._opt_in()  # apply-time tagging only runs for opted-in tenants
+        job_id = self._content_job()
+        with patch('intelligence.services.itemtags.set_item_tags', side_effect=broken) as tag:
+            response = self.post(self.admin, f'/jobs/{job_id}/apply/', {'confirm': True})
+        tag.assert_called()
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(Question.objects.filter(topic=self.topic).exists())
+        self.assertTrue(Content.objects.filter(topic=self.topic, content_type='notes').exists())
 
     def test_reapplying_updates_the_note_instead_of_duplicating(self):
         self.post(self.admin, f'/jobs/{self._content_job()}/apply/', {'confirm': True})

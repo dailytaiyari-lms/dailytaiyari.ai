@@ -218,6 +218,12 @@ class AdminMockTestViewSet(viewsets.ModelViewSet):
                 'needs_manual_grading': ans.needs_manual_grading,
                 'is_auto_graded': ans.is_auto_graded,
                 'graded_at': ans.graded_at.isoformat() if ans.graded_at else None,
+                # AI suggestion (prefills the grading form on escalation).
+                'ai_graded': ans.ai_graded,
+                'ai_confidence': float(ans.ai_confidence) if ans.ai_confidence is not None else None,
+                'ai_suggested_marks': float(ans.ai_suggested_marks) if ans.ai_suggested_marks is not None else None,
+                'ai_feedback': ans.ai_feedback or '',
+                'ai_flags': ans.ai_flags or [],
             })
         return {
             'attempt_id': str(attempt.id),
@@ -380,6 +386,11 @@ class AdminMockTestViewSet(viewsets.ModelViewSet):
             'marks_obtained', 'attempted_questions', 'correct_answers',
             'wrong_answers', 'percentage', 'updated_at',
         ])
+
+        # Superseding learning event for the intelligence layer (fail-safe)
+        from intelligence import api as intelligence_api
+        intelligence_api.record_regrade_event(ans)
+
         return Response({
             'answer_id': str(ans.id),
             'marks_obtained': float(ans.marks_obtained),
@@ -410,25 +421,17 @@ class AdminMockTestViewSet(viewsets.ModelViewSet):
             'wrong_answers', 'percentage', 'grading_status', 'updated_at',
         ])
 
+        # Safety-net event emission (idempotent — no-op if submit already
+        # recorded these answers and grade_answer recorded the regrades).
+        from intelligence import api as intelligence_api
+        intelligence_api.record_attempt_events(attempt)
+
         # Award XP once (deferred from submit for manual-grading attempts).
-        awarded = 0
-        from gamification.models import XPTransaction
-        already = XPTransaction.objects.filter(
-            student=attempt.student, transaction_type='mock_complete',
-            reference_id=attempt.id,
-        ).exists()
-        if not already and attempt.xp_earned == 0:
-            from gamification.services import GamificationService
-            from core.utils import calculate_xp_for_quiz
-            awarded = calculate_xp_for_quiz(
-                float(attempt.percentage), attempt.total_questions, is_daily_challenge=False
-            ) * 2
-            attempt.xp_earned = awarded
-            attempt.save(update_fields=['xp_earned'])
-            GamificationService.award_xp(
-                attempt.student, awarded, 'mock_complete',
-                f'Completed mock test: {attempt.mock_test.title}', str(attempt.id),
-            )
+        # Shared helper — refuses when another attempt of this mock already
+        # earned the completion XP (re-attempts used to slip through this path
+        # and earn it a second time).
+        from .mock_grading import award_completion_xp
+        awarded = award_completion_xp(attempt)
         return Response({
             'attempt_id': str(attempt.id),
             'grading_status': attempt.grading_status,
