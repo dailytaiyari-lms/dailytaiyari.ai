@@ -61,6 +61,13 @@ class LastPartTests(SimpleTestCase):
         self.assertTrue(v.in_last_part('time_pressure', {'final_answer_at_s': None}, 0.1))
         self.assertFalse(v.in_last_part('guess', {}, 0.1))
 
+    def test_unanswered_time_pressure_counts_even_when_early(self):
+        # Answered early, cleared, then timed out: the trailing clear makes the
+        # computed position early, but an unanswered time_pressure always counts.
+        early = {'final_answer_at_s': 10, 'time_left_s': 500}
+        self.assertTrue(v.in_last_part('time_pressure', early, 0.1, answered=False))
+        self.assertFalse(v.in_last_part('time_pressure', early, 0.1))
+
 
 LATE = {'final_answer_at_s': 1750, 'time_left_s': 50, 'ended_late': True}
 TIMED = {'ended_late': False, 'final_answer_at_s': 100, 'time_left_s': 1700}
@@ -84,6 +91,15 @@ class PatternTests(SimpleTestCase):
         rushed = [row('time_pressure', metrics=LATE)]
         patterns = v.detect_patterns(self.attempts(rushed, rushed, untimed, untimed, untimed))
         self.assertNotIn('rushes_end', [p['code'] for p in patterns])
+
+    def test_rushes_end_counts_unanswered_time_pressure_placed_early(self):
+        early = {'final_answer_at_s': 10, 'time_left_s': 500, 'ended_late': True}
+        timed_out = [row('time_pressure', id='t0', answered=False, metrics=early),
+                     row('correct', metrics=TIMED)]
+        patterns = v.detect_patterns(self.attempts(timed_out, timed_out, timed_out))
+        found = {p['code']: p for p in patterns}
+        self.assertIn('rushes_end', found)
+        self.assertEqual(found['rushes_end']['count'], 3)
 
     def test_slips_concentrated_in_one_topic(self):
         answers = ([row('careless_slip', id=f'k{i}', topic='Kinematics') for i in range(3)]
@@ -147,6 +163,11 @@ class EvidenceTests(SimpleTestCase):
         self.assertEqual(
             v.describe_evidence([{'code': 'too_long', 'detail': '300s on screen; usually 60s'}], {}),
             ['300s on screen; usually 60s.'])
+
+    def test_slip_match_without_detail_has_no_empty_parentheses(self):
+        self.assertEqual(
+            v.describe_evidence([{'code': 'slip_match', 'detail': ''}], {}),
+            ['The wrong value is a common slip away from the answer.'])
 
     def test_bad_items_are_skipped(self):
         self.assertEqual(v.describe_evidence(['x', {'code': 'other'}], None), [])

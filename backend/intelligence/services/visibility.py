@@ -50,12 +50,17 @@ def question_flags(distribution):
     return flags
 
 
-def in_last_part(label, metrics, share):
+def in_last_part(label, metrics, share, *, answered=True):
     """Did this answer happen in the last ``share`` of a timed window?
 
-    Answered items: from the answer time and the time left. Unanswered
-    ``time_pressure`` items always count — that label only fires at the end.
+    An unanswered ``time_pressure`` item always counts, because that label only
+    fires at the end of a timed window (a student who answered early, cleared
+    the answer and timed out has an early computed position). Otherwise the
+    answer time and the time left decide; with either missing, only
+    ``time_pressure`` counts.
     """
+    if label == 'time_pressure' and not answered:
+        return True
     metrics = metrics or {}
     at, left = metrics.get('final_answer_at_s'), metrics.get('time_left_s')
     if at is not None and left is not None:
@@ -76,7 +81,8 @@ def _rushes_end(attempts):
         rushed = [
             row['id'] for row in attempt['answers']
             if row['label'] in rule['labels']
-            and in_last_part(row['label'], row.get('metrics'), rule['last_share'])
+            and in_last_part(row['label'], row.get('metrics'), rule['last_share'],
+                             answered=row['answered'])
         ]
         if rushed:
             hits.append(rushed)
@@ -169,7 +175,8 @@ def _sentence(code, detail, m):
     if code == 'late_third':
         return 'Answered in the last third of the test.'
     if code == 'slip_match':
-        return f'The wrong value is a common slip away from the answer ({detail}).'
+        suffix = f' ({detail})' if detail else ''
+        return f'The wrong value is a common slip away from the answer{suffix}.'
     if code == 'misconception_pick':
         return 'Picked the same wrong option as on an earlier attempt.'
     if code == 'prior_mastery' and m.get('prior_mastery') is not None:
