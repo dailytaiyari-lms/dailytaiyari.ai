@@ -39,6 +39,7 @@ PATTERN_MESSAGES = {
 # ── Insights home: course answer-behaviour tile ─────────────────────────────
 COURSE_TILE_DAYS = 28
 COURSE_TILE_WEEKS = 4
+COURSE_TILE_MAX_ATTEMPTS = 2000  # newest finished attempts read per course tile
 STUDENTS_TO_CHECK = {'top': 5, 'min_answers': 15}
 RECENT_ASSESSMENTS = 5
 

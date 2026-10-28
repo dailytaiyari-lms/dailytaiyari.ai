@@ -529,31 +529,33 @@ class CourseBehaviourView(APIView):
 
         now = timezone.now()
         since = now - timedelta(days=VC.COURSE_TILE_DAYS)
-        completed = {}     # (kind, attempt_id) → completed_at
-        assessments = {}   # (kind, assessment_id) → (title, latest completed_at)
+        cap = VC.COURSE_TILE_MAX_ATTEMPTS
+        newest = '-completed_at'
+        found = []         # (kind, completed_at, attempt_id, assessment_id, title)
 
-        def collect(kind, rows):
-            for attempt_id, done, assessment_id, title in rows:
-                completed[(kind, attempt_id)] = done
-                if assessment_id is None:
-                    continue
-                key = (kind, assessment_id)
-                if key not in assessments or assessments[key][1] < done:
-                    assessments[key] = (title, done)
-
-        collect('quiz', QuizAttempt.objects.filter(
+        found += [('quiz', *row) for row in QuizAttempt.objects.filter(
             quiz__course=course, completed_at__gte=since,
-        ).values_list('id', 'completed_at', 'quiz_id', 'quiz__title'))
-        collect('mock', MockTestAttempt.objects.filter(
+        ).order_by(newest).values_list('completed_at', 'id', 'quiz_id', 'quiz__title')[:cap]]
+        found += [('mock', *row) for row in MockTestAttempt.objects.filter(
             Q(mock_test__course=course) | Q(mock_test__courses=course),
             completed_at__gte=since,
-        ).distinct().values_list('id', 'completed_at', 'mock_test_id', 'mock_test__title'))
-        collect('practice', [
-            (row_id, done, None, '')
-            for row_id, done in PracticeSet.objects.filter(
-                course=course, completed_at__gte=since,
-            ).values_list('id', 'completed_at')
-        ])
+        ).distinct().order_by(newest).values_list(
+            'completed_at', 'id', 'mock_test_id', 'mock_test__title')[:cap]]
+        found += [('practice', row_done, row_id, None, '') for row_id, row_done in
+                  PracticeSet.objects.filter(course=course, completed_at__gte=since)
+                  .order_by(newest).values_list('id', 'completed_at')[:cap]]
+        # Newest first across the three kinds, then cap the total.
+        found.sort(key=lambda row: row[1], reverse=True)
+
+        completed = {}     # (kind, attempt_id) → completed_at
+        assessments = {}   # (kind, assessment_id) → (title, latest completed_at)
+        for kind, done, attempt_id, assessment_id, title in found[:cap]:
+            completed[(kind, attempt_id)] = done
+            if assessment_id is None:
+                continue
+            key = (kind, assessment_id)
+            if key not in assessments or assessments[key][1] < done:
+                assessments[key] = (title, done)
 
         ids_by_kind = defaultdict(list)
         for kind, attempt_id in completed:
@@ -570,7 +572,7 @@ class CourseBehaviourView(APIView):
         per_student = defaultdict(list)
         for kind, attempt_id, student_id, label in rows:
             per_student[student_id].append(label)
-            age_days = (now - completed[(kind, attempt_id)]).days
+            age_days = max(0, (now - completed[(kind, attempt_id)]).days)
             index = VC.COURSE_TILE_WEEKS - 1 - min(age_days // 7, VC.COURSE_TILE_WEEKS - 1)
             weeks[index].append(label)
 

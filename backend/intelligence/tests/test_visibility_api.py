@@ -1,8 +1,10 @@
 """Diagnosis-visibility endpoints: switches, scope and payloads."""
 from datetime import timedelta
+from unittest import mock
 
 from django.utils import timezone
 
+from intelligence import visibility_config as VC
 from intelligence.diagnosis_config import THRESHOLDS
 from intelligence.models import ResponseDiagnosis
 from intelligence.versions import CLASSIFIER_VERSION
@@ -161,6 +163,21 @@ class CourseBehaviourTests(VisibilityTestCase):
         self.assertEqual(len(data['students_to_check']), 1)
         self.assertEqual(data['students_to_check'][0]['student_id'], str(self.student.id))
         self.assertEqual(data['recent_assessments'][0]['id'], str(self.quiz.id))
+
+    def test_work_is_capped_to_the_newest_attempts(self):
+        with mock.patch.object(VC, 'COURSE_TILE_MAX_ATTEMPTS', 1):
+            data = self.client_for(self.faculty).get(self.url()).json()
+        # Only the newest attempt (60 min ago, a slip) is read.
+        self.assertEqual(data['rates']['answers'], 1)
+        self.assertEqual(data['rates']['careless_slip'], 1.0)
+
+    def test_attempt_completed_after_the_request_started_does_not_500(self):
+        future = self.quiz_attempt(self.student, minutes_ago=-30)
+        self.diagnose(future, self.make_question(2), 'correct')
+        response = self.client_for(self.faculty).get(self.url())
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()['rates']['answers'], 19)
+        self.assertEqual(response.json()['trend'][-1]['answers'], 17)
 
     def test_scope_and_switch(self):
         self.assertEqual(self.client_for(self.faculty).get(self.url(self.other_course)).status_code, 403)
