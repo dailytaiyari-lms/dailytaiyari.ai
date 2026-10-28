@@ -248,6 +248,9 @@ class StudentDiagnosisView(APIView):
         )
         course_id = request.query_params.get('course')
         if course_id:
+            if (request.user.role != 'admin'
+                    and not any(str(c) == course_id for c in teachable_course_ids(request.user))):
+                return _forbidden()
             states = states.filter(concept__subject__course_id=course_id)
         elif request.user.role != 'admin':
             states = states.filter(

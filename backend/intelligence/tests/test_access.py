@@ -83,6 +83,21 @@ class ExistingViewNarrowingTests(VisibilityTestCase):
         self.assertEqual(
             client.get(f'{INSIGHTS}/students/{self.outsider.id}/diagnosis/').status_code, 403)
 
+    def test_student_diagnosis_course_param_must_be_a_faculty_course(self):
+        from users.models import CourseEnrollment
+
+        CourseEnrollment.objects.create(
+            tenant=self.tenant, student=self.student, course=self.other_course,
+            status='approved', is_active=True,
+        )
+        client = self.client_for(self.faculty)
+        url = f'{INSIGHTS}/students/{self.student.id}/diagnosis/'
+        self.assertEqual(client.get(url, {'course': str(self.course.id)}).status_code, 200)
+        self.assertEqual(client.get(url, {'course': str(self.other_course.id)}).status_code, 403)
+        self.assertEqual(
+            self.client_for(self.admin).get(
+                url, {'course': str(self.other_course.id)}).status_code, 200)
+
     def test_practice_config_refuses_unassigned_course_for_faculty(self):
         url = f'{INSIGHTS}/courses/{self.other_course.id}/practice-config/'
         self.assertEqual(self.client_for(self.faculty).get(url).status_code, 403)
