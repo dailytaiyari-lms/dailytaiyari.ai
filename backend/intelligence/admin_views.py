@@ -6,7 +6,7 @@ computation pipelines live in the product layer.
 from collections import Counter, defaultdict
 from datetime import timedelta
 
-from django.db.models import Avg, Count, F, Min, Q
+from django.db.models import Avg, Count, F, Max, Min, Q
 from django.utils import timezone
 from rest_framework import permissions, status
 from rest_framework.response import Response
@@ -463,8 +463,11 @@ class StudentAnswersView(APIView):
             ResponseDiagnosis.objects.filter(student=student)
             .filter(diagnosis_scope_q(request.user, student))
             .values('attempt_kind', 'attempt_id')
-            .annotate(first_seen=Min('created_at'))
-            .order_by('-first_seen', 'attempt_id')
+            .annotate(first_seen=Min('created_at'), last_computed=Max('computed_at'))
+            # Rows written in one burst can share a created_at, and the
+            # database clock can be coarse, so break ties on when the
+            # diagnosis was computed (later = newer), then on the id.
+            .order_by('-first_seen', F('last_computed').desc(nulls_last=True), 'attempt_id')
         )
         total = attempts.count()
         size = VC.ANSWERS_PAGE_SIZE

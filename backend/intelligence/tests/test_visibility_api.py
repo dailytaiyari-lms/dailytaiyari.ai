@@ -4,6 +4,7 @@ from datetime import timedelta
 from django.utils import timezone
 
 from intelligence.diagnosis_config import THRESHOLDS
+from intelligence.models import ResponseDiagnosis
 from intelligence.versions import CLASSIFIER_VERSION
 from intelligence.tests.visibility_fixtures import VisibilityTestCase
 
@@ -78,13 +79,19 @@ class StudentAnswersTests(VisibilityTestCase):
         # second guesses. Attempts are listed in the order they were first
         # diagnosed, newest first.
         self.attempts = []
+        first_diagnosed = timezone.now() - timedelta(hours=1)
         for n in range(22):
             attempt = self.quiz_attempt(self.student, minutes_ago=200 - n)
             label = 'second_guess' if n >= 19 else 'correct'
-            self.diagnose(
+            diagnosis = self.diagnose(
                 attempt, self.question, label,
                 metrics={'active_s': 12.0, 'usual_s': 45.0},
                 evidence=[{'code': 'right_to_wrong', 'detail': ''}] if n >= 19 else [],
+            )
+            # created_at is auto_now_add and rows made in a burst tie on a
+            # coarse clock: give each attempt its own, increasing, time.
+            ResponseDiagnosis.objects.filter(id=diagnosis.id).update(
+                created_at=first_diagnosed + timedelta(seconds=n),
             )
             self.attempts.append(attempt)
 
