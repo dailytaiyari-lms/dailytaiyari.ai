@@ -14,6 +14,10 @@ from rest_framework.views import APIView
 
 from exams.models import Course
 
+from .access import (
+    assessment_course_ids, assessment_in_scope, can_manage_course, can_view_student,
+    teachable_course_ids,
+)
 from .models import (
     Concept, CoursePracticeConfig, GeneratedItem, ItemStats, LearnerConceptState,
     PracticeGenerationJob, PracticeSet, ResponseDiagnosis,
@@ -35,6 +39,10 @@ class IsTenantAdminOrInstructor(permissions.BasePermission):
 
 def _course_or_404(request, course_id):
     return Course.objects.filter(id=course_id, tenant=request.tenant).first()
+
+
+def _forbidden():
+    return Response({'error': 'Not in your courses.'}, status=status.HTTP_403_FORBIDDEN)
 
 
 class TaggingRunView(APIView):
@@ -65,6 +73,8 @@ class OverviewView(APIView):
         course = _course_or_404(request, request.query_params.get('course'))
         if course is None:
             return Response({'error': 'Course not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not can_manage_course(request.user, course):
+            return _forbidden()
 
         # Class concept mastery (only concepts with real evidence).
         concept_rows = (
@@ -133,6 +143,8 @@ class AssessmentReportView(APIView):
             assessment = None
         if assessment is None:
             return Response({'error': 'Assessment not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not assessment_in_scope(request.user, kind, assessment):
+            return _forbidden()
 
         items = self._items(kind, assessment)
         concept_perf = {}
@@ -210,12 +222,7 @@ class AssessmentReportView(APIView):
 
     @staticmethod
     def _courses(kind, assessment):
-        if kind == 'quiz':
-            return [assessment.course] if assessment.course_id else []
-        courses = list(assessment.courses.all())
-        if not courses and assessment.course_id:
-            courses = [assessment.course]
-        return courses
+        return list(Course.objects.filter(id__in=assessment_course_ids(kind, assessment)))
 
 
 class StudentDiagnosisView(APIView):
@@ -231,6 +238,8 @@ class StudentDiagnosisView(APIView):
         ).select_related('user').first()
         if student is None:
             return Response({'error': 'Student not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not can_view_student(request.user, student):
+            return _forbidden()
 
         states = (
             LearnerConceptState.objects.filter(student=student)
@@ -240,10 +249,15 @@ class StudentDiagnosisView(APIView):
         course_id = request.query_params.get('course')
         if course_id:
             states = states.filter(concept__subject__course_id=course_id)
+        elif request.user.role != 'admin':
+            states = states.filter(
+                concept__subject__course_id__in=teachable_course_ids(request.user))
 
+        sets = PracticeSet.objects.filter(student=student)
+        if request.user.role != 'admin':
+            sets = sets.filter(course_id__in=teachable_course_ids(request.user))
         sets = (
-            PracticeSet.objects.filter(student=student)
-            .select_related('course').prefetch_related('target_concepts', 'items')
+            sets.select_related('course').prefetch_related('target_concepts', 'items')
             .order_by('-created_at')[:30]
         )
         return Response({
@@ -271,6 +285,8 @@ class GeneratedItemsView(APIView):
         course_id = request.query_params.get('course')
         if course_id:
             rows = rows.filter(question__courses__id=course_id)
+        if request.user.role != 'admin':
+            rows = rows.filter(question__courses__id__in=teachable_course_ids(request.user)).distinct()
         payload = []
         for row in rows[:200]:
             stats = None
@@ -301,6 +317,9 @@ class GeneratedItemsView(APIView):
         ).select_related('question').first()
         if row is None:
             return Response({'error': 'Item not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if request.user.role != 'admin' and not row.question.courses.filter(
+                id__in=teachable_course_ids(request.user)).exists():
+            return _forbidden()
         row.retired_at = timezone.now()
         row.save(update_fields=['retired_at', 'updated_at'])
         row.question.status = 'archived'
@@ -314,10 +333,10 @@ class GenerationJobsView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsTenantAdminOrInstructor]
 
     def get(self, request):
-        jobs = (
-            PracticeGenerationJob.objects.filter(tenant=request.tenant)
-            .select_related('course').order_by('-created_at')[:100]
-        )
+        jobs = PracticeGenerationJob.objects.filter(tenant=request.tenant)
+        if request.user.role != 'admin':
+            jobs = jobs.filter(course_id__in=teachable_course_ids(request.user))
+        jobs = jobs.select_related('course').order_by('-created_at')[:100]
         return Response([
             {
                 'id': str(job.id),
@@ -343,6 +362,8 @@ class CoursePracticeConfigView(APIView):
         course = _course_or_404(request, course_id)
         if course is None:
             return Response({'error': 'Course not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not can_manage_course(request.user, course):
+            return _forbidden()
         config = practice_config_for(course)
         return Response(self._payload(config))
 
@@ -350,6 +371,8 @@ class CoursePracticeConfigView(APIView):
         course = _course_or_404(request, course_id)
         if course is None:
             return Response({'error': 'Course not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not can_manage_course(request.user, course):
+            return _forbidden()
         config = practice_config_for(course)
         for field in ('practice_enabled', 'generation_enabled'):
             if field in request.data:
