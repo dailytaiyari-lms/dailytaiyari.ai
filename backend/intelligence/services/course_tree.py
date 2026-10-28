@@ -4,6 +4,8 @@ Topic level = the course's own Topics. Sub-subjects: one implicit group for
 small subjects, else one LLM grouping call. Subtopics: existing Concepts
 first (so mastery history carries over), then LLM proposals for what is
 missing. Only question text — never student data — is sent to the model.
+LLM proposals are created as ``status='proposed'`` ("suggested" in the
+editor) until a teacher accepts or edits them; the tagger already uses them.
 """
 import json
 
@@ -204,7 +206,7 @@ def _propose_subtopics(subject, node, topic, call, summary, used, before):
             tenant=subject.tenant, subject=subject, parent=node, level='subtopic',
             key=_unique_key(f'{node.key}.{_slug(name)}', used), name=name,
             description=str(raw.get('description') or '').strip()[:2000],
-            source='llm_proposed', concept=adopt,
+            source='llm_proposed', status='proposed', concept=adopt,
         )
         if adopt is None:
             ensure_node_concept(child)
@@ -274,3 +276,42 @@ def build_course_tree(course, *, call, packs=None, dry_run=False):
     except _Rollback:
         pass
     return summary
+
+
+TOKENS_PER_CALL = 1500   # rough prompt + reply size of one builder call
+
+
+def estimate_build(course, packs=None):
+    """LLM calls and tokens the next ``build_course_tree`` run would make.
+
+    Mirrors the builder: one grouping call per subject with more than
+    GROUP_THRESHOLD new topics and no sub-subject yet, one subtopic call per
+    topic not planned before, one packs call when a subject has no packs.
+    """
+    from exams.models import Topic
+    from intelligence.models import CourseSyllabus, SyllabusNode
+
+    calls = {'grouping': 0, 'subtopics': 0, 'packs': 0}
+    subjects = list(course.subjects.all())
+    for subject in subjects:
+        topics = list(Topic.objects.filter(subject=subject, parent_topic__isnull=True))
+        nodes = {node.course_topic_id: node for node in
+                 SyllabusNode.objects.filter(subject=subject, level='topic').exclude(status='archived')}
+        new = [topic for topic in topics if topic.id not in nodes]
+        has_group = (SyllabusNode.objects.filter(subject=subject, level='sub_subject')
+                     .exclude(status='archived').exists())
+        if new and not has_group and len(new) > GROUP_THRESHOLD:
+            calls['grouping'] += 1
+        planned = set(
+            SyllabusNode.objects.filter(subject=subject, level='subtopic', parent__in=list(nodes.values()))
+            .exclude(status='archived').values_list('parent_id', flat=True)
+        )
+        calls['subtopics'] += sum(
+            1 for topic in topics if topic.id not in nodes or nodes[topic.id].id not in planned)
+    if packs is None:
+        record = CourseSyllabus.objects.filter(course=course).first()
+        existing = (record.skill_packs or {}) if record else {}
+        if any(str(subject.id) not in existing for subject in subjects):
+            calls['packs'] = 1
+    total = sum(calls.values())
+    return {'llm_calls': total, 'calls': calls, 'approx_tokens': total * TOKENS_PER_CALL}

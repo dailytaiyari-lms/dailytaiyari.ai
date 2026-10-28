@@ -211,7 +211,7 @@ def tagging_context(subject):
     course = subject.course
     record = CourseSyllabus.objects.filter(course=course).first()
     nodes = list(
-        SyllabusNode.objects.filter(subject=subject, status='active', in_syllabus=True)
+        SyllabusNode.objects.filter(subject=subject, status__in=('active', 'proposed'), in_syllabus=True)
         .order_by('order', 'name')
     )
     by_id = {node.id: node for node in nodes}
@@ -295,3 +295,22 @@ def context_from_tree(tree, subject_key, tags):
         'skills': [_plain(e, '') for e in tags['universal_skills'] if e['active']]
                   + [_plain(e, pack['key']) for pack in packs for e in pack['skills'] if e['active']],
     }
+
+
+def exam_tree_options():
+    """Shipped exam trees and their subjects, for the "Use an exam syllabus" form."""
+    from intelligence.services.taxonomy import shipped_exam_keys
+
+    options = []
+    for key in shipped_exam_keys():
+        try:
+            tree = load_exam_tree(key)
+        except TaxonomyError:
+            continue
+        options.append({
+            'key': key,
+            'label': tree['label'],
+            'subjects': [{'key': node['subject'], 'label': node['label']}
+                         for node in flatten_tree(tree) if node['level'] == 'subject'],
+        })
+    return options

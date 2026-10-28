@@ -31,6 +31,8 @@ FINGERPRINT_FIELDS = ('exam_label', 'audience', 'subject', 'thinking_levels', 's
                       'tree_version')
 FINGERPRINT_CHARS = 16
 CACHE_TREE_VERSION_CHARS = 64  # AITaggingResult.tree_version max_length
+LIVE_STATUSES = ('active', 'proposed')  # suggested subtopics are taggable straight away
+TOKENS_PER_QUESTION = 1000              # rough, from the first evaluation runs
 
 
 def prompt_fingerprint(context, variant=''):
@@ -162,7 +164,7 @@ def write_result(item, result, context, nodes, tagger_version, *, subject, allow
     tagging.tagger_version = tagger_version[:120]
     tagging.taxonomy_version = context['taxonomy_version']
     tagging.tree_version = context['tree_version']
-    tagging.raw = result.raw
+    tagging.raw = {**result.raw, 'topic_key': result.topic_key}
     tagging.save()
     tagging.secondary_nodes.set(secondaries)
     _replace_skill_tags(item, arm, result.skills)
@@ -188,10 +190,14 @@ def write_result(item, result, context, nodes, tagger_version, *, subject, allow
     return tagging
 
 
-def _tag_group(tenant, subject, context, items, call, *, arm):
+def _tag_group(tenant, subject, context, items, call, *, arm, stats=None):
+    stats = stats if stats is not None else {}
+    for key in ('tagged', 'needs_review', 'failed', 'locked'):
+        stats.setdefault(key, 0)
     nodes = {
         node.key: node for node in
-        SyllabusNode.objects.filter(subject=subject, status='active').select_related('parent', 'concept')
+        SyllabusNode.objects.filter(subject=subject, status__in=LIVE_STATUSES)
+        .select_related('parent', 'concept')
     }
     hints = {topic['course_topic_id']: topic['key'] for topic in context['topics'] if topic['course_topic_id']}
     by_id, hashes, payloads = {}, {}, []
@@ -213,10 +219,15 @@ def _tag_group(tenant, subject, context, items, call, *, arm):
             result.needs_review = True
         if result.error:
             logger.info('tagging v2: %s %s not tagged (%s)', arm, result.id, result.error)
+            stats['failed'] += 1
             continue
         if write_result(by_id[result.id], result, context, nodes, tagger_version,
                         subject=subject, allow_difficulty=(arm == 'mock_item')):
             written += 1
+            stats['tagged'] += 1
+            stats['needs_review'] += 1 if result.needs_review else 0
+        else:
+            stats['locked'] += 1
     return written
 
 
@@ -270,19 +281,55 @@ def _base_candidate_q():
             | ~Q(tagging__taxonomy_version=version))
 
 
-def tag_v2_for_tenant(tenant, subject_ids, call, *, limit=200):
-    """Tag up to ``limit`` not-current items of these (treed) subjects."""
+def candidate_querysets(tenant, subject_ids):
+    """(questions, mock items, context_for) the v2 sweep would consider.
+
+    The querysets are coarse (they select not-current items by versions);
+    ``tag_v2_for_tenant`` re-checks each item with ``_is_current``.
+    """
     from exams.models import Subject
     from quiz.models import MockTestItem, Question
 
-    subject_ids = set(subject_ids)
-    contexts, subjects = {}, {}
-    picked = defaultdict(list)
+    contexts = {}
 
     def context_for(subject):
         if subject.id not in contexts:
             contexts[subject.id] = tagging_context(subject)
         return contexts[subject.id]
+
+    base = _base_candidate_q()
+    test_ids = _single_subject_test_ids(tenant, set(subject_ids))
+    question_q, mock_q = Q(pk__in=[]), Q(pk__in=[])
+    for subject in Subject.objects.filter(id__in=subject_ids):
+        stale_tree = base | ~Q(tagging__tree_version=context_for(subject)['tree_version'])
+        question_q |= Q(subject_id=subject.id) & stale_tree
+        mock_q |= _mock_owned_by(subject.id, test_ids.get(subject.id, [])) & stale_tree
+
+    questions = (
+        Question.objects.filter(tenant=tenant).filter(question_q).exclude(status='archived')
+        .exclude(tagging__source='manual')
+        .select_related('subject__course', 'topic', 'tagging').order_by('created_at')
+    )
+    items = (
+        MockTestItem.objects.filter(tenant=tenant).filter(mock_q)
+        .exclude(tagging__source='manual')
+        .select_related('mock_test__course', 'subject__course', 'topic__subject__course', 'tagging')
+        .prefetch_related('mock_test__courses__subjects')
+        .order_by('created_at')
+    )
+    return questions, items, context_for
+
+
+def tag_v2_for_tenant(tenant, subject_ids, call, *, limit=200, stats=None):
+    """Tag up to ``limit`` not-current items of these (treed) subjects.
+
+    ``stats``, when given, is filled with tagged / needs_review / failed /
+    locked counts. Returns the number of items written.
+    """
+    subject_ids = set(subject_ids)
+    questions, items, context_for = candidate_querysets(tenant, subject_ids)
+    subjects = {}
+    picked = defaultdict(list)
 
     def take(arm, item, subject, tagging):
         if _is_current(item, tagging, context_for(subject)):
@@ -291,32 +338,11 @@ def tag_v2_for_tenant(tenant, subject_ids, call, *, limit=200):
         subjects[subject.id] = subject
         return True
 
-    base = _base_candidate_q()
-    test_ids = _single_subject_test_ids(tenant, subject_ids)
-    question_q, mock_q = Q(pk__in=[]), Q(pk__in=[])
-    for subject in Subject.objects.filter(id__in=subject_ids):
-        stale_tree = base | ~Q(tagging__tree_version=context_for(subject)['tree_version'])
-        question_q |= Q(subject_id=subject.id) & stale_tree
-        mock_q |= _mock_owned_by(subject.id, test_ids.get(subject.id, [])) & stale_tree
-
     taken = 0
-    questions = (
-        Question.objects.filter(tenant=tenant).filter(question_q).exclude(status='archived')
-        .exclude(tagging__source='manual')
-        .select_related('subject__course', 'topic', 'tagging').order_by('created_at')
-    )
     for question in questions[:limit]:
         if taken >= limit:
             break
         taken += take('question', question, question.subject, getattr(question, 'tagging', None))
-
-    items = (
-        MockTestItem.objects.filter(tenant=tenant).filter(mock_q)
-        .exclude(tagging__source='manual')
-        .select_related('mock_test__course', 'subject__course', 'topic__subject__course', 'tagging')
-        .prefetch_related('mock_test__courses__subjects')
-        .order_by('created_at')
-    )
     if taken < limit:
         for item in items[:limit - taken]:
             subject = _mock_item_subject(item)
@@ -327,8 +353,26 @@ def tag_v2_for_tenant(tenant, subject_ids, call, *, limit=200):
     tagged = 0
     for (arm, subject_id), group in picked.items():
         subject = subjects[subject_id]
-        tagged += _tag_group(tenant, subject, context_for(subject), group, call, arm=arm)
+        tagged += _tag_group(tenant, subject, context_for(subject), group, call, arm=arm, stats=stats)
     return tagged
+
+
+def estimate_tagging(tenant, subject_ids):
+    """About how many items the next run would tag, and the tokens it would use."""
+    questions, items, _context_for = candidate_querysets(tenant, set(subject_ids))
+    count = questions.count() + items.count()
+    return {'questions': count, 'approx_tokens': count * TOKENS_PER_QUESTION}
+
+
+def tag_one_item(item, call, stats=None):
+    """Tag one bank question or mock item now (the review queue's Re-tag)."""
+    arm = _arm(item)
+    subject = item.subject if arm == 'question' else _mock_item_subject(item)
+    if subject is None:
+        return 0
+    if not SyllabusNode.objects.filter(subject=subject, level='topic', status='active').exists():
+        return 0
+    return _tag_group(item.tenant, subject, tagging_context(subject), [item], call, arm=arm, stats=stats)
 
 
 def run_sweep(tenant, *, limit=200, call=None):
