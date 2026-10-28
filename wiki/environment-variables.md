@@ -31,6 +31,7 @@ OPENAI_API_KEY=sk-...
 | `CELERY_INTEL_CONCURRENCY` | No | `1` | Workers on the `intelligence` queue (learning-layer statistics, nightly jobs) |
 | `CODE_JUDGE_ASYNC` | No | `False` | Grade coding submissions off the request thread |
 | `COURSEGEN_ASYNC` | No | `True` | Run AI course generation on the `aigen` queue |
+| `CELERY_TASK_ALWAYS_EAGER` | No | `False` | Local testing only. `true` runs Celery tasks inside the request (diagnosis right after submit; syllabus Build and Tag without a worker). Never set in production. |
 
 ### Labs / notebooks — `backend/.env`
 

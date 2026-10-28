@@ -466,6 +466,12 @@ import sys  # noqa: E402
 if 'test' in sys.argv:
     CELERY_TASK_ALWAYS_EAGER = True
     CELERY_TASK_EAGER_PROPAGATES = False
+else:
+    # Local testing only: run every task inside the request, so diagnosis
+    # happens right after submit and syllabus Build / Tag finish without a
+    # worker. Never set in production (a 20-minute build would hold a web
+    # worker for 20 minutes).
+    CELERY_TASK_ALWAYS_EAGER = config('CELERY_TASK_ALWAYS_EAGER', default=False, cast=bool)
 
 # Periodic jobs (run by the celery-beat service; schedules are code-defined,
 # so a beat restart simply re-reads them). All of these are recompute-from-

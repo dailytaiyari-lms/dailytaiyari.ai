@@ -33,6 +33,7 @@ class Tenant(models.Model):
         'response_diagnosis': 'Answer Diagnosis',
         'diagnosis_teacher_view': 'Diagnosis: teacher view',
         'diagnosis_student_view': 'Diagnosis: student view',
+        'syllabus_tools': 'Syllabus & tagging tools',
         'hackathons': 'Hackathons',
     }
 
@@ -80,7 +81,7 @@ class Tenant(models.Model):
     # has been switched on for everyone, move it out of this set.
     OPT_IN_FEATURES = {
         'practice', 'ai_grading', 'response_diagnosis',
-        'diagnosis_teacher_view', 'diagnosis_student_view',
+        'diagnosis_teacher_view', 'diagnosis_student_view', 'syllabus_tools',
     }
 
     # Features that only work on top of another one: {feature: required}.
