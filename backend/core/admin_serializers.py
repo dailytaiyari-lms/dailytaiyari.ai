@@ -206,6 +206,11 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
                 'label': labels.get(key, label),
                 'default_label': label,
                 'is_renamed': key in overrides,
+                'requires': Tenant.FEATURE_REQUIRES.get(key),
+                'requires_label': (
+                    labels.get(Tenant.FEATURE_REQUIRES[key])
+                    if key in Tenant.FEATURE_REQUIRES else None
+                ),
             }
             for key, label in Tenant.FEATURE_CHOICES.items()
         ]
