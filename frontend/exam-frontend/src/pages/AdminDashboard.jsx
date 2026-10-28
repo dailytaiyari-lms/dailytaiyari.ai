@@ -2661,6 +2661,11 @@ const TenantSettings = () => {
             toast.error('This feature is managed by DailyTaiyari. Contact the DailyTaiyari team to change it.')
             return
         }
+        const feature = availableFeatures.find((f) => f.key === key)
+        if (feature?.requires && !features[feature.requires]) {
+            toast.error(`Turn on ${feature.requires_label} first.`)
+            return
+        }
         const next = { ...features, [key]: !features[key] }
         setFeatures(next)
         featuresMutation.mutate({ [key]: next[key] })
@@ -3118,6 +3123,7 @@ const TenantSettings = () => {
                     {availableFeatures.map((f) => {
                         const enabled = Boolean(features[f.key])
                         const locked = lockedFeatures.includes(f.key)
+                        const waiting = Boolean(f.requires) && !features[f.requires]
                         const isRenaming = renamingFeature === f.key
                         return (
                             <div key={f.key} className="flex items-center justify-between gap-3 py-3">
@@ -3188,13 +3194,16 @@ const TenantSettings = () => {
                                             Managed by DailyTaiyari — contact the DailyTaiyari team to change this.
                                         </p>
                                     )}
+                                    {waiting && (
+                                        <p className="text-xs text-surface-400 mt-0.5">Needs {f.requires_label}</p>
+                                    )}
                                 </div>
                                 <button
                                     role="switch"
                                     aria-checked={enabled}
                                     onClick={() => toggleFeature(f.key)}
-                                    disabled={featuresMutation.isPending || locked}
-                                    title={locked ? 'Locked by DailyTaiyari' : undefined}
+                                    disabled={featuresMutation.isPending || locked || waiting}
+                                    title={locked ? 'Locked by DailyTaiyari' : waiting ? `Needs ${f.requires_label}` : undefined}
                                     className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${enabled ? 'bg-primary-500' : 'bg-surface-300 dark:bg-surface-700'}`}
                                 >
                                     <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${enabled ? 'translate-x-6' : 'translate-x-1'}`} />
