@@ -57,7 +57,7 @@ const InsightsHome = () => {
   const { user, profile } = useAuthStore()
   const isAdmin = (user?.role || profile?.user?.role) === 'admin'
 
-  const { data: courses } = useQuery({
+  const { data: courses, isLoading: coursesLoading, isError: coursesError } = useQuery({
     queryKey: ['insightCourses'],
     queryFn: contentBuilderService.getExams,
   })
@@ -86,7 +86,13 @@ const InsightsHome = () => {
   })
   const taggingMutation = useMutation({ mutationFn: insightsService.runTagging })
 
-  if (!activeCourse) return <Loading fullScreen />
+  if (coursesLoading) return <Loading fullScreen />
+  if (coursesError) {
+    return <p className="text-surface-500">Could not load courses.</p>
+  }
+  if (!activeCourse) {
+    return <p className="text-surface-500">No courses assigned to you yet.</p>
+  }
 
   const config = overview?.config
 

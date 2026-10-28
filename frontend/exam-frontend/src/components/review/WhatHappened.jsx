@@ -38,6 +38,9 @@ export default function WhatHappened({ attemptKind, attemptId, itemKind, itemId,
   const [saving, setSaving] = useState(false)
   const savingRef = useRef(false)
   const queryClient = useQueryClient()
+  // The softer "Not quite?" wording belongs to the student diagnosis view.
+  const studentView = useTenantStore((s) => s.tenant?.features?.diagnosis_student_view === true)
+  const prompt = studentView ? 'Not quite? Tell us what happened.' : 'What happened?'
 
   // Don't let a server-state sync clobber a choice that is mid-save.
   useEffect(() => {
@@ -75,12 +78,12 @@ export default function WhatHappened({ attemptKind, attemptId, itemKind, itemId,
   return (
     <div
       role="group"
-      aria-label="Not quite? Tell us what happened."
+      aria-label={prompt}
       className={`mt-3 flex flex-wrap items-center gap-2 transition-opacity ${
         saving ? 'opacity-60' : ''
       }`}
     >
-      <span className="text-xs text-surface-500">Not quite? Tell us what happened.</span>
+      <span className="text-xs text-surface-500">{prompt}</span>
       {CHOICES.map(([value, label]) => (
         <button
           key={value}
