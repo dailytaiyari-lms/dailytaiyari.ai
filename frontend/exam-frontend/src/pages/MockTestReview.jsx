@@ -6,6 +6,7 @@ import { quizService } from '../services/quizService'
 import Loading from '../components/common/Loading'
 import toast from 'react-hot-toast'
 import WhatHappened, { useSelfReports } from '../components/review/WhatHappened'
+import DiagnosisNote, { useDiagnosisNotes } from '../components/review/DiagnosisNote'
 import {
   XCircle,
   HelpCircle,
@@ -50,6 +51,7 @@ const MockTestReview = () => {
   })
 
   const selfReports = useSelfReports('mock', attemptId)
+  const diagnosisNotes = useDiagnosisNotes('mock', attemptId)
 
   const reportMutation = useMutation({
     mutationFn: (data) => quizService.reportQuestion(data),
@@ -406,6 +408,7 @@ const MockTestReview = () => {
                     )}
                   </div>
                 )}
+                <DiagnosisNote text={diagnosisNotes.notes[reviewKey]} />
                 {showWhatHappened && (
                   <WhatHappened
                     attemptKind="mock"

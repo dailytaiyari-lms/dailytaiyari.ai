@@ -8,6 +8,7 @@ import {
 import { mockTestBuilderService } from '../services/mockTestBuilderService'
 import MathRenderer from '../components/chat/MathRenderer'
 import WhatHappened, { useSelfReports } from '../components/review/WhatHappened'
+import DiagnosisNote, { useDiagnosisNotes } from '../components/review/DiagnosisNote'
 
 export default function RichMockReview() {
   const { attemptId } = useParams()
@@ -20,6 +21,7 @@ export default function RichMockReview() {
   })
 
   const selfReports = useSelfReports('mock', attemptId)
+  const diagnosisNotes = useDiagnosisNotes('mock', attemptId)
 
   const { data: lb } = useQuery({
     queryKey: ['richReviewLb', data?.mock_test_id],
@@ -81,7 +83,7 @@ export default function RichMockReview() {
 
       {tab === 'review' ? (
         <div className="space-y-4">
-          {data.questions.map((q, i) => <ReviewCard key={i} q={q} index={i} attemptId={attemptId} selfReports={selfReports} />)}
+          {data.questions.map((q, i) => <ReviewCard key={i} q={q} index={i} attemptId={attemptId} selfReports={selfReports} diagnosisNotes={diagnosisNotes} />)}
         </div>
       ) : (
         <LeaderboardTable lb={lb} />
@@ -97,7 +99,7 @@ const Stat = ({ label, value }) => (
   </div>
 )
 
-function ReviewCard({ q, index, attemptId, selfReports }) {
+function ReviewCard({ q, index, attemptId, selfReports, diagnosisNotes }) {
   const pending = q.needs_manual_grading
   const correct = q.is_correct
   const TypeIcon = q.item_type === 'coding' ? Code2 : q.item_type === 'subjective' ? FileText : HelpCircle
@@ -176,6 +178,7 @@ function ReviewCard({ q, index, attemptId, selfReports }) {
         </details>
       )}
 
+      <DiagnosisNote text={q.ref_id ? diagnosisNotes.notes[`${q.kind}:${q.ref_id}`] : null} />
       {selfReports.enabled && selfReports.ready && !pending && !correct && q.ref_id &&
         !selfReports.notSeen.has(`${q.kind}:${q.ref_id}`) && (
         <WhatHappened

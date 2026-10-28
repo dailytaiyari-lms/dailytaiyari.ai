@@ -75,12 +75,12 @@ export default function WhatHappened({ attemptKind, attemptId, itemKind, itemId,
   return (
     <div
       role="group"
-      aria-label="What happened?"
+      aria-label="Not quite? Tell us what happened."
       className={`mt-3 flex flex-wrap items-center gap-2 transition-opacity ${
         saving ? 'opacity-60' : ''
       }`}
     >
-      <span className="text-xs text-surface-500">What happened?</span>
+      <span className="text-xs text-surface-500">Not quite? Tell us what happened.</span>
       {CHOICES.map(([value, label]) => (
         <button
           key={value}
