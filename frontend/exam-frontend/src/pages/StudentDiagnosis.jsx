@@ -1,7 +1,10 @@
+import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { insightsService } from '../services/insightsService'
+import { useTenantStore } from '../context/tenantStore'
 import Loading from '../components/common/Loading'
+import StudentAnswersTab from '../components/insights/StudentAnswersTab'
 import { DeficitChip, MasteryBar } from './Practice'
 import { User, CheckCircle2, XCircle, Hourglass } from 'lucide-react'
 
@@ -17,6 +20,8 @@ const STATUS_ICONS = {
  */
 const StudentDiagnosis = () => {
   const { studentId } = useParams()
+  const teacherView = useTenantStore((s) => s.tenant?.features?.diagnosis_teacher_view === true)
+  const [tab, setTab] = useState('concepts') // concepts | answers
   const { data, isLoading } = useQuery({
     queryKey: ['studentDiagnosis', studentId],
     queryFn: () => insightsService.getStudentDiagnosis(studentId),
@@ -40,6 +45,28 @@ const StudentDiagnosis = () => {
         </div>
       </div>
 
+      {teacherView && (
+        <div className="flex gap-2">
+          {[['concepts', 'Concepts'], ['answers', 'Answers']].map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              className={`px-4 py-2 rounded-xl text-sm font-medium ${
+                tab === key
+                  ? 'bg-primary-500 text-white'
+                  : 'bg-surface-100 dark:bg-surface-800 hover:bg-surface-200 dark:hover:bg-surface-700'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {teacherView && tab === 'answers' && <StudentAnswersTab studentId={studentId} />}
+
+      {tab === 'concepts' && (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Concept map */}
         <div className="p-5 rounded-2xl bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700">
@@ -137,6 +164,7 @@ const StudentDiagnosis = () => {
           </div>
         </div>
       </div>
+      )}
     </div>
   )
 }
