@@ -237,3 +237,27 @@ class MyAttemptDiagnosisTests(VisibilityTestCase):
         self.tenant.features = {'response_diagnosis': True}
         self.tenant.save()
         self.assertEqual(self.client_for(self.student_user).get(self.url()).status_code, 403)
+
+
+class OptOutTests(VisibilityTestCase):
+    """With every learning-layer switch off, no Part A endpoint is reachable
+    and no diagnosis work is queued by reading them."""
+
+    features = {}
+
+    def test_every_new_endpoint_is_403(self):
+        attempt = self.quiz_attempt(self.student)
+        teacher_urls = [
+            f'{INSIGHTS}/assessments/quiz/{self.quiz.id}/behaviour/',
+            f'{INSIGHTS}/students/{self.student.id}/answers/',
+            f'{INSIGHTS}/courses/{self.course.id}/behaviour/',
+        ]
+        for url in teacher_urls:
+            self.assertEqual(self.client_for(self.admin).get(url).status_code, 403, url)
+        student_url = f'/api/v1/intelligence/my/attempts/quiz/{attempt.id}/diagnosis/'
+        self.assertEqual(self.client_for(self.student_user).get(student_url).status_code, 403)
+
+    def test_features_payload_reports_view_switches_off(self):
+        features = self.tenant.get_features()
+        self.assertFalse(features['diagnosis_teacher_view'])
+        self.assertFalse(features['diagnosis_student_view'])
