@@ -64,9 +64,10 @@ def assessment_course_ids(kind, assessment):
     """The courses a quiz or mock belongs to (a mock can have several, or none)."""
     if kind == 'quiz':
         return [assessment.course_id] if assessment.course_id else []
+    # The legacy FK and the M2M both mean "belongs to": take the union.
     ids = list(assessment.courses.values_list('id', flat=True))
-    if not ids and assessment.course_id:
-        ids = [assessment.course_id]
+    if assessment.course_id and assessment.course_id not in ids:
+        ids.append(assessment.course_id)
     return ids
 
 

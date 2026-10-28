@@ -1,7 +1,7 @@
 """Who sees which students and courses (spec 2B §3.2), and the narrowing of
 the existing Insights views for faculty."""
 from intelligence.access import (
-    can_manage_course, can_view_student, diagnosis_scope_q, teachable_course_ids,
+    assessment_course_ids, assessment_in_scope, can_manage_course, can_view_student, diagnosis_scope_q, teachable_course_ids,
 )
 from intelligence.models import ResponseDiagnosis
 from intelligence.tests.visibility_fixtures import VisibilityTestCase
@@ -56,6 +56,37 @@ class HelperTests(VisibilityTestCase):
                 .values_list('id', flat=True)),
             {mine.id, theirs.id},
         )
+
+    def test_mock_belongs_to_the_fk_course_and_the_linked_courses(self):
+        from quiz.models import MockTest
+
+        def mock_test(title, **kwargs):
+            return MockTest.objects.create(
+                tenant=self.tenant, title=title, duration_minutes=60,
+                total_marks=10, **kwargs)
+
+        # FK on the other course, M2M on this one.
+        fk_other = mock_test('FK other', course=self.other_course)
+        fk_other.courses.add(self.course)
+        self.assertEqual(
+            set(assessment_course_ids('mock', fk_other)),
+            {self.course.id, self.other_course.id})
+        self.assertTrue(assessment_in_scope(self.faculty, 'mock', fk_other))
+        # The reverse: FK on this course, M2M on the other.
+        fk_mine = mock_test('FK mine', course=self.course)
+        fk_mine.courses.add(self.other_course)
+        self.assertEqual(
+            set(assessment_course_ids('mock', fk_mine)),
+            {self.course.id, self.other_course.id})
+        self.assertTrue(assessment_in_scope(self.faculty, 'mock', fk_mine))
+        # Listed once even when both links name the same course.
+        both = mock_test('Both', course=self.course)
+        both.courses.add(self.course)
+        self.assertEqual(assessment_course_ids('mock', both), [self.course.id])
+        # A mock linked to no course stays admin-only.
+        open_mock = mock_test('Open')
+        self.assertFalse(assessment_in_scope(self.faculty, 'mock', open_mock))
+        self.assertTrue(assessment_in_scope(self.admin, 'mock', open_mock))
 
 
 class ExistingViewNarrowingTests(VisibilityTestCase):

@@ -316,19 +316,18 @@ class StudentDiagnosisView(APIView):
             .select_related('concept__subject')
             .order_by('mastery')
         )
+        teachable = teachable_course_ids(request.user)
         course_id = request.query_params.get('course')
         if course_id:
-            if (request.user.role != 'admin'
-                    and not any(str(c) == course_id for c in teachable_course_ids(request.user))):
+            if request.user.role != 'admin' and not any(str(c) == course_id for c in teachable):
                 return _forbidden()
             states = states.filter(concept__subject__course_id=course_id)
         elif request.user.role != 'admin':
-            states = states.filter(
-                concept__subject__course_id__in=teachable_course_ids(request.user))
+            states = states.filter(concept__subject__course_id__in=teachable)
 
         sets = PracticeSet.objects.filter(student=student)
         if request.user.role != 'admin':
-            sets = sets.filter(course_id__in=teachable_course_ids(request.user))
+            sets = sets.filter(course_id__in=teachable)
         sets = (
             sets.select_related('course').prefetch_related('target_concepts', 'items')
             .order_by('-created_at')[:30]
@@ -519,7 +518,7 @@ class CourseBehaviourView(APIView):
 
     def get(self, request, course_id):
         from quiz.models import MockTestAttempt, QuizAttempt
-        from users.models import StudentProfile
+        from users.models import CourseEnrollment, StudentProfile
 
         course = _course_or_404(request, course_id)
         if course is None:
@@ -582,6 +581,11 @@ class CourseBehaviourView(APIView):
             trend.append({'week_start': start.date().isoformat(),
                           **visibility.behaviour_rates(labels)})
 
+        # The tile means "this course's students": a mock linked to several
+        # courses, or a rejected/pending enrollment, must not name anyone here.
+        enrolled = set(CourseEnrollment.objects.filter(
+            course=course, status='approved').values_list('student_id', flat=True))
+        per_student = {sid: labels for sid, labels in per_student.items() if sid in enrolled}
         check = visibility.students_to_check(per_student)
         names = {
             profile.id: (getattr(profile.user, 'full_name', '') or profile.user.email)

@@ -179,6 +179,40 @@ class CourseBehaviourTests(VisibilityTestCase):
         self.assertEqual(response.json()['rates']['answers'], 19)
         self.assertEqual(response.json()['trend'][-1]['answers'], 17)
 
+    def test_students_to_check_lists_only_the_courses_enrolled_students(self):
+        from quiz.models import MockTest, MockTestAttempt
+
+        # A mock linked to both courses: the other course's student attempts
+        # it, mostly with slips. They must not appear on this course's tile.
+        paper = MockTest.objects.create(
+            tenant=self.tenant, course=self.other_course, title='Joint paper',
+            duration_minutes=60, total_marks=16,
+        )
+        paper.courses.add(self.course, self.other_course)
+        attempt = MockTestAttempt.objects.create(
+            student=self.outsider, mock_test=paper, status='completed')
+        MockTestAttempt.objects.filter(id=attempt.id).update(
+            completed_at=timezone.now() - timedelta(minutes=30))
+        for n in range(16):
+            self.diagnose(
+                attempt, self.make_question(100 + n),
+                'careless_slip' if n < 12 else 'correct', kind='mock')
+        for client in (self.client_for(self.faculty), self.client_for(self.admin)):
+            data = client.get(self.url()).json()
+            ids = [row['student_id'] for row in data['students_to_check']]
+            self.assertNotIn(str(self.outsider.id), ids)
+            self.assertEqual(ids, [str(self.student.id)])
+            # Class-level rates still count every diagnosed row.
+            self.assertEqual(data['rates']['answers'], 34)
+
+    def test_students_to_check_skips_unapproved_enrollments(self):
+        enrollment = self.student.enrollments.get(course=self.course)
+        enrollment.status = 'pending'
+        enrollment.save()
+        data = self.client_for(self.faculty).get(self.url()).json()
+        self.assertEqual(data['students_to_check'], [])
+        self.assertEqual(data['rates']['answers'], 18)
+
     def test_scope_and_switch(self):
         self.assertEqual(self.client_for(self.faculty).get(self.url(self.other_course)).status_code, 403)
         self.tenant.features = {'response_diagnosis': True}
