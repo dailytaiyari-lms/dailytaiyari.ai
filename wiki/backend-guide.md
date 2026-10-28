@@ -351,6 +351,25 @@ state with guesses and slips down-weighted.
   `client_max_body_size`).
 - Throttle: the timeline endpoint allows 20 requests/min/user on its own
   `timeline` scope.
+- **Diagnosis visibility (2B Part A).** Two more opt-in switches, both
+  needing `response_diagnosis` (`Tenant.FEATURE_REQUIRES`;
+  `get_features()` reports them off while it is off):
+  - `diagnosis_teacher_view` — Insights: "Answer behaviour" panel on each
+    assessment report (`…/assessments/<kind>/<id>/behaviour/`), "Answers"
+    tab on each student (`…/students/<id>/answers/`), answer-behaviour tile
+    on Insights home (`…/courses/<id>/behaviour/`), and the admin-only
+    Diagnosis quality page over the calibration endpoint.
+  - `diagnosis_student_view` — one-line notes on quiz, mock and rich-mock
+    review pages (`GET /api/v1/intelligence/my/attempts/<kind>/<id>/diagnosis/`).
+    Only medium/high-confidence diagnoses show a note; students never see a
+    label.
+  - Flags, patterns and student wording: `intelligence/visibility_config.py`.
+    Display-only — no version bump or recompute after editing.
+  - Scope (`intelligence/access.py`): faculty see only their assigned
+    courses and the students approved in them; admins see the tenant. This
+    also narrowed the older Insights views for faculty.
+  - The calibration endpoint is admin-only and now also returns
+    `thresholds` and `classifier_version`.
 
 ---
 
