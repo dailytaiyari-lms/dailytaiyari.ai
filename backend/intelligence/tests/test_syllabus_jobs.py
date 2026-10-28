@@ -2,7 +2,9 @@
 from django.test import TestCase
 
 from core.models import Tenant
+from exams.models import Course
 from intelligence import api
+from intelligence.models import TaggingRun, TreeBuildJob
 
 
 class SwitchTests(TestCase):
@@ -15,3 +17,18 @@ class SwitchTests(TestCase):
         self.assertFalse(api.intelligence_enabled(tenant))
         tenant.features = {'syllabus_tools': True}
         self.assertTrue(api.intelligence_enabled(tenant))
+
+
+class JobModelTests(TestCase):
+    def test_defaults_and_payload(self):
+        tenant = Tenant.objects.create(name='Job Academy')
+        course = Course.objects.create(tenant=tenant, name='C', code='job-c', course_type='skill')
+        job = TreeBuildJob.objects.create(tenant=tenant, course=course)
+        self.assertEqual(job.status, 'queued')
+        payload = job.payload()
+        self.assertEqual(payload['kind'], 'tree_build')
+        self.assertEqual(payload['status'], 'queued')
+        self.assertEqual(payload['course'], str(course.id))
+        run = TaggingRun.objects.create(tenant=tenant, course=course, summary={'tagged': 3})
+        self.assertEqual(run.payload()['kind'], 'tagging')
+        self.assertEqual(list(course.tagging_runs.all()), [run])

@@ -1090,3 +1090,81 @@ class ItemSkillTag(TimeStampedModel):
 
     def __str__(self):
         return f'{self.skill_id} on {self.question_id or self.mock_item_id}'
+
+
+# ─── Syllabus tools: background job history (spec 2B §5.1) ───────────────────
+
+
+class SyllabusJob(TimeStampedModel):
+    """Shared shape of a background syllabus job (one row per run)."""
+
+    STATUS_QUEUED = 'queued'
+    STATUS_RUNNING = 'running'
+    STATUS_DONE = 'done'
+    STATUS_FAILED = 'failed'
+    STATUS_CHOICES = [
+        (STATUS_QUEUED, 'Queued'),
+        (STATUS_RUNNING, 'Running'),
+        (STATUS_DONE, 'Done'),
+        (STATUS_FAILED, 'Failed'),
+    ]
+    ACTIVE_STATUSES = (STATUS_QUEUED, STATUS_RUNNING)
+    KIND = ''
+
+    started_by = models.ForeignKey(
+        'users.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+    )
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_QUEUED)
+    # What was asked (e.g. explicit skill packs, subject ids); never student data.
+    options = models.JSONField(default=dict, blank=True)
+    summary = models.JSONField(default=dict, blank=True)
+    error = models.TextField(blank=True, default='')
+    tokens = models.PositiveIntegerField(default=0)
+    cost_usd = models.DecimalField(max_digits=10, decimal_places=6, default=0)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        abstract = True
+        ordering = ['-created_at']
+
+    def payload(self):
+        return {
+            'id': str(self.id),
+            'kind': self.KIND,
+            'course': str(self.course_id),
+            'status': self.status,
+            'summary': self.summary,
+            'error': self.error,
+            'tokens': self.tokens,
+            'cost_usd': float(self.cost_usd),
+            'started_by': (getattr(self.started_by, 'full_name', '') or getattr(self.started_by, 'email', ''))
+            if self.started_by_id else '',
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'started_at': self.started_at.isoformat() if self.started_at else None,
+            'finished_at': self.finished_at.isoformat() if self.finished_at else None,
+        }
+
+
+class TreeBuildJob(SyllabusJob):
+    """One "Build syllabus tree" run (services.course_tree.build_course_tree)."""
+
+    KIND = 'tree_build'
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='tree_build_jobs')
+
+    class Meta(SyllabusJob.Meta):
+        verbose_name = 'Tree Build Job'
+        verbose_name_plural = 'Tree Build Jobs'
+        indexes = [models.Index(fields=['course', 'status'])]
+
+
+class TaggingRun(SyllabusJob):
+    """One "Tag questions" run over a course's treed subjects."""
+
+    KIND = 'tagging'
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='tagging_runs')
+
+    class Meta(SyllabusJob.Meta):
+        verbose_name = 'Tagging Run'
+        verbose_name_plural = 'Tagging Runs'
+        indexes = [models.Index(fields=['course', 'status'])]
