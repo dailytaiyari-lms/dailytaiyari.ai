@@ -96,7 +96,9 @@ first: this plan uses `intelligence/access.py`, `IsTenantAdminOrInstructor`,
    `llm_tagger` ConceptLinks and writes `manual` ones. Generator links stay.
 6. **Re-tag on a manually edited item** turns it back into a tagger item
    (`source='llm_tagger'`) first, because the teacher asked for it
-   explicitly.
+   explicitly. Its `manual` ConceptLinks and `ItemSkillTag`s become
+   `llm_tagger` rows too, so the re-tag replaces them (otherwise the item
+   would keep the manual primary link beside the tagger's new one).
 7. **Merge recomputes learner state.** After a merge, the target concept's
    learner states are recomputed on the `intelligence` queue. `merge_concept`
    drops the loser's states, and nothing else would rebuild them.
@@ -152,7 +154,7 @@ first: this plan uses `intelligence/access.py`, `IsTenantAdminOrInstructor`,
 **Files:**
 - Modify: `backend/core/models.py`, `backend/intelligence/api.py`, `backend/dailytaiyari/settings.py`
 - Modify: `frontend/exam-frontend/src/context/tenantStore.js`, `frontend/exam-frontend/src/hooks/useResponseTimeline.js`
-- Modify: `wiki/environment-variables.md`, `wiki/backend-guide.md`
+- Modify: `wiki/environment-variables.md` (`wiki/backend-guide.md` is Task 13)
 - Test: `backend/intelligence/tests/test_syllabus_jobs.py` (create; first class)
 
 **Interfaces:**
@@ -235,13 +237,11 @@ else:
 const LEARNING_FEATURES = ['practice', 'ai_grading', 'response_diagnosis', 'syllabus_tools']
 ```
 
-`wiki/environment-variables.md`: add a row/entry in the same style as its neighbours:
+`wiki/environment-variables.md`: add a row to the table (columns: Variable | Required | Default | Description):
 
 ```markdown
-| `CELERY_TASK_ALWAYS_EAGER` | `False` | Local testing only. `true` runs Celery tasks inside the request (diagnosis right after submit; syllabus Build and Tag without a worker). Never set in production. |
+| `CELERY_TASK_ALWAYS_EAGER` | No | `False` | Local testing only. `true` runs Celery tasks inside the request (diagnosis right after submit; syllabus Build and Tag without a worker). Never set in production. |
 ```
-
-(If the file is not a table, add an equivalent bullet.)
 
 - [ ] **Step 4: Run tests**
 
@@ -466,7 +466,10 @@ class ProposedNodeTests(TestCase):
         # 1 topic → 1 subtopic call; no grouping (≤ 6 topics); 1 packs call.
         self.assertEqual(estimate['calls'], {'grouping': 0, 'subtopics': 1, 'packs': 1})
         self.assertEqual(estimate['approx_tokens'], 2 * course_tree.TOKENS_PER_CALL)
-        course_tree.build_course_tree(self.course, call=BuildCall(), packs=[])
+        # A topic counts as planned once it has a subtopic; a build that got no
+        # subtopics back would ask again next time (the builder does the same).
+        course_tree.build_course_tree(
+            self.course, call=BuildCall(subtopics={'Two Sum': ['Hash map lookup']}), packs=[])
         self.assertEqual(course_tree.estimate_build(self.course, packs=[])['llm_calls'], 0)
 
 
@@ -516,12 +519,12 @@ class SweepCountTests(TestCase):
                 tagging_sweep.estimate_tagging(self.tenant, {self.subject.id})['questions'], 2)
 
     def test_budget_status_without_budget(self):
-        status = __import__('intelligence.services.llm', fromlist=['budget_status']).budget_status(self.tenant)
+        status = budget_status(self.tenant)
         self.assertEqual(status['monthly_budget'], None)
         self.assertFalse(status['exhausted'])
 ```
 
-Replace the last test's import trick with a normal `from intelligence.services.llm import budget_status` at the top of the file and `status = budget_status(self.tenant)`.
+Also add `from intelligence.services.llm import budget_status` to the imports at the top of the file (next to `from intelligence import api`).
 
 - [ ] **Step 2: Run them to verify they fail**
 
@@ -789,8 +792,7 @@ def budget_status(tenant):
 
 **Existing tests**
 
-- `test_course_tree.py`: wherever a test asserts or filters on the status of an `llm_proposed` node, expect `'proposed'`. Run the file first to find them.
-- `test_tagging_sweep.py`: tests that compare `ItemTagging.raw` exactly must now allow the extra `topic_key` key (assert on `raw['tag']` / `raw['locate']` instead, or include `topic_key`).
+- `test_course_tree.py` and `test_tagging_sweep.py`: on this branch no test asserts the status of an `llm_proposed` node or compares `ItemTagging.raw` exactly, so both files pass unchanged (verified against the plan's code). Only touch them if Step 4 shows a failure; drop them from the commit if unchanged.
 
 - [ ] **Step 4: Run tests**
 
@@ -1057,6 +1059,7 @@ subtopics are accepted explicitly or by editing; two subtopics merge.
 Add, rename, archive and merge change the subject's tree version, so the
 next tagging run re-tags the affected items.
 """
+import uuid
 from collections import defaultdict
 
 from django.db import transaction
@@ -1074,6 +1077,19 @@ WEIGHT_TOLERANCE = 0.01
 
 class EditError(ValueError):
     """A refused edit; the message is shown to the teacher as is."""
+
+
+def as_uuid(value):
+    """``value`` as a UUID string, or None when it is not one.
+
+    Ids from request bodies and query strings go through this before any
+    ``filter(id=...)``: a malformed id raises ValidationError inside the ORM,
+    which would be a 500 instead of a 400.
+    """
+    try:
+        return str(uuid.UUID(str(value)))
+    except (TypeError, ValueError, AttributeError):
+        return None
 
 
 def _clean_name(value):
@@ -1217,9 +1233,10 @@ def update_node(node, data):
     if 'parent' in data:
         if node.level != 'topic':
             raise EditError('Only topics move between sub-subjects.')
+        parent_id = as_uuid(data['parent'])
         target = (SyllabusNode.objects.filter(
-            id=data['parent'], subject=node.subject, level='sub_subject', status__in=LIVE).first()
-            if data['parent'] else None)
+            id=parent_id, subject=node.subject, level='sub_subject', status__in=LIVE).first()
+            if parent_id else None)
         if target is None:
             raise EditError('Pick a sub-subject of this subject.')
         node.parent = target
@@ -1462,6 +1479,18 @@ class RetagAndAddToTreeTests(ReviewTestCase):
         self.assertEqual(self.tagging.source, 'llm_tagger')
         self.assertEqual(self.item.tagging_status, 'stale')
 
+    def test_mark_for_retag_hands_manual_links_and_skills_back(self):
+        tag_review.save_manual(self.tagging, {
+            'primary': str(self.newton.id), 'secondary': [str(self.friction.id)],
+            'thinking_level': 'single_application',
+            'skills': [{'key': 'formula_application', 'role': 'core', 'reason': 'F = ma'}],
+            'special_format': '', 'difficulty_prior': 'hard', 'est_solve_seconds': 90,
+        })
+        tag_review.mark_for_retag(self.tagging)
+        self.assertFalse(ConceptLink.objects.filter(question=self.item, source='manual').exists())
+        self.assertFalse(ItemSkillTag.objects.filter(question=self.item, source='manual').exists())
+        self.assertTrue(ConceptLink.objects.filter(question=self.item, source='llm_tagger').exists())
+
     def test_add_to_tree_creates_and_assigns(self):
         self.tagging.primary_node = None
         self.tagging.proposed_subtopic = 'Rolling friction'
@@ -1504,11 +1533,12 @@ Add to tree turns a proposed subtopic into a real node and assigns it.
 from django.db import transaction
 from django.utils import timezone
 
-from intelligence.models import ItemSkillTag, ItemTagging, SyllabusNode, TagDefinition
+from intelligence.models import ConceptLink, ItemSkillTag, ItemTagging, SyllabusNode, TagDefinition
 from intelligence.services.itemtags import content_hash_for, replace_links
 from intelligence.services.normalize import concept_slug
 from intelligence.services.syllabus import ensure_node_concept, packs_for_subject
 from intelligence.services.tagging_v2 import cognitive_projection
+from intelligence.services.tree_editor import as_uuid
 
 REVIEW_REASONS = ('low_confidence', 'invalid_key', 'proposed_subtopic', 'stage_disagreement')
 DIFFICULTIES = ('easy', 'medium', 'hard')
@@ -1619,6 +1649,7 @@ def bulk_accept(queryset):
 
 
 def _subtopic(subject, node_id):
+    node_id = as_uuid(node_id)
     node = SyllabusNode.objects.filter(
         id=node_id, subject=subject, level='subtopic', status__in=LIVE).first() if node_id else None
     if node is None:
@@ -1721,6 +1752,10 @@ def mark_for_retag(tagging):
     if tagging.source == 'manual':
         tagging.source = 'llm_tagger'
         tagging.save(update_fields=['source', 'updated_at'])
+        # The teacher's links and skills become tagger rows, so the re-tag
+        # replaces them instead of sitting beside the new primary link.
+        ConceptLink.objects.filter(**{_arm(tagging): item}, source='manual').update(source='llm_tagger')
+        ItemSkillTag.objects.filter(**{_arm(tagging): item}, source='manual').update(source='llm_tagger')
     item.tagging_status = 'stale'
     item.save(update_fields=['tagging_status', 'updated_at'])
     return item
@@ -2219,7 +2254,7 @@ from .access import can_manage_course, teachable_course_ids
 from .admin_views import IsTenantAdminOrInstructor
 from .models import CourseSyllabus, ItemTagging, SyllabusNode, TaggingRun, TreeBuildJob
 from .services.llm import budget_status
-from .services.tree_editor import EditError
+from .services.tree_editor import EditError, as_uuid
 
 JOB_HISTORY = 10
 
@@ -2406,12 +2441,15 @@ class NodeCreateView(APIView):
         if error:
             return error
         data = request.data if isinstance(request.data, dict) else {}
-        subject = course.subjects.filter(id=data.get('subject')).first() if data.get('subject') else None
+        subject_id = as_uuid(data.get('subject'))
+        subject = course.subjects.filter(id=subject_id).first() if subject_id else None
         if subject is None:
             return _error('Pick a subject of this course.')
         parent = None
         if data.get('parent'):
-            parent = SyllabusNode.objects.filter(id=data['parent'], subject=subject).first()
+            parent_id = as_uuid(data['parent'])
+            parent = (SyllabusNode.objects.filter(id=parent_id, subject=subject).first()
+                      if parent_id else None)
             if parent is None:
                 return _error('That parent is not in this subject.')
         try:
@@ -2450,7 +2488,7 @@ class NodeMergeView(APIView):
         node, error = _node(request, node_id)
         if error:
             return error
-        target_id = request.data.get('into') if isinstance(request.data, dict) else None
+        target_id = as_uuid(request.data.get('into')) if isinstance(request.data, dict) else None
         target = SyllabusNode.objects.filter(id=target_id, subject=node.subject).first() if target_id else None
         if target is None:
             return _error('Pick a subtopic of this subject to merge into.')
@@ -2734,11 +2772,14 @@ class ReviewListView(APIView):
         rows = (ItemTagging.objects.filter(tenant=request.tenant, review_status='needs_review')
                 .filter(_scope_q(request.user)))
         params = request.query_params
-        if params.get('course'):
-            rows = rows.filter(Q(question__subject__course_id=params['course'])
-                               | Q(mock_item__subject__course_id=params['course']))
-        if params.get('topic'):
-            rows = rows.filter(Q(question__topic_id=params['topic']) | Q(mock_item__topic_id=params['topic']))
+        course_id, topic_id = as_uuid(params.get('course')), as_uuid(params.get('topic'))
+        if (params.get('course') and not course_id) or (params.get('topic') and not topic_id):
+            return _error('Unknown course or topic.')
+        if course_id:
+            rows = rows.filter(Q(question__subject__course_id=course_id)
+                               | Q(mock_item__subject__course_id=course_id))
+        if topic_id:
+            rows = rows.filter(Q(question__topic_id=topic_id) | Q(mock_item__topic_id=topic_id))
         if params.get('reason') in REVIEW_REASONS:
             rows = rows.filter(review_reasons__icontains=f'"{params["reason"]}"')
         rows = rows.distinct().order_by('confidence', 'created_at')
@@ -2776,13 +2817,9 @@ class ReviewBulkAcceptView(APIView):
         ids = request.data.get('ids') if isinstance(request.data, dict) else None
         if not isinstance(ids, list) or not ids:
             return _error('Pick at least one row.')
-        clean = [value for value in ids if isinstance(value, str)][:REVIEW_PAGE * 4]
+        clean = [value for value in (as_uuid(raw) for raw in ids) if value][:REVIEW_PAGE * 4]
         rows = ItemTagging.objects.filter(tenant=request.tenant, id__in=clean).filter(_scope_q(request.user))
-        try:
-            accepted = bulk_accept(rows)
-        except Exception:  # noqa: BLE001 — a malformed id
-            return _error('Some ids were not valid.')
-        return Response({'accepted': accepted})
+        return Response({'accepted': bulk_accept(rows)})
 
 
 class ReviewDetailView(APIView):
@@ -2841,7 +2878,7 @@ class ReviewAddToTreeView(APIView):
         if error:
             return error
         topic = None
-        topic_id = request.data.get('topic') if isinstance(request.data, dict) else None
+        topic_id = as_uuid(request.data.get('topic')) if isinstance(request.data, dict) else None
         if topic_id:
             topic = SyllabusNode.objects.filter(id=topic_id, tenant=request.tenant, level='topic').first()
             if topic is None:
@@ -3023,7 +3060,7 @@ import TagReviewList from './TagReviewList'
 
 const fmt = (n) => (n == null ? '—' : Number(n).toLocaleString())
 const STATUS_STYLE = {
-  queued: 'text-surface-500', running: 'text-primary-500', done: 'text-success-600', failed: 'text-danger-600',
+  queued: 'text-surface-500', running: 'text-primary-500', done: 'text-success-600', failed: 'text-error-600',
 }
 
 function Card({ icon: Icon, title, children }) {
@@ -3038,7 +3075,7 @@ function Card({ icon: Icon, title, children }) {
 function BudgetLine({ budget }) {
   if (!budget || budget.monthly_budget == null) return <p className="text-xs text-surface-400">No monthly AI budget set.</p>
   return (
-    <p className={`text-xs ${budget.exhausted ? 'text-danger-600' : 'text-surface-400'}`}>
+    <p className={`text-xs ${budget.exhausted ? 'text-error-600' : 'text-surface-400'}`}>
       Monthly budget: {fmt(budget.remaining)} of {fmt(budget.monthly_budget)} tokens left
     </p>
   )
@@ -3212,7 +3249,7 @@ function JobHistory({ jobs }) {
             <span>
               {job.kind === 'tree_build' ? 'Tree build' : 'Tagging'}
               <span className={`ml-2 ${STATUS_STYLE[job.status]}`}>{job.status}</span>
-              {job.error && <span className="ml-2 text-xs text-danger-600">{job.error}</span>}
+              {job.error && <span className="ml-2 text-xs text-error-600">{job.error}</span>}
             </span>
             <span className="text-xs text-surface-400">
               {job.started_by && `${job.started_by} · `}
@@ -3418,7 +3455,7 @@ function NodeRow({ node, subject, courseId, depth, siblingsForMerge, subSubjects
               type="button"
               title="Archive"
               onClick={() => window.confirm(`Archive "${node.name}"?`) && update.mutate({ status: 'archived' })}
-              className="p-1 text-surface-400 hover:text-danger-500"
+              className="p-1 text-surface-400 hover:text-error-500"
             >
               <Archive size={14} />
             </button>

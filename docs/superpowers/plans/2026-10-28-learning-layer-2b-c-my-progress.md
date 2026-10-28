@@ -816,7 +816,7 @@ git commit -m "feat(intelligence): pure mastery roll-up, trend and topic lists"
   - `course_structure(course) -> [{'subject': Subject, 'has_tree': bool, 'node': subject node}]`, subjects in `order`, `name` order;
   - `leaf_concept_ids(node) -> set`;
   - `rollup_for(student, course, *, now=None, with_trend=True) -> [subject payload + 'has_tree']`.
-- Produces (`tests/progress_fixtures.py`): `ProgressTestCase(VisibilityTestCase)` with features `ALL_ON + my_progress`; a tree under `subject` (`mechanics` sub-subject; topics `kinematics` (0.6) and `dynamics` (0.4); subtopics `velocity`, `projectile`, `relative` under kinematics and `friction` under dynamics, each with a Concept in `concepts[name]`); a second subject `optics` with no tree; helpers `node(...)`, `concept(name, subject=None)`, `set_state(concept, mastery, evidence, student=None)`, `link(question, concept)`, `event(question, *, score, days_ago, attempt=None, student=None, source='quiz_answer')`, `hand_states()` (the Task 3 numbers).
+- Produces (`tests/progress_fixtures.py`): `ProgressTestCase(VisibilityTestCase)` with features `ALL_ON + my_progress`; a tree under `subject` (`mechanics` sub-subject; topics `kinematics` (0.6) and `dynamics` (0.4); subtopics `velocity`, `projectile`, `relative` under kinematics and `friction` under dynamics, each with a Concept in `concepts[name]`); a second subject `optics` with no tree; helpers `node(...)`, `concept(name, subject=None)`, `set_state(concept, mastery, evidence, student=None)`, `link(question, concept)`, `event(question, *, score, days_ago=0, attempt=None, student=None, source='quiz_answer', now=None)`, `hand_states(student=None)` (the Task 3 numbers).
 - Consumes: Task 3, `VisibilityTestCase` (Part A).
 
 - [ ] **Step 1: Write the fixture**
@@ -915,6 +915,8 @@ Create `backend/intelligence/tests/test_rollup.py`:
 
 ```python
 """My Progress roll-up from real rows (spec 2B §6.1)."""
+from datetime import timedelta
+
 from exams.models import Topic
 from intelligence.models import Concept, LearningEvent
 from intelligence.services import rollup
@@ -1009,10 +1011,14 @@ class TrendTests(ProgressTestCase):
     def test_a_regrade_replaces_the_original_answer(self):
         right = self.event(self.question, score=1.0, days_ago=1)
         self.event(self.question, score=1.0, days_ago=2)
+        # A real regrade occurs at its graded_at, after the original answer
+        # (events.record_regrade_event). A distinct occurred_at also keeps the
+        # "latest wins" order independent of created_at clock resolution.
         LearningEvent.objects.create(
             tenant=self.tenant, student=self.student, source_type='quiz_answer',
             question=self.question, subject=self.question.subject,
-            occurred_at=right.occurred_at, is_correct=False, score_fraction=0.0,
+            occurred_at=right.occurred_at + timedelta(hours=1), is_correct=False,
+            score_fraction=0.0,
             event_kind='regraded',
             dedup_key=right.dedup_key.rsplit(':', 1)[0] + ':1700000000',
         )
@@ -2516,14 +2522,14 @@ export const STATUS_TEXT = {
 }
 
 export const STATUS_CLASS = {
-  weak: 'text-danger-600 dark:text-danger-400',
+  weak: 'text-error-600 dark:text-error-400',
   in_progress: 'text-warning-600 dark:text-warning-400',
   strong: 'text-success-600 dark:text-success-400',
   not_enough_data: 'text-surface-400',
 }
 
 export const BAR_CLASS = {
-  weak: 'bg-danger-500',
+  weak: 'bg-error-500',
   in_progress: 'bg-warning-500',
   strong: 'bg-success-500',
   not_enough_data: 'bg-surface-300 dark:bg-surface-600',
@@ -3075,9 +3081,9 @@ const BAND_TEXT = {
   not_enough_data: 'Not enough data',
 }
 const BAND_CELL = {
-  weak: 'bg-danger-100 text-danger-700 dark:bg-danger-900/40 dark:text-danger-300',
-  in_progress: 'bg-warning-100 text-warning-700 dark:bg-warning-900/40 dark:text-warning-300',
-  strong: 'bg-success-100 text-success-700 dark:bg-success-900/40 dark:text-success-300',
+  weak: 'bg-error-100 text-error-700 dark:bg-error-900/40 dark:text-error-200',
+  in_progress: 'bg-warning-100 text-warning-700 dark:bg-warning-900/40 dark:text-warning-200',
+  strong: 'bg-success-100 text-success-700 dark:bg-success-900/40 dark:text-success-200',
   not_enough_data: 'bg-surface-100 text-surface-500 dark:bg-surface-700 dark:text-surface-300',
 }
 
@@ -3203,30 +3209,37 @@ git commit -m "feat(frontend): teacher Progress tab and class topic heatmap"
 
 - [ ] **Step 1: Ops notes**
 
-In `wiki/backend-guide.md`, after the Part A and Part B notes in the learning-layer section, add:
+There is no single "learning-layer section": Part A appends to the
+"Response diagnosis (intelligence)" bullet list and Part B adds a
+`### Syllabus & tagging tools (2B Part B)` subsection at the end of the
+"Question tagging v2 (intelligence)" section (the end of the file). Add the
+following directly after Part B's subsection, in the same style:
 
 ```markdown
-- **My Progress (2B Part C).** Opt-in switch `my_progress` (also a
-  `LEARNING_FEATURES` member).
-  - Student page `/progress` (`GET /api/v1/intelligence/my/progress/?course=`):
-    mastery rolled up subtopic → topic → sub-subject → subject, weak and
-    strong topics, skill and thinking-level profiles, and recent answers
-    when `diagnosis_student_view` is on.
-  - Teachers: "Progress" tab on the student page
-    (`…/students/<id>/progress/`) and a class topic heatmap on Insights home
-    (`…/courses/<id>/heatmap/`), both scoped by `intelligence/access.py`.
-  - Roll-ups, lists and heatmaps are computed per request from
-    `LearnerConceptState` and `LearningEvent`; a subject without a syllabus
-    tree falls back to course Topic → Concept. Bands and wording:
-    `intelligence/progress_config.py` (display-only).
-  - `LearnerFacetState` (skills and thinking levels per subject) is
-    recomputed after each diagnosed attempt, nightly, and by
-    `recompute_learner_state` (`--no-facets` to skip), only for tenants with
-    `my_progress` on. After changing a facet weight, bump
-    `FACET_MODEL_VERSION` and rerun the command.
-  - **After turning `my_progress` on for a tenant**, run
-    `python manage.py recompute_learner_state --tenant <id>` once to fill the
-    facet profiles.
+### My Progress (2B Part C)
+
+Opt-in switch `my_progress` (also a `LEARNING_FEATURES` member: turning it on
+starts event collection like the other learning-layer switches).
+
+- **Student page** `/progress` (`GET /api/v1/intelligence/my/progress/?course=`):
+  mastery rolled up subtopic → topic → sub-subject → subject, weak and
+  strong topics, skill and thinking-level profiles, and recent answers
+  when `diagnosis_student_view` is on.
+- **Teachers:** "Progress" tab on the student page
+  (`…/students/<id>/progress/`) and a class topic heatmap on Insights home
+  (`…/courses/<id>/heatmap/`), both scoped by `intelligence/access.py`.
+- **Computed on read:** roll-ups, lists and heatmaps come per request from
+  `LearnerConceptState` and `LearningEvent`; a subject without a syllabus
+  tree falls back to course Topic → Concept. Bands and wording:
+  `intelligence/progress_config.py` (display-only).
+- **Facets:** `LearnerFacetState` (skills and thinking levels per subject) is
+  recomputed after each diagnosed attempt, nightly, and by
+  `recompute_learner_state` (`--no-facets` to skip), only for tenants with
+  `my_progress` on. After changing a facet weight, bump
+  `FACET_MODEL_VERSION` and rerun the command.
+- **After turning `my_progress` on for a tenant**, run
+  `python manage.py recompute_learner_state --tenant <id>` once to fill the
+  facet profiles.
 ```
 
 - [ ] **Step 2: Manual walkthrough (in the PR description, not committed)**

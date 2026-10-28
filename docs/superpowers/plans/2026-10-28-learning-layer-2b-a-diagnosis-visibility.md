@@ -54,9 +54,11 @@ TanStack Query + Tailwind (exam-frontend), React (superadmin-frontend).
 - Other apps reach the intelligence layer only through
   `intelligence/api.py` and `intelligence/hooks.py`. Part A adds no calls
   from other apps.
-- Part A adds **no models and no migrations**. It reads
-  `ResponseDiagnosis`, `ResponseSelfReport` (through
-  `ResponseDiagnosis.self_report`), quiz attempts and course membership.
+- Part A adds **no models and no migrations** (the latest intelligence
+  migration stays `0005_tagging_v2`). It reads `ResponseDiagnosis` (the
+  student's self-report choice is copied onto its `self_report` CharField,
+  so `ResponseSelfReport` is not queried), quiz/mock attempts, practice
+  sets and course membership.
 - Everything is computed per request. Each endpoint caps its work (constants
   in `visibility_config.py`) and paginates lists.
 - Every new endpoint returns **403** when its switch is off and **403** when
@@ -482,7 +484,9 @@ class VisibilityTestCase(TestCase):
         QuestionOption.objects.create(
             tenant=self.tenant, question=question, option_text='A', is_correct=True, order=0,
         )
-        QuizQuestion.objects.create(quiz=quiz or self.quiz, question=question)
+        # QuizQuestion declares its own Meta, so it has no default ordering:
+        # set ``order`` so paper order is deterministic.
+        QuizQuestion.objects.create(quiz=quiz or self.quiz, question=question, order=n)
         return question
 
     def quiz_attempt(self, student, *, quiz=None, minutes_ago=60, status='completed'):
@@ -1571,14 +1575,14 @@ In `backend/intelligence/admin_views.py`:
 1. Extend the imports:
 
 ```python
-from django.db.models import Avg, Count, Min, Q
+from django.db.models import Avg, Count, F, Min, Q
 
 from . import visibility_config as VC
 from .access import diagnosis_scope_q
 from .services import visibility
 ```
 
-(Merge `Min` into the existing `django.db.models` import line; merge `diagnosis_scope_q` into the `.access` import from Task 2.)
+(Merge `F` and `Min` into the existing `django.db.models` import line; merge `diagnosis_scope_q` into the `.access` import from Task 2.)
 
 2. Below `IsTenantAdminOrInstructor`, add:
 
@@ -1617,8 +1621,11 @@ def _finished_attempt_ids(kind, assessment, limit):
         attempts = QuizAttempt.objects.filter(quiz=assessment)
     else:
         attempts = MockTestAttempt.objects.filter(mock_test=assessment)
+    # nulls_last: on Postgres a plain '-completed_at' puts abandoned attempts
+    # with no completed_at first and can crowd real ones out of the cap.
     return list(
-        attempts.exclude(status='in_progress').order_by('-completed_at')
+        attempts.exclude(status='in_progress')
+        .order_by(F('completed_at').desc(nulls_last=True))
         .values_list('id', flat=True)[:limit]
     )
 
@@ -1628,13 +1635,16 @@ def _assessment_items(kind, assessment):
     mock's inline items."""
     from quiz.models import MockTestItem, MockTestQuestion
 
+    # QuizQuestion / MockTestQuestion declare their own Meta and so have no
+    # default ordering: order explicitly, or Postgres returns any order.
     if kind == 'quiz':
         rows = [(f'bank:{qq.question_id}', qq.question.question_text)
-                for qq in assessment.quizquestion_set.select_related('question')]
+                for qq in assessment.quizquestion_set.select_related('question')
+                .order_by('order', 'created_at')]
     else:
         rows = [(f'bank:{mtq.question_id}', mtq.question.question_text)
                 for mtq in MockTestQuestion.objects.filter(mock_test=assessment)
-                .select_related('question')]
+                .select_related('question').order_by('section', 'order', 'created_at')]
         rows += [(f'item:{item.id}', item.question_text)
                  for item in MockTestItem.objects.filter(mock_test=assessment)]
     return [(key, (text or '')[:200]) for key, text in rows]
@@ -1842,7 +1852,7 @@ git commit -m "feat(intelligence): assessment answer behaviour and student Answe
 - Modify: `backend/intelligence/admin_urls.py`
 - Modify: `backend/intelligence/views.py` (`StudentDiagnosisFeaturePermission`, `MyAttemptDiagnosisView`)
 - Modify: `backend/intelligence/urls.py`
-- Modify: `backend/intelligence/tests/test_self_report.py` (calibration is admin-only now: adjust any instructor case)
+- Run (unchanged): `backend/intelligence/tests/test_self_report.py` (its calibration tests use only admin and student callers, so admin-only keeps them green)
 - Test: `backend/intelligence/tests/test_visibility_api.py` (add three classes)
 
 **Interfaces:**
@@ -2144,7 +2154,7 @@ class MyAttemptDiagnosisView(APIView):
          name='intelligence-my-attempt-diagnosis'),
 ```
 
-6. In `backend/intelligence/tests/test_self_report.py`, find the calibration tests. Any test that calls `CALIBRATION` as an instructor must now expect 403; tests that call it as an admin are unchanged. If none use an instructor, change nothing.
+6. `backend/intelligence/tests/test_self_report.py` needs no change: its `CalibrationTests` call `CALIBRATION` only as an admin (expect 200) or as a student (expect 403), and both still hold with `IsTenantAdmin`.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -2154,7 +2164,7 @@ Expected: all PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add backend/intelligence/admin_views.py backend/intelligence/admin_urls.py backend/intelligence/views.py backend/intelligence/urls.py backend/intelligence/tests/test_visibility_api.py backend/intelligence/tests/test_self_report.py
+git add backend/intelligence/admin_views.py backend/intelligence/admin_urls.py backend/intelligence/views.py backend/intelligence/urls.py backend/intelligence/tests/test_visibility_api.py
 git commit -m "feat(intelligence): course behaviour tile, admin-only calibration, student answer notes"
 ```
 
@@ -2295,13 +2305,15 @@ export const LABEL_TEXT = {
 
 export const LABEL_COLOR = {
   correct: 'bg-success-500',
-  correct_lucky: 'bg-success-300',
+  // Only shades defined in tailwind.config.js: success/warning have no 300,
+  // and the red palette is `error` (there is no `danger`).
+  correct_lucky: 'bg-success-400',
   correct_slow: 'bg-success-200',
   guess: 'bg-warning-500',
   second_guess: 'bg-orange-400',
   careless_slip: 'bg-amber-300',
-  time_pressure: 'bg-danger-400',
-  concept_gap: 'bg-danger-600',
+  time_pressure: 'bg-error-400',
+  concept_gap: 'bg-error-600',
   skipped: 'bg-surface-300',
   not_seen: 'bg-surface-400',
   unclear: 'bg-surface-200',
@@ -2500,7 +2512,7 @@ export default function StudentAnswersTab({ studentId }) {
                     type="button"
                     onClick={() => setHighlight(active ? null : new Set(pattern.answer_ids))}
                     className={`text-xs px-3 py-1 rounded-full border ${
-                      active ? 'bg-warning-500 border-warning-500 text-white' : 'border-warning-300'
+                      active ? 'bg-warning-500 border-warning-500 text-white' : 'border-warning-400'
                     }`}
                   >
                     {pattern.message} · {pattern.count}
@@ -2584,7 +2596,7 @@ export default function StudentAnswersTab({ studentId }) {
 - [ ] **Step 2: Tabs on StudentDiagnosis**
 
 In `frontend/exam-frontend/src/pages/StudentDiagnosis.jsx`:
-- change the React import line to add `useState`, and add:
+- the file has no `react` import today; add these imports at the top:
 
 ```jsx
 import { useState } from 'react'
@@ -2797,7 +2809,7 @@ and add `Gauge` to the `lucide-react` import.
 
 - show the "Generated questions" tab only when `practiceOn` (filter the tabs array), and in the class view's right-hand column, put `{teacherView && <AnswerBehaviourTile courseId={activeCourse} />}` first, then wrap the "Active deficits", "Practice adoption" and "Smart Practice controls" tiles in `{practiceOn && (<>…</>)}`.
 
-Before writing this, open `contentBuilderService.js` and confirm `getExams` returns a plain array (its `list()` helper unwraps pagination). If it returns `{results}`, use `courses?.results ?? courses ?? []` instead.
+(Checked: `contentBuilderService.getExams` calls `/courses/admin/courses/` through its `list()` helper, which returns a plain array, and `AdminCourseViewSet` already limits instructors to their assigned courses.)
 
 - [ ] **Step 3: Menu visibility**
 
@@ -3058,15 +3070,23 @@ In `toggleFeature`, add before the existing `next` line:
 
 - [ ] **Step 2: Super-admin hint**
 
-In `TenantDetail.jsx` `FeatureRow`, under the `text-[11px]` status line add:
+Spec §3.1 asks for the dependent switch to be greyed out, with the hint, while its requirement is off. In `TenantDetail.jsx`:
+
+- in the `FeatureRow` call inside the Feature Governance list, pass the requirement's effective state:
 
 ```jsx
-          {feature.requires && (
+                requirementOn={!f.requires || Boolean(tenant.features?.[f.requires])}
+```
+
+- add `requirementOn = true` to `FeatureRow`'s props (`function FeatureRow({ feature, mode, tenantValue, onChange, requirementOn = true })`), dim the row while it is false by changing the outer `<div className="flex items-center justify-between py-2.5">` to `<div className={`flex items-center justify-between py-2.5 ${requirementOn ? '' : 'opacity-60'}`}>`, and under the `text-[11px]` status line add:
+
+```jsx
+          {!requirementOn && (
             <div className="text-[11px] text-slate-400">Needs {feature.requires_label}</div>
           )}
 ```
 
-(The super admin may still lock a dependent switch on; it takes effect only while its requirement is on, which the hint states.)
+(The buttons stay clickable: the super admin may still lock a dependent switch on; it takes effect only while its requirement is on, which the hint states.)
 
 - [ ] **Step 3: Build both apps**
 
