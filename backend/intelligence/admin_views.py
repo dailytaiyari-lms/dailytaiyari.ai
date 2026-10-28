@@ -12,6 +12,7 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.permissions import IsTenantAdmin
 from exams.models import Course
 
 from . import visibility_config as VC
@@ -506,6 +507,100 @@ class StudentAnswersView(APIView):
         })
 
 
+class CourseBehaviourView(APIView):
+    """Answer-behaviour tile for one course (spec 2B §4.1.3): guess, slip and
+    time-pressure rates over the last 28 days, a weekly trend, and the
+    students most worth checking."""
+
+    permission_classes = TEACHER_DIAGNOSIS
+
+    def get(self, request, course_id):
+        from quiz.models import MockTestAttempt, QuizAttempt
+        from users.models import StudentProfile
+
+        course = _course_or_404(request, course_id)
+        if course is None:
+            return Response({'error': 'Course not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not can_manage_course(request.user, course):
+            return _forbidden()
+
+        now = timezone.now()
+        since = now - timedelta(days=VC.COURSE_TILE_DAYS)
+        completed = {}     # (kind, attempt_id) → completed_at
+        assessments = {}   # (kind, assessment_id) → (title, latest completed_at)
+
+        def collect(kind, rows):
+            for attempt_id, done, assessment_id, title in rows:
+                completed[(kind, attempt_id)] = done
+                if assessment_id is None:
+                    continue
+                key = (kind, assessment_id)
+                if key not in assessments or assessments[key][1] < done:
+                    assessments[key] = (title, done)
+
+        collect('quiz', QuizAttempt.objects.filter(
+            quiz__course=course, completed_at__gte=since,
+        ).values_list('id', 'completed_at', 'quiz_id', 'quiz__title'))
+        collect('mock', MockTestAttempt.objects.filter(
+            Q(mock_test__course=course) | Q(mock_test__courses=course),
+            completed_at__gte=since,
+        ).distinct().values_list('id', 'completed_at', 'mock_test_id', 'mock_test__title'))
+        collect('practice', [
+            (row_id, done, None, '')
+            for row_id, done in PracticeSet.objects.filter(
+                course=course, completed_at__gte=since,
+            ).values_list('id', 'completed_at')
+        ])
+
+        ids_by_kind = defaultdict(list)
+        for kind, attempt_id in completed:
+            ids_by_kind[kind].append(attempt_id)
+        match = Q(pk__in=[])
+        for kind, ids in ids_by_kind.items():
+            match |= Q(attempt_kind=kind, attempt_id__in=ids)
+        rows = list(
+            ResponseDiagnosis.objects.filter(tenant=request.tenant).filter(match)
+            .values_list('attempt_kind', 'attempt_id', 'student_id', 'final_label')
+        )
+
+        weeks = [[] for _ in range(VC.COURSE_TILE_WEEKS)]
+        per_student = defaultdict(list)
+        for kind, attempt_id, student_id, label in rows:
+            per_student[student_id].append(label)
+            age_days = (now - completed[(kind, attempt_id)]).days
+            index = VC.COURSE_TILE_WEEKS - 1 - min(age_days // 7, VC.COURSE_TILE_WEEKS - 1)
+            weeks[index].append(label)
+
+        trend = []
+        for index, labels in enumerate(weeks):
+            start = now - timedelta(days=7 * (VC.COURSE_TILE_WEEKS - index))
+            trend.append({'week_start': start.date().isoformat(),
+                          **visibility.behaviour_rates(labels)})
+
+        check = visibility.students_to_check(per_student)
+        names = {
+            profile.id: (getattr(profile.user, 'full_name', '') or profile.user.email)
+            for profile in StudentProfile.objects.filter(
+                id__in=[row['student_id'] for row in check]).select_related('user')
+        }
+        recent = sorted(assessments.items(), key=lambda pair: pair[1][1], reverse=True)
+        return Response({
+            'course': {'id': str(course.id), 'name': course.name},
+            'days': VC.COURSE_TILE_DAYS,
+            'rates': visibility.behaviour_rates([row[3] for row in rows]),
+            'trend': trend,
+            'students_to_check': [
+                {**row, 'student_id': str(row['student_id']), 'name': names.get(row['student_id'], '')}
+                for row in check
+            ],
+            'recent_assessments': [
+                {'kind': kind, 'id': str(assessment_id), 'title': title,
+                 'completed_at': done.isoformat()}
+                for (kind, assessment_id), (title, done) in recent[:VC.RECENT_ASSESSMENTS]
+            ],
+        })
+
+
 class GeneratedItemsView(APIView):
     """Provenance list for AI-generated practice questions (review surface)."""
 
@@ -637,12 +732,14 @@ class DiagnosisCalibrationView(APIView):
 
     Label distribution, classifier-label × self-report confusion, per-label
     agreement, and how much of the data had a timeline / trusted usual time.
+    Admin only. Also reports the thresholds and classifier version in use.
     """
 
-    permission_classes = [permissions.IsAuthenticated, IsTenantAdminOrInstructor]
+    permission_classes = [permissions.IsAuthenticated, IsTenantAdmin]
 
     def get(self, request):
-        from .diagnosis_config import SELF_REPORT_LABEL
+        from .diagnosis_config import SELF_REPORT_LABEL, THRESHOLDS
+        from .versions import CLASSIFIER_VERSION
 
         try:
             days = max(1, min(365, int(request.query_params.get('days', 30))))
@@ -675,4 +772,6 @@ class DiagnosisCalibrationView(APIView):
             'stats_usual': stats_usual, 'labels': dict(labels),
             'confusion': {label: dict(reports) for label, reports in confusion.items()},
             'agreement': agreement,
+            'thresholds': THRESHOLDS,
+            'classifier_version': CLASSIFIER_VERSION,
         })

@@ -1,4 +1,10 @@
 """Diagnosis-visibility endpoints: switches, scope and payloads."""
+from datetime import timedelta
+
+from django.utils import timezone
+
+from intelligence.diagnosis_config import THRESHOLDS
+from intelligence.versions import CLASSIFIER_VERSION
 from intelligence.tests.visibility_fixtures import VisibilityTestCase
 
 INSIGHTS = '/api/v1/tenant-admin/intelligence'
@@ -113,3 +119,97 @@ class StudentAnswersTests(VisibilityTestCase):
         self.tenant.features = {'response_diagnosis': True}
         self.tenant.save()
         self.assertEqual(self.client_for(self.admin).get(self.url()).status_code, 403)
+
+
+class CourseBehaviourTests(VisibilityTestCase):
+    def url(self, course=None):
+        return f'{INSIGHTS}/courses/{(course or self.course).id}/behaviour/'
+
+    def setUp(self):
+        question = self.make_question(1)
+        # 16 answers this week for student: 4 slips (25 %), 12 correct.
+        for n in range(16):
+            attempt = self.quiz_attempt(self.student, minutes_ago=60 + n)
+            self.diagnose(attempt, question, 'careless_slip' if n < 4 else 'correct')
+        # 2 answers 20 days ago: one guess.
+        for n, label in enumerate(['guess', 'correct']):
+            attempt = self.quiz_attempt(self.student, minutes_ago=20 * 24 * 60 + n)
+            self.diagnose(attempt, question, label)
+        # Outside the 28-day window: ignored.
+        old = self.quiz_attempt(self.student, minutes_ago=40 * 24 * 60)
+        self.diagnose(old, question, 'guess')
+
+    def test_payload(self):
+        response = self.client_for(self.faculty).get(self.url())
+        self.assertEqual(response.status_code, 200, response.content)
+        data = response.json()
+        self.assertEqual(data['rates']['answers'], 18)
+        self.assertEqual(data['rates']['careless_slip'], round(4 / 18, 3))
+        self.assertEqual(data['rates']['guess'], round(1 / 18, 3))
+        self.assertEqual(len(data['trend']), 4)
+        self.assertEqual(data['trend'][-1]['answers'], 16)
+        self.assertEqual(data['trend'][-1]['careless_slip'], 0.25)
+        self.assertEqual(data['trend'][1]['answers'], 2)
+        self.assertIsNone(data['trend'][0]['guess'])
+        self.assertEqual(len(data['students_to_check']), 1)
+        self.assertEqual(data['students_to_check'][0]['student_id'], str(self.student.id))
+        self.assertEqual(data['recent_assessments'][0]['id'], str(self.quiz.id))
+
+    def test_scope_and_switch(self):
+        self.assertEqual(self.client_for(self.faculty).get(self.url(self.other_course)).status_code, 403)
+        self.tenant.features = {'response_diagnosis': True}
+        self.tenant.save()
+        self.assertEqual(self.client_for(self.admin).get(self.url()).status_code, 403)
+
+
+class CalibrationTests(VisibilityTestCase):
+    URL = f'{INSIGHTS}/diagnosis/calibration/'
+
+    def test_admin_only(self):
+        self.assertEqual(self.client_for(self.faculty).get(self.URL).status_code, 403)
+        response = self.client_for(self.admin).get(self.URL)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['classifier_version'], CLASSIFIER_VERSION)
+        self.assertEqual(response.json()['thresholds'], THRESHOLDS)
+
+
+class MyAttemptDiagnosisTests(VisibilityTestCase):
+    def setUp(self):
+        self.q1 = self.make_question(1)
+        self.q2 = self.make_question(2)
+        self.q3 = self.make_question(3)
+        self.attempt = self.quiz_attempt(self.student)
+        self.diagnose(self.attempt, self.q1, 'guess', metrics={'active_s': 3.6})
+        self.diagnose(self.attempt, self.q2, 'careless_slip', confidence='low')
+        self.diagnose(self.attempt, self.q3, 'correct')
+
+    def url(self, attempt=None, kind='quiz'):
+        return f'/api/v1/intelligence/my/attempts/{kind}/{(attempt or self.attempt).id}/diagnosis/'
+
+    def test_notes_are_medium_or_high_only(self):
+        response = self.client_for(self.student_user).get(self.url())
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json(), {
+            'notes': {f'bank:{self.q1.id}': 'Looks like a quick guess — you spent 4s here.'},
+        })
+
+    def test_payload_never_carries_a_label(self):
+        body = self.client_for(self.student_user).get(self.url()).content.decode()
+        self.assertNotIn('guess"', body)
+        self.assertNotIn('careless_slip', body)
+
+    def test_other_students_attempt_is_404(self):
+        self.assertEqual(self.client_for(self.outsider_user).get(self.url()).status_code, 404)
+
+    def test_in_progress_attempt_is_404(self):
+        attempt = self.quiz_attempt(self.student, status='in_progress')
+        self.assertEqual(self.client_for(self.student_user).get(self.url(attempt)).status_code, 404)
+
+    def test_unknown_kind_is_404(self):
+        self.assertEqual(
+            self.client_for(self.student_user).get(self.url(kind='exam')).status_code, 404)
+
+    def test_switch_off_is_403(self):
+        self.tenant.features = {'response_diagnosis': True}
+        self.tenant.save()
+        self.assertEqual(self.client_for(self.student_user).get(self.url()).status_code, 403)

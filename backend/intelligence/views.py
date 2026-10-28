@@ -339,3 +339,41 @@ class SelfReportView(APIView):
                                          bool((diag.metrics or {}).get('timed_out')))
             diag.save(update_fields=['self_report', 'final_label', 'updated_at'])
         return Response({'saved': True, 'choice': choice})
+
+
+class StudentDiagnosisFeaturePermission(permissions.BasePermission):
+    """The tenant must have the diagnosis student view on (which needs
+    Answer Diagnosis; ``get_features`` folds that in)."""
+
+    message = 'Answer notes are not enabled for this academy.'
+
+    def has_permission(self, request, view):
+        tenant = getattr(request, 'tenant', None)
+        return bool(tenant and tenant.get_features().get('diagnosis_student_view'))
+
+
+class MyAttemptDiagnosisView(APIView):
+    """One-line notes for the student's own finished attempt (spec 2B §4.2).
+
+    Only note text leaves the server — never a label — and only for
+    medium- and high-confidence diagnoses.
+    """
+
+    permission_classes = [permissions.IsAuthenticated, StudentDiagnosisFeaturePermission]
+
+    def get(self, request, kind, attempt_id):
+        from .models import ResponseDiagnosis
+        from .services.visibility import student_note
+
+        attempt = _owned_finished_attempt(kind, str(attempt_id), _student_or_none(request))
+        if attempt is None:
+            return Response({'error': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
+        notes = {}
+        for question_id, mock_item_id, label, confidence, metrics in (
+            ResponseDiagnosis.objects.filter(attempt_kind=kind, attempt_id=attempt.id)
+            .values_list('question_id', 'mock_item_id', 'final_label', 'confidence', 'metrics')
+        ):
+            note = student_note(label, confidence, metrics)
+            if note:
+                notes[_item_key(question_id, mock_item_id)] = note
+        return Response({'notes': notes})

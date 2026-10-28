@@ -2,7 +2,7 @@
 from django.urls import path
 
 from .admin_views import (
-    AssessmentBehaviourView, AssessmentReportView, StudentAnswersView, CoursePracticeConfigView, GeneratedItemsView,
+    AssessmentBehaviourView, AssessmentReportView, CourseBehaviourView, StudentAnswersView, CoursePracticeConfigView, GeneratedItemsView,
     DiagnosisCalibrationView, GenerationJobsView, OverviewView, StudentDiagnosisView, TaggingRunView,
 )
 
@@ -21,6 +21,8 @@ urlpatterns = [
     path('tagging/run/', TaggingRunView.as_view(), name='intelligence-tagging-run'),
     path('courses/<uuid:course_id>/practice-config/', CoursePracticeConfigView.as_view(),
          name='intelligence-practice-config'),
+    path('courses/<uuid:course_id>/behaviour/', CourseBehaviourView.as_view(),
+         name='intelligence-course-behaviour'),
     path('diagnosis/calibration/', DiagnosisCalibrationView.as_view(),
          name='intelligence-diagnosis-calibration'),
 ]
