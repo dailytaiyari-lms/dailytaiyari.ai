@@ -6,7 +6,7 @@ computation pipelines live in the product layer.
 from collections import Counter, defaultdict
 from datetime import timedelta
 
-from django.db.models import Avg, Count, Q
+from django.db.models import Avg, Count, F, Min, Q
 from django.utils import timezone
 from rest_framework import permissions, status
 from rest_framework.response import Response
@@ -14,9 +14,10 @@ from rest_framework.views import APIView
 
 from exams.models import Course
 
+from . import visibility_config as VC
 from .access import (
     assessment_course_ids, assessment_in_scope, can_manage_course, can_view_student,
-    teachable_course_ids,
+    diagnosis_scope_q, teachable_course_ids,
 )
 from .models import (
     Concept, CoursePracticeConfig, GeneratedItem, ItemStats, LearnerConceptState,
@@ -24,6 +25,7 @@ from .models import (
 )
 from .recommendation import practice_config_for
 from .serializers import MasteryRowSerializer, PracticeSetSerializer
+from .services import visibility
 
 
 class IsTenantAdminOrInstructor(permissions.BasePermission):
@@ -35,6 +37,73 @@ class IsTenantAdminOrInstructor(permissions.BasePermission):
             user and user.is_authenticated
             and getattr(user, 'role', '') in ('admin', 'instructor')
         )
+
+
+class TeacherDiagnosisPermission(permissions.BasePermission):
+    """The tenant must have the diagnosis teacher view on (which needs
+    Answer Diagnosis; ``get_features`` folds that in)."""
+
+    message = 'The diagnosis teacher view is not enabled for this academy.'
+
+    def has_permission(self, request, view):
+        tenant = getattr(request, 'tenant', None)
+        return bool(tenant and tenant.get_features().get('diagnosis_teacher_view'))
+
+
+TEACHER_DIAGNOSIS = [
+    permissions.IsAuthenticated, IsTenantAdminOrInstructor, TeacherDiagnosisPermission,
+]
+LABEL_DISPLAY = dict(ResponseDiagnosis.LABEL_CHOICES)
+
+
+def _load_assessment(request, kind, assessment_id):
+    from quiz.models import MockTest, Quiz
+
+    model = {'quiz': Quiz, 'mock': MockTest}.get(kind)
+    if model is None:
+        return None
+    return model.objects.filter(id=assessment_id, tenant=request.tenant).first()
+
+
+def _finished_attempt_ids(kind, assessment, limit):
+    """Ids of the newest ``limit`` finished attempts on an assessment."""
+    from quiz.models import MockTestAttempt, QuizAttempt
+
+    if kind == 'quiz':
+        attempts = QuizAttempt.objects.filter(quiz=assessment)
+    else:
+        attempts = MockTestAttempt.objects.filter(mock_test=assessment)
+    # nulls_last: on Postgres a plain '-completed_at' puts abandoned attempts
+    # with no completed_at first and can crowd real ones out of the cap.
+    return list(
+        attempts.exclude(status='in_progress')
+        .order_by(F('completed_at').desc(nulls_last=True))
+        .values_list('id', flat=True)[:limit]
+    )
+
+
+def _assessment_items(kind, assessment):
+    """[(item_key, question_text)] in paper order: bank questions, then a
+    mock's inline items."""
+    from quiz.models import MockTestItem, MockTestQuestion
+
+    # QuizQuestion / MockTestQuestion declare their own Meta and so have no
+    # default ordering: order explicitly, or Postgres returns any order.
+    if kind == 'quiz':
+        rows = [(f'bank:{qq.question_id}', qq.question.question_text)
+                for qq in assessment.quizquestion_set.select_related('question')
+                .order_by('order', 'created_at')]
+    else:
+        rows = [(f'bank:{mtq.question_id}', mtq.question.question_text)
+                for mtq in MockTestQuestion.objects.filter(mock_test=assessment)
+                .select_related('question').order_by('section', 'order', 'created_at')]
+        rows += [(f'item:{item.id}', item.question_text)
+                 for item in MockTestItem.objects.filter(mock_test=assessment)]
+    return [(key, (text or '')[:200]) for key, text in rows]
+
+
+def _item_key(question_id, mock_item_id):
+    return f'bank:{question_id}' if question_id else f'item:{mock_item_id}'
 
 
 def _course_or_404(request, course_id):
@@ -271,6 +340,169 @@ class StudentDiagnosisView(APIView):
             },
             'concepts': MasteryRowSerializer(states[:200], many=True).data,
             'practice_history': PracticeSetSerializer(sets, many=True).data,
+        })
+
+
+class AssessmentBehaviourView(APIView):
+    """Per-question answer behaviour for one quiz or mock (spec 2B §4.1.1)."""
+
+    permission_classes = TEACHER_DIAGNOSIS
+
+    def get(self, request, kind, assessment_id):
+        assessment = _load_assessment(request, kind, assessment_id)
+        if assessment is None:
+            return Response({'error': 'Assessment not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not assessment_in_scope(request.user, kind, assessment):
+            return _forbidden()
+
+        attempt_ids = _finished_attempt_ids(kind, assessment, VC.BEHAVIOUR_MAX_ATTEMPTS)
+        grouped = defaultdict(list)
+        for question_id, mock_item_id, label, metrics, report in (
+            ResponseDiagnosis.objects.filter(attempt_kind=kind, attempt_id__in=attempt_ids)
+            .values_list('question_id', 'mock_item_id', 'final_label', 'metrics', 'self_report')
+            .iterator()
+        ):
+            grouped[_item_key(question_id, mock_item_id)].append((label, metrics or {}, report))
+
+        items = []
+        for key, text in _assessment_items(kind, assessment):
+            rows = grouped.get(key, [])
+            distribution = visibility.label_distribution([label for label, _m, _r in rows])
+            items.append({
+                'item_key': key,
+                'question_text': text,
+                'distribution': distribution,
+                'median_active_s': visibility.median([m.get('active_s') for _l, m, _r in rows]),
+                'usual_s': visibility.median([m.get('usual_s') for _l, m, _r in rows]),
+                'self_reports': sum(1 for _l, _m, report in rows if report),
+                'flags': visibility.question_flags(distribution),
+            })
+        return Response({
+            'assessment': {'id': str(assessment.id), 'title': assessment.title, 'kind': kind},
+            'labels': list(visibility.LABELS),
+            'answers': sum(item['distribution']['total'] for item in items),
+            'flagged': sum(1 for item in items if item['flags']),
+            'items': items,
+        })
+
+
+def _attempt_titles(pairs):
+    """{(kind, attempt_id): (title, completed_at)} for quiz/mock/practice attempts."""
+    from quiz.models import MockTestAttempt, QuizAttempt
+
+    ids = defaultdict(list)
+    for kind, attempt_id in pairs:
+        ids[kind].append(attempt_id)
+    titles = {}
+    for attempt in QuizAttempt.objects.filter(id__in=ids['quiz']).select_related('quiz'):
+        titles[('quiz', attempt.id)] = (attempt.quiz.title, attempt.completed_at)
+    for attempt in MockTestAttempt.objects.filter(id__in=ids['mock']).select_related('mock_test'):
+        titles[('mock', attempt.id)] = (attempt.mock_test.title, attempt.completed_at)
+    for practice_set in PracticeSet.objects.filter(id__in=ids['practice']):
+        titles[('practice', practice_set.id)] = ('Practice set', practice_set.completed_at)
+    return titles
+
+
+def _answer_rows(student, pairs):
+    """Diagnosis rows of the given attempts, as dicts, grouped per attempt."""
+    if not pairs:
+        return {}
+    match = Q()
+    for kind, attempt_id in pairs:
+        match |= Q(attempt_kind=kind, attempt_id=attempt_id)
+    grouped = defaultdict(list)
+    rows = (
+        ResponseDiagnosis.objects.filter(student=student).filter(match)
+        .select_related('question__topic', 'mock_item__topic')
+        .order_by('created_at', 'id')
+    )
+    for row in rows:
+        item = row.question or row.mock_item
+        topic = getattr(item, 'topic', None) if item else None
+        grouped[(row.attempt_kind, row.attempt_id)].append({
+            'id': str(row.id),
+            'item_key': _item_key(row.question_id, row.mock_item_id),
+            'question_text': ((item.question_text if item else '') or '')[:200],
+            'topic': topic.name if topic else None,
+            'label': row.final_label,
+            'label_display': LABEL_DISPLAY.get(row.final_label, row.final_label),
+            'confidence': row.confidence,
+            'is_correct': row.is_correct,
+            'answered': row.answered,
+            'active_s': (row.metrics or {}).get('active_s'),
+            'metrics': row.metrics or {},
+            'evidence': visibility.describe_evidence(row.evidence, row.metrics),
+            'self_report': row.self_report,
+        })
+    return grouped
+
+
+class StudentAnswersView(APIView):
+    """One student's diagnosed answers, newest attempt first, with patterns
+    over the newest attempts (spec 2B §4.1.2)."""
+
+    permission_classes = TEACHER_DIAGNOSIS
+
+    def get(self, request, student_id):
+        from users.models import StudentProfile
+
+        student = StudentProfile.objects.filter(
+            id=student_id, user__tenant=request.tenant,
+        ).select_related('user').first()
+        if student is None:
+            return Response({'error': 'Student not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not can_view_student(request.user, student):
+            return _forbidden()
+
+        try:
+            page = max(1, int(request.query_params.get('page', 1)))
+        except (TypeError, ValueError):
+            page = 1
+        attempts = (
+            ResponseDiagnosis.objects.filter(student=student)
+            .filter(diagnosis_scope_q(request.user, student))
+            .values('attempt_kind', 'attempt_id')
+            .annotate(first_seen=Min('created_at'))
+            .order_by('-first_seen', 'attempt_id')
+        )
+        total = attempts.count()
+        size = VC.ANSWERS_PAGE_SIZE
+        pages = max(1, -(-total // size))
+        page = min(page, pages)
+        page_pairs = [(a['attempt_kind'], a['attempt_id'])
+                      for a in attempts[(page - 1) * size:page * size]]
+        rows = _answer_rows(student, page_pairs)
+        titles = _attempt_titles(page_pairs)
+
+        patterns = []
+        if page == 1:
+            window = page_pairs[:VC.PATTERN_ATTEMPTS]
+            patterns = visibility.detect_patterns(
+                [{'answers': rows.get(pair, [])} for pair in window])
+
+        payload = []
+        for pair in page_pairs:
+            title, completed_at = titles.get(pair, ('Deleted attempt', None))
+            payload.append({
+                'attempt_kind': pair[0],
+                'attempt_id': str(pair[1]),
+                'title': title,
+                'completed_at': completed_at.isoformat() if completed_at else None,
+                'answers': [
+                    {key: value for key, value in answer.items() if key != 'metrics'}
+                    for answer in rows.get(pair, [])
+                ],
+            })
+        return Response({
+            'student': {
+                'id': str(student.id),
+                'name': getattr(student.user, 'full_name', '') or student.user.email,
+            },
+            'page': page,
+            'pages': pages,
+            'total_attempts': total,
+            'patterns': patterns,
+            'attempts': payload,
         })
 
 

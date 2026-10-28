@@ -2,7 +2,7 @@
 from django.urls import path
 
 from .admin_views import (
-    AssessmentReportView, CoursePracticeConfigView, GeneratedItemsView,
+    AssessmentBehaviourView, AssessmentReportView, StudentAnswersView, CoursePracticeConfigView, GeneratedItemsView,
     DiagnosisCalibrationView, GenerationJobsView, OverviewView, StudentDiagnosisView, TaggingRunView,
 )
 
@@ -10,6 +10,10 @@ urlpatterns = [
     path('overview/', OverviewView.as_view(), name='intelligence-overview'),
     path('assessments/<str:kind>/<uuid:assessment_id>/report/',
          AssessmentReportView.as_view(), name='intelligence-assessment-report'),
+    path('assessments/<str:kind>/<uuid:assessment_id>/behaviour/',
+         AssessmentBehaviourView.as_view(), name='intelligence-assessment-behaviour'),
+    path('students/<uuid:student_id>/answers/', StudentAnswersView.as_view(),
+         name='intelligence-student-answers'),
     path('students/<uuid:student_id>/diagnosis/', StudentDiagnosisView.as_view(),
          name='intelligence-student-diagnosis'),
     path('generated-items/', GeneratedItemsView.as_view(), name='intelligence-generated-items'),
