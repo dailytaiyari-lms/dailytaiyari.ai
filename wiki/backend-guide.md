@@ -490,3 +490,30 @@ redirecting output (it contains non-ASCII).
   database is local.
 - Production keys are never used for experiments.
 - Only question text goes to the model.
+
+### Syllabus & tagging tools (2B Part B)
+
+Opt-in switch `syllabus_tools` (also a learning-layer switch: turning it on
+starts event collection like the other three). Admins, and faculty on their
+assigned courses, get a **Syllabus** view on the course editor and
+**Learning Insights → Tag review**.
+
+- **Build syllabus tree** (custom courses) queues a `TreeBuildJob` on `aigen`
+  (`intelligence.build_course_tree`). LLM-suggested subtopics are created as
+  `proposed` and shown as "suggested"; the tagger uses them straight away.
+- **Use an exam syllabus** instantiates a shipped tree synchronously (no LLM).
+  A course has either an exam tree or a built tree, never both.
+- **Tag questions** queues a `TaggingRun` (`intelligence.tagging_run`) over the
+  course's treed subjects, at most 500 items per run, and records tagged /
+  needs-review / failed counts.
+- Both refuse to start when the tenant's monthly token budget is used up, and
+  only one of each runs per course at a time.
+- **Editor:** add / rename / archive sub-subjects and subtopics, move topics,
+  set weightage, accept suggestions, merge subtopics (queues
+  `intelligence.recompute_concept_states` for the target concept), choose
+  skill packs. Course topics are read-only.
+- **Review:** Accept, bulk accept, Edit (saves `manual` tags — the tagger
+  never overwrites them), Re-tag (`intelligence.retag_item`), Add to tree.
+- **Local testing:** `CELERY_TASK_ALWAYS_EAGER=true` runs every task inside the
+  request (diagnosis right after submit; Build and Tag without a worker).
+  Never set it in production.
