@@ -54,7 +54,7 @@ const applyFavicon = (url) => {
 // says exactly `true` — never while the config is loading or failed to load.
 export const OPT_IN_FEATURES = [
     'practice', 'ai_grading', 'response_diagnosis',
-    'diagnosis_teacher_view', 'diagnosis_student_view', 'syllabus_tools',
+    'diagnosis_teacher_view', 'diagnosis_student_view', 'syllabus_tools', 'my_progress',
 ];
 
 export const useTenantStore = create((set, get) => ({

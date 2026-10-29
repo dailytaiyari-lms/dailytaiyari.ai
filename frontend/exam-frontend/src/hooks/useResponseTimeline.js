@@ -32,7 +32,7 @@ const TYPING_COALESCE_MS = 10000 // free-text / code keystrokes collapse harder
 const KEEPALIVE_LIMIT = 60000   // fetch keepalive bodies must stay small
 const FINAL_WAIT_MS = 4000      // the pre-submit flush never holds the attempt longer than this
 
-const LEARNING_FEATURES = ['practice', 'ai_grading', 'response_diagnosis', 'syllabus_tools']
+const LEARNING_FEATURES = ['practice', 'ai_grading', 'response_diagnosis', 'syllabus_tools', 'my_progress']
 
 // True once the tenant config is known and enables a learning-layer feature.
 // Unknown features (config still loading) count as off — unlike
