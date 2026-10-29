@@ -340,7 +340,7 @@ state with guesses and slips down-weighted.
   because no diagnoses exist yet.
 - Students' "What happened?" taps on review pages need the opt-in tenant
   feature `response_diagnosis`. Capture and classification run for any
-  opted-in tenant (any of the three features).
+  opted-in tenant (any of the features listed above).
 - Calibration: `GET /api/v1/tenant-admin/intelligence/diagnosis/calibration/?days=30`
   compares classifier labels with self-reports.
 - Timeline clocks: quizzes and rich mocks are server-clocked (the window
@@ -523,3 +523,28 @@ assigned courses, get a **Syllabus** view on the course editor and
 - **Local testing:** `CELERY_TASK_ALWAYS_EAGER=true` runs every task inside the
   request (diagnosis right after submit; Build and Tag without a worker).
   Never set it in production.
+
+### My Progress (2B Part C)
+
+Opt-in switch `my_progress` (also a `LEARNING_FEATURES` member: turning it on
+starts event collection like the other learning-layer switches).
+
+- **Student page** `/progress` (`GET /api/v1/intelligence/my/progress/?course=`):
+  mastery rolled up subtopic → topic → sub-subject → subject, weak and
+  strong topics, skill and thinking-level profiles, and recent answers
+  when `diagnosis_student_view` is on.
+- **Teachers:** "Progress" tab on the student page
+  (`…/students/<id>/progress/`) and a class topic heatmap on Insights home
+  (`…/courses/<id>/heatmap/`), both scoped by `intelligence/access.py`.
+- **Computed on read:** roll-ups, lists and heatmaps come per request from
+  `LearnerConceptState` and `LearningEvent`; a subject without a syllabus
+  tree falls back to course Topic → Concept. Bands and wording:
+  `intelligence/progress_config.py` (display-only).
+- **Facets:** `LearnerFacetState` (skills and thinking levels per subject) is
+  recomputed after each diagnosed attempt, nightly, and by
+  `recompute_learner_state` (`--no-facets` to skip), only for tenants with
+  `my_progress` on. After changing a facet weight, bump
+  `FACET_MODEL_VERSION` and rerun the command.
+- **After turning `my_progress` on for a tenant**, run
+  `python manage.py recompute_learner_state --tenant <id>` once to fill the
+  facet profiles.
