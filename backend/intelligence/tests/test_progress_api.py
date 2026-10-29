@@ -169,3 +169,33 @@ class OptOutTests(ProgressTestCase):
         self.assertFalse(facets.facets_enabled(self.tenant))
         self.assertEqual(
             self.client_for(self.student_user).get(MY).status_code, 403)
+
+
+class TeacherProgressScopeTests(ProgressTestCase):
+    def url(self):
+        return f'{INSIGHTS}/students/{self.student.id}/progress/'
+
+    def test_faculty_cannot_open_a_course_they_do_not_teach(self):
+        # The student is approved in BOTH courses, so the faculty member may
+        # see the student, but only through the course they teach.
+        from users.models import CourseEnrollment
+
+        CourseEnrollment.objects.create(
+            tenant=self.tenant, student=self.student, course=self.other_course,
+            status='approved', is_active=True,
+        )
+        client = self.client_for(self.faculty)
+        own = client.get(self.url(), {'course': str(self.course.id)})
+        self.assertEqual(own.status_code, 200, own.content)
+        self.assertEqual(own.json()['course']['id'], str(self.course.id))
+        self.assertEqual(
+            client.get(self.url(), {'course': str(self.other_course.id)}).status_code, 403)
+        self.assertEqual(
+            [c['id'] for c in client.get(self.url()).json()['courses']], [str(self.course.id)])
+
+    def test_recent_answers_need_the_teacher_view(self):
+        self.tenant.features = {**self.tenant.features, 'diagnosis_teacher_view': False}
+        self.tenant.save()
+        response = self.client_for(self.faculty).get(self.url())
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertIsNone(response.json()['recent_answers'])
