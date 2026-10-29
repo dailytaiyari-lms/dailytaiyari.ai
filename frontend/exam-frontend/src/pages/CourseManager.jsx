@@ -8,13 +8,14 @@ import {
     FileText, ListChecks, GraduationCap, Pencil, Eye, Video, FileType,
     Sparkles, HelpCircle, ClipboardList, Clock, Users, X, CheckCircle2, Save,
     Code2, Trash2, Image as ImageIcon, Upload, Radio, Calendar, Link2,
-    Notebook as NotebookIcon, AlertTriangle, Zap, RefreshCw,
+    Notebook as NotebookIcon, AlertTriangle, Zap, RefreshCw, Network,
 } from 'lucide-react'
 import { contentBuilderService as svc } from '../services/contentBuilderService'
 import { tenantAdminService } from '../services/tenantAdminService'
 import { notebookAdminService } from '../services/notebookService'
 import courseAiService from '../services/courseAiService'
 import { useAuthStore } from '../context/authStore'
+import { useTenantStore } from '../context/tenantStore'
 import {
     EntityModal, ConfirmDialog, RowActions, QuestionModal, formatApiError, QTYPE_LABEL,
     useDragReorder, DragHandle, ReorderStatus, useSavedFlash,
@@ -23,6 +24,7 @@ import TopicStudio from '../components/admin/aiStudio/TopicStudio'
 import PendingAiRows from '../components/admin/aiStudio/PendingAiRows'
 import useTopicAiJobs from '../hooks/useTopicAiJobs'
 import Loading from '../components/common/Loading'
+import SyllabusPanel from '../components/syllabus/SyllabusPanel'
 
 /* Content-type icon + tint */
 const CONTENT_ICON = { video: Video, pdf: FileType, notes: FileText, revision: FileText, formula: Sparkles, interactive: Sparkles }
@@ -2052,6 +2054,8 @@ const CourseManager = () => {
     const [uploadPct, setUploadPct] = useState(null)  // 0-100 while a file uploads
     const [instructorsOpen, setInstructorsOpen] = useState(false)
     const [thumbnailOpen, setThumbnailOpen] = useState(false)
+    const syllabusOn = useTenantStore((s) => s.tenant?.features?.syllabus_tools === true)
+    const [view, setView] = useState('content') // content | syllabus
 
     const { data: courses = [], isLoading } = useQuery({
         queryKey: ['cb-courses'],
@@ -2160,6 +2164,14 @@ const CourseManager = () => {
                             <Pencil className="w-3.5 h-3.5" /> Edit course
                         </button>
                     )}
+                    {course && syllabusOn && (
+                        <button
+                            onClick={() => setView(view === 'syllabus' ? 'content' : 'syllabus')}
+                            className={`btn-secondary text-xs px-3 py-1.5 ${view === 'syllabus' ? 'ring-2 ring-primary-400' : ''}`}
+                        >
+                            <Network className="w-3.5 h-3.5" /> {view === 'syllabus' ? 'Back to content' : 'Syllabus'}
+                        </button>
+                    )}
                     <button onClick={() => navigate(`/study/course/${courseId}`)} className="btn-secondary text-xs px-3 py-1.5">
                         <Eye className="w-3.5 h-3.5" /> <span className="hidden sm:inline">View as student</span>
                     </button>
@@ -2167,23 +2179,27 @@ const CourseManager = () => {
             </div>
 
             {/* Body: navigator + panel */}
-            <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-5 items-start">
-                <Navigator courseId={courseId} sel={sel} onSelectTopic={onSelectTopic} openModal={openModal} askDelete={askDelete} />
+            {view === 'content' && (
+                <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-5 items-start">
+                    <Navigator courseId={courseId} sel={sel} onSelectTopic={onSelectTopic} openModal={openModal} askDelete={askDelete} />
 
-                {sel.topic ? (
-                    <TopicPanel topic={sel.topic} subjectId={sel.subjectId} subjectName={sel.subjectName} openModal={openModal} askDelete={askDelete} />
-                ) : (
-                    <div className="card p-10 flex flex-col items-center justify-center text-center min-h-[300px]">
-                        <div className="w-14 h-14 rounded-2xl bg-primary-50 dark:bg-primary-900/20 flex items-center justify-center mb-3">
-                            <HelpCircle className="w-7 h-7 text-primary-500" />
+                    {sel.topic ? (
+                        <TopicPanel topic={sel.topic} subjectId={sel.subjectId} subjectName={sel.subjectName} openModal={openModal} askDelete={askDelete} />
+                    ) : (
+                        <div className="card p-10 flex flex-col items-center justify-center text-center min-h-[300px]">
+                            <div className="w-14 h-14 rounded-2xl bg-primary-50 dark:bg-primary-900/20 flex items-center justify-center mb-3">
+                                <HelpCircle className="w-7 h-7 text-primary-500" />
+                            </div>
+                            <h3 className="font-semibold text-surface-700 dark:text-surface-200">Select a topic to start editing</h3>
+                            <p className="text-sm text-surface-500 mt-1 max-w-sm">
+                                Expand a subject and chapter on the left, then pick a topic to add notes, videos, PDFs and quizzes — all in one focused place.
+                            </p>
                         </div>
-                        <h3 className="font-semibold text-surface-700 dark:text-surface-200">Select a topic to start editing</h3>
-                        <p className="text-sm text-surface-500 mt-1 max-w-sm">
-                            Expand a subject and chapter on the left, then pick a topic to add notes, videos, PDFs and quizzes — all in one focused place.
-                        </p>
-                    </div>
-                )}
-            </div>
+                    )}
+                </div>
+            )}
+
+            {view === 'syllabus' && course && <SyllabusPanel courseId={courseId} />}
 
             {/* Modals */}
             <AnimatePresence>
