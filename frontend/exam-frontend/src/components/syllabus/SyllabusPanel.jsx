@@ -4,6 +4,7 @@ import toast from 'react-hot-toast'
 import { GitBranch, Loader2, Map, Tags } from 'lucide-react'
 import { syllabusService, errorText } from '../../services/syllabusService'
 import Loading from '../common/Loading'
+import TreeEditor from './TreeEditor'
 
 const fmt = (n) => (n == null ? '—' : Number(n).toLocaleString())
 const STATUS_STYLE = {
@@ -226,8 +227,7 @@ export default function SyllabusPanel({ courseId }) {
         <TagCard courseId={courseId} />
       </div>
       <JobHistory jobs={tree.jobs} />
-      {/* Task 11 mounts <TreeEditor courseId={courseId} tree={tree} /> here. */}
-      <div />
+      <TreeEditor courseId={courseId} tree={tree} />
       <div className="p-5 rounded-2xl bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700">
         <h3 className="font-semibold mb-3">Questions needing review</h3>
         {/* Task 12 mounts <TagReviewList courseId={courseId} /> here. */}
