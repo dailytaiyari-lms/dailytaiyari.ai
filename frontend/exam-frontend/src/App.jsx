@@ -41,6 +41,7 @@ import Analytics from './pages/Analytics'
 import Practice from './pages/Practice'
 import PracticeSession from './pages/PracticeSession'
 import InsightsHome from './pages/InsightsHome'
+import TagReview from './pages/TagReview'
 import AssessmentReport from './pages/AssessmentReport'
 import StudentDiagnosis from './pages/StudentDiagnosis'
 import DiagnosisQuality from './pages/DiagnosisQuality'
@@ -291,6 +292,7 @@ function App() {
           <Route path="/practice/:setId" element={<LoginGate><FeatureRoute feature="practice"><PracticeSession /></FeatureRoute></LoginGate>} />
           {/* Learning insights (teacher-visible: admins + instructors) */}
           <Route path="/admin/insights" element={<LoginGate><EditorRoute><InsightsHome /></EditorRoute></LoginGate>} />
+          <Route path="/admin/insights/tag-review" element={<LoginGate><EditorRoute><TagReview /></EditorRoute></LoginGate>} />
           <Route path="/admin/insights/assessments/:kind/:assessmentId" element={<LoginGate><EditorRoute><AssessmentReport /></EditorRoute></LoginGate>} />
           <Route path="/admin/insights/students/:studentId" element={<LoginGate><EditorRoute><StudentDiagnosis /></EditorRoute></LoginGate>} />
           <Route path="/admin/insights/diagnosis-quality" element={<LoginGate><AdminRoute><DiagnosisQuality /></AdminRoute></LoginGate>} />

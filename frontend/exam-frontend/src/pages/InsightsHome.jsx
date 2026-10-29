@@ -8,7 +8,7 @@ import { useTenantStore } from '../context/tenantStore'
 import { useAuthStore } from '../context/authStore'
 import { Link } from 'react-router-dom'
 import AnswerBehaviourTile from '../components/insights/AnswerBehaviourTile'
-import { Brain, Flag, Archive, RefreshCw, Sparkles, Gauge } from 'lucide-react'
+import { Brain, Flag, Archive, RefreshCw, Sparkles, Gauge, ClipboardCheck } from 'lucide-react'
 
 const DEFICIT_LABELS = {
   low_mastery: 'Low mastery',
@@ -54,6 +54,7 @@ const InsightsHome = () => {
   const [tab, setTab] = useState('class') // class | generated
   const practiceOn = useTenantStore((s) => s.tenant?.features?.practice === true)
   const teacherView = useTenantStore((s) => s.tenant?.features?.diagnosis_teacher_view === true)
+  const syllabusOn = useTenantStore((s) => s.tenant?.features?.syllabus_tools === true)
   const { user, profile } = useAuthStore()
   const isAdmin = (user?.role || profile?.user?.role) === 'admin'
 
@@ -123,6 +124,14 @@ const InsightsHome = () => {
               className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-surface-100 dark:bg-surface-800 text-sm hover:bg-surface-200 dark:hover:bg-surface-700"
             >
               <Gauge size={14} /> Diagnosis quality
+            </Link>
+          )}
+          {syllabusOn && (
+            <Link
+              to="/admin/insights/tag-review"
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-surface-100 dark:bg-surface-800 text-sm hover:bg-surface-200 dark:hover:bg-surface-700"
+            >
+              <ClipboardCheck size={14} /> Tag review
             </Link>
           )}
           {practiceOn && (

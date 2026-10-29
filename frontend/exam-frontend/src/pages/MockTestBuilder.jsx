@@ -11,6 +11,7 @@ import { mockTestBuilderService } from '../services/mockTestBuilderService'
 import RichMarkdownEditor from '../components/common/RichMarkdownEditor'
 import AIMockStudio from '../components/admin/mockAi/AIMockStudio'
 import MockAiJobBanners from '../components/admin/mockAi/MockAiJobBanners'
+import ItemTagsPanel from '../components/syllabus/ItemTagsPanel'
 
 const ITEM_TYPES = [
   { value: 'mcq', label: 'MCQ (single)', icon: ListChecks, color: 'text-blue-500' },
@@ -489,6 +490,8 @@ function ItemEditor({ testId, item, onClose }) {
           )}
 
           <Field label="Explanation" hint="shown after submission"><RichMarkdownEditor value={f.explanation} onChange={set('explanation')} rows={2} /></Field>
+
+          {item?.id && <ItemTagsPanel kind="item" id={item.id} />}
         </div>
         <div className="flex justify-end gap-2 p-4 border-t border-surface-200 dark:border-surface-700">
           <button onClick={onClose} className="px-4 py-2 rounded-xl border border-surface-200 dark:border-surface-700 text-sm">Cancel</button>

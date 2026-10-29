@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { contentBuilderService as svc } from '../../services/contentBuilderService'
 import CertificatePreview from '../certificate/CertificatePreview'
+import ItemTagsPanel from '../syllabus/ItemTagsPanel'
 
 /* Fast, cheap modal transitions (no backdrop-blur — it repaints the whole
  * builder tree behind the overlay and makes opening feel sluggish). */
@@ -961,6 +962,8 @@ export const QuestionModal = ({ instance, onClose, onSubmit, saving }) => {
                         <textarea className="input" rows={2} value={v.explanation} onChange={(e) => set('explanation', e.target.value)} />
                         <ImageDrop value={v.explanation_image} onChange={(val) => set('explanation_image', val)} label="explanation image" />
                     </div>
+
+                    {isEdit && <ItemTagsPanel kind="bank" id={instance.id} />}
 
                     <div className="flex justify-end gap-2 pt-2">
                         <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
