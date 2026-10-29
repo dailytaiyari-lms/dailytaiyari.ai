@@ -54,3 +54,17 @@ def tenant_tagging_call(tenant):
     # Stage-2 replies for 12 questions need more room than v1's 4000 tokens.
     resolved.max_tokens = max(resolved.max_tokens or 0, TAGGING_MAX_TOKENS)
     return MeteredCall(resolved, tenant)
+
+
+def budget_status(tenant):
+    """The tenant's monthly token budget on its own key (None = no budget)."""
+    from chatbot import resolver
+
+    budget = resolver.get_ai_settings(tenant).monthly_token_budget or None
+    used = resolver.tokens_used(tenant, resolver.month_start(), source=AIUsageRecord.SOURCE_TENANT)
+    return {
+        'monthly_budget': budget,
+        'used': used,
+        'remaining': max(0, budget - used) if budget else None,
+        'exhausted': bool(budget) and used >= budget,
+    }

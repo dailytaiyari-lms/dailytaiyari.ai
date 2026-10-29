@@ -13,8 +13,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Any one of these switches the learning layer on for a tenant.
-LEARNING_FEATURES = ('practice', 'ai_grading', 'response_diagnosis')
+# Any one of these switches the learning layer on for a tenant (background
+# data collection: events, timelines, diagnosis and state jobs, tagging).
+LEARNING_FEATURES = (
+    'practice', 'ai_grading', 'response_diagnosis', 'syllabus_tools', 'my_progress',
+)
 
 # Publish retry cap for enqueues made inside student/admin request paths.
 # The global CELERY_BROKER_TRANSPORT_OPTIONS stay exactly as on main (every

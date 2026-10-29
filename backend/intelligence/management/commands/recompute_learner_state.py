@@ -2,7 +2,10 @@
 
 Run after a backfill, a tagging pass, a concept merge, or a
 STATE_MODEL_VERSION bump. Idempotent by construction.
+Also recomputes My Progress facets (tenants with it on) unless --no-facets.
 """
+from argparse import BooleanOptionalAction
+
 from django.core.management.base import BaseCommand
 
 from intelligence.models import ConceptLink, LearningEvent
@@ -15,6 +18,11 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument('--tenant', help='Tenant id (default: all).')
         parser.add_argument('--student', help='StudentProfile id (default: all).')
+        parser.add_argument(
+            '--facets', action=BooleanOptionalAction, default=True,
+            help='Also recompute skill / thinking-level facets for tenants with My Progress on '
+                 '(default: on).',
+        )
 
     def handle(self, *args, **options):
         events = LearningEvent.objects.all()
@@ -56,3 +64,14 @@ class Command(BaseCommand):
                 if done % 500 == 0:
                     self.stdout.write(f'  … {done} states recomputed')
         self.stdout.write(self.style.SUCCESS(f'{done} learner concept states recomputed.'))
+        if not options['facets']:
+            return
+        from intelligence.services import facets
+
+        profiled = 0
+        student_ids = set(events.values_list('student_id', flat=True).distinct())
+        for student in StudentProfile.objects.filter(id__in=student_ids).select_related('user__tenant'):
+            if facets.facets_enabled(student.user.tenant):
+                facets.recompute_facets(student)
+                profiled += 1
+        self.stdout.write(self.style.SUCCESS(f'{profiled} student facet profiles recomputed.'))

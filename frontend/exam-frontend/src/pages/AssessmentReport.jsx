@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query'
 import { insightsService } from '../services/insightsService'
 import Loading from '../components/common/Loading'
 import { MasteryBar } from './Practice'
+import { useTenantStore } from '../context/tenantStore'
+import AnswerBehaviourPanel from '../components/insights/AnswerBehaviourPanel'
 import { FileSearch, Flag } from 'lucide-react'
 
 const StatsCell = ({ stats }) => {
@@ -24,6 +26,7 @@ const StatsCell = ({ stats }) => {
  */
 const AssessmentReport = () => {
   const { kind, assessmentId } = useParams()
+  const teacherView = useTenantStore((s) => s.tenant?.features?.diagnosis_teacher_view === true)
   const { data, isLoading } = useQuery({
     queryKey: ['assessmentReport', kind, assessmentId],
     queryFn: () => insightsService.getAssessmentReport(kind, assessmentId),
@@ -108,6 +111,8 @@ const AssessmentReport = () => {
           )}
         </div>
       </div>
+
+      {teacherView && <AnswerBehaviourPanel kind={kind} assessmentId={assessmentId} />}
 
       {/* Item table */}
       <div className="p-5 rounded-2xl bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700">

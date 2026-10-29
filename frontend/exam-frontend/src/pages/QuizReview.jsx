@@ -7,6 +7,7 @@ import { courseService } from '../services/courseService'
 import Loading from '../components/common/Loading'
 import toast from 'react-hot-toast'
 import WhatHappened, { useSelfReports } from '../components/review/WhatHappened'
+import DiagnosisNote, { useDiagnosisNotes } from '../components/review/DiagnosisNote'
 import {
   XCircle,
   HelpCircle,
@@ -67,6 +68,7 @@ const QuizReview = () => {
   })
 
   const selfReports = useSelfReports('quiz', attemptId)
+  const diagnosisNotes = useDiagnosisNotes('quiz', attemptId)
 
   const { data: leaderboard } = useQuery({
     queryKey: ['quizLeaderboard', attempt?.quiz],
@@ -486,6 +488,7 @@ const QuizReview = () => {
                     )}
                   </div>
                 )}
+                <DiagnosisNote text={diagnosisNotes.notes[reviewKey]} />
                 {showWhatHappened && (
                   <WhatHappened
                     attemptKind="quiz"

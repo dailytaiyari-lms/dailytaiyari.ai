@@ -38,9 +38,9 @@ def diagnose_and_update_state(kind, attempt_id):
 
     Ordered on purpose: state reads diagnosis weights. A diagnosis failure
     never blocks the state update (weights fall back to 1.0) and the nightly
-    sweep retries it.
+    sweep retries it. Facets (My Progress) follow the concept states.
     """
-    from .services import diagnose, state
+    from .services import diagnose, facets, state
 
     try:
         diagnose.diagnose_attempt(kind, attempt_id)
@@ -49,10 +49,15 @@ def diagnose_and_update_state(kind, attempt_id):
     if kind not in ('quiz', 'mock'):
         return 0
     try:
-        return state.update_for_attempt(kind, attempt_id)
+        updated = state.update_for_attempt(kind, attempt_id)
     except Exception:  # noqa: BLE001 — the nightly refresh catches up
         logger.exception('intelligence.update_learner_state failed for %s %s', kind, attempt_id)
-        return 0
+        updated = 0
+    try:
+        facets.update_for_attempt(kind, attempt_id)
+    except Exception:  # noqa: BLE001 — the nightly refresh catches up
+        logger.exception('intelligence.update_facets failed for %s %s', kind, attempt_id)
+    return updated
 
 
 @shared_task(name='intelligence.refresh_learner_state', time_limit=1800, queue='intelligence')
@@ -115,8 +120,37 @@ def refresh_learner_state():
             except Exception:  # noqa: BLE001 — one bad attempt must not stop the sweep
                 logger.exception('nightly state update failed for %s %s', kind, attempt_id)
 
-    logger.info('intelligence.refresh_learner_state: %d refreshed, %d catch-up concepts',
-                refreshed, caught_up)
+    # My Progress facets: students with fresh answers, and rows due for decay.
+    from core.models import Tenant
+    from users.models import StudentProfile
+
+    from .models import LearnerFacetState
+    from .progress_config import FACET_REFRESH_LIMIT
+    from .services import facets
+
+    facet_tenants = {
+        tenant.id for tenant in Tenant.objects.filter(id__in=enabled)
+        if facets.facets_enabled(tenant)
+    }
+    student_ids = set(
+        LearningEvent.objects.filter(created_at__gte=recent, tenant_id__in=facet_tenants)
+        .values_list('student_id', flat=True).distinct()[:FACET_REFRESH_LIMIT]
+    )
+    student_ids |= set(
+        LearnerFacetState.objects.filter(computed_at__lt=cutoff, tenant_id__in=facet_tenants)
+        .values_list('student_id', flat=True).distinct()[:FACET_REFRESH_LIMIT]
+    )
+    profiled = 0
+    for student in StudentProfile.objects.filter(
+            id__in=list(student_ids)[:FACET_REFRESH_LIMIT]).select_related('user__tenant'):
+        try:
+            facets.recompute_facets(student)
+            profiled += 1
+        except Exception:  # noqa: BLE001 — one bad student must not stop the sweep
+            logger.exception('nightly facet recompute failed for %s', student.id)
+
+    logger.info('intelligence.refresh_learner_state: %d refreshed, %d catch-up concepts, '
+                '%d facet profiles', refreshed, caught_up, profiled)
     return refreshed
 
 
@@ -348,3 +382,161 @@ def tagging_sweep():
         tag_items_for_tenant.delay(str(tenant_id))
     logger.info('intelligence.tagging_sweep: %d tenant(s) queued', len(active))
     return len(active)
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Syllabus tools (queue: aigen) — spec 2B §5
+# ─────────────────────────────────────────────────────────────────────────────
+
+TAGGING_RUN_LIMIT = 500
+
+
+def _claim(model, job_id):
+    """queued → running, atomically. None when already claimed or gone."""
+    from django.utils import timezone
+
+    claimed = model.objects.filter(id=job_id, status=model.STATUS_QUEUED).update(
+        status=model.STATUS_RUNNING, started_at=timezone.now())
+    if not claimed:
+        return None
+    return model.objects.filter(id=job_id).select_related('tenant', 'course').first()
+
+
+def _finish(job, *, status, summary=None, error='', call=None):
+    from django.utils import timezone
+
+    job.status = status
+    job.summary = summary if summary is not None else job.summary
+    job.error = error[:1000]
+    if call is not None:
+        try:
+            job.tokens = call.meter.usage.total_tokens
+            job.cost_usd = call.cost_usd()
+        except Exception:  # noqa: BLE001 — metering must never fail the job
+            logger.exception('syllabus job %s: metering failed', job.id)
+    job.finished_at = timezone.now()
+    job.save()
+
+
+def _run_syllabus_job(model, job_id, work, label):
+    """Shared worker shell: claim, gate, budget, run, record."""
+    from coursegen.generation import GenerationError, _check_budget
+
+    from .services import llm
+
+    job = _claim(model, job_id)
+    if job is None:
+        logger.info('%s: %s not runnable, skipping', label, job_id)
+        return None
+    call = None
+    try:
+        if not job.tenant.get_features().get('syllabus_tools'):
+            raise GenerationError('Syllabus & tagging tools are turned off for this academy.')
+        _check_budget(job.tenant)
+        call = llm.tenant_tagging_call(job.tenant)
+        summary = work(job, call)
+        _finish(job, status=model.STATUS_DONE, summary=summary, call=call)
+    except GenerationError as exc:
+        _finish(job, status=model.STATUS_FAILED, error=str(exc), call=call)
+    except Exception:  # noqa: BLE001 — never leave a job 'running'
+        logger.exception('%s failed for %s', label, job_id)
+        _finish(job, status=model.STATUS_FAILED, error='The run failed unexpectedly.', call=call)
+    return str(job_id)
+
+
+@shared_task(
+    name='intelligence.build_course_tree', bind=True, max_retries=0,
+    queue='aigen', soft_time_limit=1500, time_limit=1560,
+)
+def run_tree_build(self, job_id):
+    """Build or extend a custom course's syllabus tree (one TreeBuildJob)."""
+    from .models import TreeBuildJob
+    from .services import course_tree
+
+    def work(job, call):
+        packs = job.options.get('packs') if isinstance(job.options, dict) else None
+        return course_tree.build_course_tree(job.course, call=call, packs=packs)
+
+    return _run_syllabus_job(TreeBuildJob, job_id, work, 'intelligence.build_course_tree')
+
+
+@shared_task(
+    name='intelligence.tagging_run', bind=True, max_retries=0,
+    queue='aigen', soft_time_limit=1500, time_limit=1560,
+)
+def run_tagging_run(self, run_id):
+    """Tag a course's not-current items with tagger v2 (one TaggingRun)."""
+    from coursegen.generation import GenerationError
+
+    from .models import SyllabusNode, TaggingRun
+    from .services import tagging_sweep, taxonomy
+
+    def work(run, call):
+        subject_ids = set(
+            SyllabusNode.objects.filter(subject__course=run.course, level='topic', status='active')
+            .values_list('subject_id', flat=True))
+        if not subject_ids:
+            raise GenerationError('Build or map a syllabus tree for this course first.')
+        if taxonomy.current_release() is None:
+            raise GenerationError('No tag vocabulary is loaded. Run manage.py sync_taxonomy.')
+        # Seeded: tag_v2_for_tenant leaves this empty when there is nothing to tag.
+        stats = {'tagged': 0, 'needs_review': 0, 'failed': 0, 'locked': 0}
+        tagging_sweep.tag_v2_for_tenant(
+            run.tenant, subject_ids, call, limit=TAGGING_RUN_LIMIT, stats=stats)
+        return stats
+
+    return _run_syllabus_job(TaggingRun, run_id, work, 'intelligence.tagging_run')
+
+
+@shared_task(
+    name='intelligence.retag_item', max_retries=0,
+    queue='aigen', soft_time_limit=280, time_limit=300,
+)
+def retag_item(kind, item_id):
+    """Re-tag one bank question ('bank') or mock item ('item') now."""
+    from coursegen.generation import GenerationError, _check_budget
+    from quiz.models import MockTestItem, Question
+
+    from .services import llm, tagging_sweep
+
+    model = {'bank': Question, 'item': MockTestItem}.get(kind)
+    item = model.objects.filter(id=item_id).select_related('tenant').first() if model else None
+    if item is None or not item.tenant.get_features().get('syllabus_tools'):
+        return 0
+    try:
+        _check_budget(item.tenant)
+        return tagging_sweep.tag_one_item(item, llm.tenant_tagging_call(item.tenant))
+    except GenerationError as exc:
+        logger.info('intelligence.retag_item %s %s: %s', kind, item_id, exc)
+        return 0
+    except Exception:  # noqa: BLE001 — the item stays stale; the weekly sweep retries
+        logger.exception('intelligence.retag_item failed for %s %s', kind, item_id)
+        return 0
+
+
+@shared_task(name='intelligence.recompute_concept_states', max_retries=0, queue='intelligence')
+def recompute_concept_states(concept_id):
+    """Recompute every learner state on one concept (after a subtopic merge)."""
+    from django.db.models import Q
+
+    from users.models import StudentProfile
+
+    from .models import Concept, ConceptLink, LearningEvent
+    from .services import state
+
+    concept = Concept.objects.filter(id=concept_id).first()
+    if concept is None:
+        return 0
+    links = ConceptLink.objects.filter(concept=concept)
+    question_ids = [qid for qid in links.values_list('question_id', flat=True) if qid]
+    item_ids = [mid for mid in links.values_list('mock_item_id', flat=True) if mid]
+    student_ids = (
+        LearningEvent.objects.filter(Q(question_id__in=question_ids) | Q(mock_item_id__in=item_ids))
+        .values_list('student_id', flat=True).distinct()
+    )
+    done = 0
+    for student in StudentProfile.objects.filter(id__in=list(student_ids)):
+        state.recompute_state(student, concept)
+        done += 1
+    return done

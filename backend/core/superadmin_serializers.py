@@ -270,6 +270,11 @@ class TenantDetailSerializer(serializers.ModelSerializer):
                 'key': k,
                 'label': label,
                 'tenant_label': instance.get_feature_labels().get(k, label),
+                'requires': Tenant.FEATURE_REQUIRES.get(k),
+                'requires_label': (
+                    Tenant.FEATURE_CHOICES[Tenant.FEATURE_REQUIRES[k]]
+                    if k in Tenant.FEATURE_REQUIRES else None
+                ),
             }
             for k, label in Tenant.FEATURE_CHOICES.items()
         ]

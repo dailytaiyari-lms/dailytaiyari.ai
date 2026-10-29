@@ -51,4 +51,36 @@ export const insightsService = {
     const response = await api.patch(`${BASE}/courses/${courseId}/practice-config/`, payload)
     return response.data
   },
+
+  getAssessmentBehaviour: async (kind, assessmentId) => {
+    const response = await api.get(`${BASE}/assessments/${kind}/${assessmentId}/behaviour/`)
+    return response.data
+  },
+
+  getStudentAnswers: async (studentId, page = 1) => {
+    const response = await api.get(`${BASE}/students/${studentId}/answers/`, { params: { page } })
+    return response.data
+  },
+
+  getCourseBehaviour: async (courseId) => {
+    const response = await api.get(`${BASE}/courses/${courseId}/behaviour/`)
+    return response.data
+  },
+
+  getCalibration: async (days = 30) => {
+    const response = await api.get(`${BASE}/diagnosis/calibration/`, { params: { days } })
+    return response.data
+  },
+
+  getStudentProgress: async (studentId, courseId) => {
+    const response = await api.get(`${BASE}/students/${studentId}/progress/`, {
+      params: courseId ? { course: courseId } : {},
+    })
+    return response.data
+  },
+
+  getCourseHeatmap: async (courseId) => {
+    const response = await api.get(`${BASE}/courses/${courseId}/heatmap/`)
+    return response.data
+  },
 }

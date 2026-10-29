@@ -299,8 +299,9 @@ class RegisterView(generics.CreateAPIView):
 ## Response diagnosis (intelligence)
 
 **Opt-in per tenant.** The whole learning layer runs only for tenants with at
-least one of `practice`, `ai_grading` or `response_diagnosis` on
-(`intelligence.api.intelligence_enabled`; all three are off by default). For
+least one of `practice`, `ai_grading`, `response_diagnosis`, `syllabus_tools`
+or `my_progress` on (`intelligence.api.LEARNING_FEATURES` /
+`intelligence_enabled`; all are off by default). For
 any other tenant: the attempt screens capture no timeline and send the same
 payload as before the layer existed, `POST /intelligence/timeline/` answers
 204 and writes nothing, submits and grading write no `LearningEvent` and
@@ -339,7 +340,7 @@ state with guesses and slips down-weighted.
   because no diagnoses exist yet.
 - Students' "What happened?" taps on review pages need the opt-in tenant
   feature `response_diagnosis`. Capture and classification run for any
-  opted-in tenant (any of the three features).
+  opted-in tenant (any of the features listed above).
 - Calibration: `GET /api/v1/tenant-admin/intelligence/diagnosis/calibration/?days=30`
   compares classifier labels with self-reports.
 - Timeline clocks: quizzes and rich mocks are server-clocked (the window
@@ -351,6 +352,25 @@ state with guesses and slips down-weighted.
   `client_max_body_size`).
 - Throttle: the timeline endpoint allows 20 requests/min/user on its own
   `timeline` scope.
+- **Diagnosis visibility (2B Part A).** Two more opt-in switches, both
+  needing `response_diagnosis` (`Tenant.FEATURE_REQUIRES`;
+  `get_features()` reports them off while it is off):
+  - `diagnosis_teacher_view` — Insights: "Answer behaviour" panel on each
+    assessment report (`…/assessments/<kind>/<id>/behaviour/`), "Answers"
+    tab on each student (`…/students/<id>/answers/`), answer-behaviour tile
+    on Insights home (`…/courses/<id>/behaviour/`), and the admin-only
+    Diagnosis quality page over the calibration endpoint.
+  - `diagnosis_student_view` — one-line notes on quiz, mock and rich-mock
+    review pages (`GET /api/v1/intelligence/my/attempts/<kind>/<id>/diagnosis/`).
+    Only medium/high-confidence diagnoses show a note; students never see a
+    label.
+  - Flags, patterns and student wording: `intelligence/visibility_config.py`.
+    Display-only — no version bump or recompute after editing.
+  - Scope (`intelligence/access.py`): faculty see only their assigned
+    courses and the students approved in them; admins see the tenant. This
+    also narrowed the older Insights views for faculty.
+  - The calibration endpoint is admin-only and now also returns
+    `thresholds` and `classifier_version`.
 
 ---
 
@@ -471,3 +491,60 @@ redirecting output (it contains non-ASCII).
   database is local.
 - Production keys are never used for experiments.
 - Only question text goes to the model.
+
+### Syllabus & tagging tools (2B Part B)
+
+Opt-in switch `syllabus_tools` (also a learning-layer switch: turning it on
+starts event collection like the others, and enrols the tenant in the weekly
+tagging sweep — v2 on subjects with a tree, including items made stale by tree
+edits, and v1 on the rest, up to 200 items, budget-gated). Admins, and faculty on their
+assigned courses, get a **Syllabus** view on the course editor and
+**Learning Insights → Tag review**.
+
+- **Build syllabus tree** (custom courses) queues a `TreeBuildJob` on `aigen`
+  (`intelligence.build_course_tree`). LLM-suggested subtopics are created as
+  `proposed` and shown as "suggested"; the tagger uses them straight away.
+- **Use an exam syllabus** instantiates a shipped tree synchronously (no LLM).
+  A course has either an exam tree or a built tree, never both.
+- **Tag questions** queues a `TaggingRun` (`intelligence.tagging_run`) over the
+  course's treed subjects, at most 500 items per run, and records tagged /
+  needs-review / failed counts.
+- Both refuse to start when the tenant's monthly token budget is used up, and
+  only one of each runs per course at a time. A job still `running` after the
+  task's hard limit (plus 5 min), or `queued` for 6 h, is marked `failed`
+  ("The run stopped without finishing") the next time the course's jobs are
+  read or a new run starts, so a dead worker cannot block the course.
+- **Editor:** add / rename / archive sub-subjects and subtopics, move topics,
+  set weightage, accept suggestions, merge subtopics (queues
+  `intelligence.recompute_concept_states` for the target concept), choose
+  skill packs. Course topics are read-only.
+- **Review:** Accept, bulk accept, Edit (saves `manual` tags — the tagger
+  never overwrites them), Re-tag (`intelligence.retag_item`), Add to tree.
+- **Local testing:** `CELERY_TASK_ALWAYS_EAGER=true` runs every task inside the
+  request (diagnosis right after submit; Build and Tag without a worker).
+  Never set it in production.
+
+### My Progress (2B Part C)
+
+Opt-in switch `my_progress` (also a `LEARNING_FEATURES` member: turning it on
+starts event collection like the other learning-layer switches).
+
+- **Student page** `/progress` (`GET /api/v1/intelligence/my/progress/?course=`):
+  mastery rolled up subtopic → topic → sub-subject → subject, weak and
+  strong topics, skill and thinking-level profiles, and recent answers
+  when `diagnosis_student_view` is on.
+- **Teachers:** "Progress" tab on the student page
+  (`…/students/<id>/progress/`) and a class topic heatmap on Insights home
+  (`…/courses/<id>/heatmap/`), both scoped by `intelligence/access.py`.
+- **Computed on read:** roll-ups, lists and heatmaps come per request from
+  `LearnerConceptState` and `LearningEvent`; a subject without a syllabus
+  tree falls back to course Topic → Concept. Bands and wording:
+  `intelligence/progress_config.py` (display-only).
+- **Facets:** `LearnerFacetState` (skills and thinking levels per subject) is
+  recomputed after each diagnosed attempt, nightly, and by
+  `recompute_learner_state` (`--no-facets` to skip), only for tenants with
+  `my_progress` on. After changing a facet weight, bump
+  `FACET_MODEL_VERSION` and rerun the command.
+- **After turning `my_progress` on for a tenant**, run
+  `python manage.py recompute_learner_state --tenant <id>` once to fill the
+  facet profiles.

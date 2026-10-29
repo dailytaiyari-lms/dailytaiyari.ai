@@ -13,14 +13,18 @@ Three layers, kept strictly separate:
 Other apps must not import these models directly; they go through
 ``intelligence.api`` so the dependency surface stays one file wide.
 """
+from datetime import timedelta
+
 from django.db import models
 from django.db.models import Q
+from django.utils import timezone
 
 from core.models import TimeStampedModel
 from exams.models import Course, Subject, Topic
 
 from .versions import (
-    CLASSIFIER_VERSION, EVENT_SCHEMA_VERSION, ONTOLOGY_VERSION, STATE_MODEL_VERSION,
+    CLASSIFIER_VERSION, EVENT_SCHEMA_VERSION, FACET_MODEL_VERSION, ONTOLOGY_VERSION,
+    STATE_MODEL_VERSION,
 )
 
 
@@ -328,6 +332,49 @@ class LearnerConceptState(TimeStampedModel):
 
     def __str__(self):
         return f'{self.student_id} × {self.concept_id}: {self.mastery:.2f}'
+
+
+class LearnerFacetState(TimeStampedModel):
+    """Inferred state of one student on one skill or thinking level, per
+    subject (spec 2B §6.3).
+
+    Fully recomputed from LearningEvents by ``services.facets`` with the same
+    rules as LearnerConceptState; never incremented in place.
+    """
+
+    KIND_SKILL = 'skill'
+    KIND_THINKING = 'thinking_level'
+    KIND_CHOICES = [(KIND_SKILL, 'Skill'), (KIND_THINKING, 'Thinking level')]
+
+    student = models.ForeignKey(
+        'users.StudentProfile', on_delete=models.CASCADE, related_name='facet_states',
+    )
+    subject = models.ForeignKey(Subject, on_delete=models.CASCADE, related_name='learner_facet_states')
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES)
+    key = models.CharField(max_length=60)
+
+    mastery = models.FloatField(default=0.0)
+    evidence_count = models.PositiveIntegerField(default=0)
+    effective_evidence = models.FloatField(default=0.0)
+    confidence = models.CharField(
+        max_length=10, choices=LearnerConceptState.CONFIDENCE_CHOICES, default='low',
+    )
+
+    model_version = models.CharField(max_length=10, default=FACET_MODEL_VERSION)
+    computed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'Learner Facet State'
+        verbose_name_plural = 'Learner Facet States'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['student', 'subject', 'kind', 'key'], name='uniq_learner_facet_state',
+            ),
+        ]
+        indexes = [models.Index(fields=['tenant', 'subject'])]
+
+    def __str__(self):
+        return f'{self.student_id} × {self.kind}:{self.key}: {self.mastery:.2f}'
 
 
 class ItemStats(TimeStampedModel):
@@ -1090,3 +1137,104 @@ class ItemSkillTag(TimeStampedModel):
 
     def __str__(self):
         return f'{self.skill_id} on {self.question_id or self.mock_item_id}'
+
+
+# ─── Syllabus tools: background job history (spec 2B §5.1) ───────────────────
+
+
+# Hard time limit of the build/tagging celery tasks (tasks.py), plus a margin.
+SYLLABUS_TASK_HARD_LIMIT_SECONDS = 1560
+STALE_RUNNING_AFTER = timedelta(seconds=SYLLABUS_TASK_HARD_LIMIT_SECONDS + 5 * 60)
+# Nothing consumed the aigen queue for this long: the job will not start.
+STALE_QUEUED_AFTER = timedelta(hours=6)
+STALE_JOB_ERROR = 'The run stopped without finishing. Start it again.'
+
+
+class SyllabusJob(TimeStampedModel):
+    """Shared shape of a background syllabus job (one row per run)."""
+
+    STATUS_QUEUED = 'queued'
+    STATUS_RUNNING = 'running'
+    STATUS_DONE = 'done'
+    STATUS_FAILED = 'failed'
+    STATUS_CHOICES = [
+        (STATUS_QUEUED, 'Queued'),
+        (STATUS_RUNNING, 'Running'),
+        (STATUS_DONE, 'Done'),
+        (STATUS_FAILED, 'Failed'),
+    ]
+    ACTIVE_STATUSES = (STATUS_QUEUED, STATUS_RUNNING)
+    KIND = ''
+
+    started_by = models.ForeignKey(
+        'users.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+    )
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_QUEUED)
+    # What was asked (e.g. explicit skill packs, subject ids); never student data.
+    options = models.JSONField(default=dict, blank=True)
+    summary = models.JSONField(default=dict, blank=True)
+    error = models.TextField(blank=True, default='')
+    tokens = models.PositiveIntegerField(default=0)
+    cost_usd = models.DecimalField(max_digits=10, decimal_places=6, default=0)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        abstract = True
+        ordering = ['-created_at']
+
+    @classmethod
+    def expire_stale(cls, course):
+        """Fail jobs whose worker died, so they stop blocking the course.
+
+        A hard-killed worker leaves `running` rows; a dead queue leaves `queued`
+        rows. The status filter in each update keeps a job that finishes
+        concurrently from being overwritten.
+        """
+        now = timezone.now()
+        fail = {'status': cls.STATUS_FAILED, 'error': STALE_JOB_ERROR, 'finished_at': now,
+                'updated_at': now}
+        jobs = cls.objects.filter(course=course)
+        jobs.filter(status=cls.STATUS_RUNNING, started_at__lt=now - STALE_RUNNING_AFTER).update(**fail)
+        jobs.filter(status=cls.STATUS_QUEUED, created_at__lt=now - STALE_QUEUED_AFTER).update(**fail)
+
+    def payload(self):
+        return {
+            'id': str(self.id),
+            'kind': self.KIND,
+            'course': str(self.course_id),
+            'status': self.status,
+            'summary': self.summary,
+            'error': self.error,
+            'tokens': self.tokens,
+            'cost_usd': float(self.cost_usd),
+            'started_by': (getattr(self.started_by, 'full_name', '') or getattr(self.started_by, 'email', ''))
+            if self.started_by_id else '',
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'started_at': self.started_at.isoformat() if self.started_at else None,
+            'finished_at': self.finished_at.isoformat() if self.finished_at else None,
+        }
+
+
+class TreeBuildJob(SyllabusJob):
+    """One "Build syllabus tree" run (services.course_tree.build_course_tree)."""
+
+    KIND = 'tree_build'
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='tree_build_jobs')
+
+    class Meta(SyllabusJob.Meta):
+        verbose_name = 'Tree Build Job'
+        verbose_name_plural = 'Tree Build Jobs'
+        indexes = [models.Index(fields=['course', 'status'])]
+
+
+class TaggingRun(SyllabusJob):
+    """One "Tag questions" run over a course's treed subjects."""
+
+    KIND = 'tagging'
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='tagging_runs')
+
+    class Meta(SyllabusJob.Meta):
+        verbose_name = 'Tagging Run'
+        verbose_name_plural = 'Tagging Runs'
+        indexes = [models.Index(fields=['course', 'status'])]

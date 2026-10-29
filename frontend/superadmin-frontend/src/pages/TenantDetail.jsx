@@ -92,7 +92,7 @@ function isoToDateInput(iso) {
   if (!iso) return ''
   return iso.slice(0, 10)
 }
-function FeatureRow({ feature, mode, tenantValue, onChange }) {
+function FeatureRow({ feature, mode, tenantValue, onChange, requirementOn = true }) {
   const options = [
     { key: 'tenant', label: 'Tenant' },
     { key: 'on', label: 'Force On' },
@@ -100,7 +100,7 @@ function FeatureRow({ feature, mode, tenantValue, onChange }) {
   ]
   const locked = mode !== 'tenant'
   return (
-    <div className="flex items-center justify-between py-2.5">
+    <div className={`flex items-center justify-between py-2.5 ${requirementOn ? '' : 'opacity-60'}`}>
       <div className="flex items-center gap-2 min-w-0">
         {locked ? (
           <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
@@ -114,6 +114,9 @@ function FeatureRow({ feature, mode, tenantValue, onChange }) {
               ? 'Locked — tenant cannot change'
               : `Tenant-controlled (currently ${tenantValue ? 'on' : 'off'})`}
           </div>
+          {!requirementOn && (
+            <div className="text-[11px] text-slate-400">Needs {feature.requires_label}</div>
+          )}
         </div>
       </div>
       <div className="flex rounded-lg border border-slate-200 overflow-hidden shrink-0">
@@ -437,6 +440,7 @@ export default function TenantDetail() {
                 mode={form.featureModes[f.key] || 'tenant'}
                 tenantValue={tenant.features?.[f.key]}
                 onChange={setFeatureMode}
+                requirementOn={!f.requires || Boolean(tenant.features?.[f.requires])}
               />
             ))}
           </div>

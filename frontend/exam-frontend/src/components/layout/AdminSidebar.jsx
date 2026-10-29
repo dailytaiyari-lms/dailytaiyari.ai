@@ -37,7 +37,7 @@ export const ADMIN_NAV_ITEMS = [
   { tab: 'ai-studio', label: 'AI Course Studio', icon: Wand2 },
   { tab: 'landing', label: 'Landing Page', icon: LayoutTemplate },
   { path: '/admin/mock-tests', label: 'Mock Tests', icon: ClipboardList },
-  { path: '/admin/insights', label: 'Learning Insights', icon: Brain, feature: 'practice' },
+  { path: '/admin/insights', label: 'Learning Insights', icon: Brain, features: ['practice', 'diagnosis_teacher_view', 'syllabus_tools', 'my_progress'] },
   { path: '/admin/jobs', label: 'Jobs', icon: Briefcase },
   { path: '/admin/hackathons', label: 'Hackathons', icon: Trophy },
   { tab: 'ai', label: 'AI Features', icon: Sparkles },
@@ -53,6 +53,7 @@ const AdminSidebar = () => {
   const tenant = useTenantStore((s) => s.tenant)
   // Opt-in items (Learning Insights) need an explicit true in the loaded config.
   const isFeatureVisible = useTenantStore((s) => s.isFeatureVisible)
+  const isAnyOptInFeatureEnabled = useTenantStore((s) => s.isAnyOptInFeatureEnabled)
 
   const activeTab = searchParams.get('tab') || 'overview'
   const onAdminDashboard = location.pathname === '/admin-dashboard'
@@ -116,7 +117,8 @@ const AdminSidebar = () => {
       {/* Navigation */}
       <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
         {ADMIN_NAV_ITEMS.filter(
-          (item) => !item.feature || isFeatureVisible(item.feature)
+          (item) => (!item.feature || isFeatureVisible(item.feature))
+            && (!item.features || isAnyOptInFeatureEnabled(item.features))
         ).map((item) => {
           const IconComponent = item.icon
 

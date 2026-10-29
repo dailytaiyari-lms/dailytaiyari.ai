@@ -1,10 +1,15 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { courseService } from '../services/courseService'
+import { contentBuilderService } from '../services/contentBuilderService'
 import { insightsService } from '../services/insightsService'
 import Loading from '../components/common/Loading'
 import { MasteryBar } from './Practice'
-import { Brain, Flag, Archive, RefreshCw, Sparkles } from 'lucide-react'
+import { useTenantStore } from '../context/tenantStore'
+import { useAuthStore } from '../context/authStore'
+import { Link } from 'react-router-dom'
+import AnswerBehaviourTile from '../components/insights/AnswerBehaviourTile'
+import ClassHeatmap from '../components/insights/ClassHeatmap'
+import { Brain, Flag, Archive, RefreshCw, Sparkles, Gauge, ClipboardCheck } from 'lucide-react'
 
 const DEFICIT_LABELS = {
   low_mastery: 'Low mastery',
@@ -48,12 +53,18 @@ const InsightsHome = () => {
   const queryClient = useQueryClient()
   const [courseId, setCourseId] = useState('')
   const [tab, setTab] = useState('class') // class | generated
+  const practiceOn = useTenantStore((s) => s.tenant?.features?.practice === true)
+  const teacherView = useTenantStore((s) => s.tenant?.features?.diagnosis_teacher_view === true)
+  const progressOn = useTenantStore((s) => s.tenant?.features?.my_progress === true)
+  const syllabusOn = useTenantStore((s) => s.tenant?.features?.syllabus_tools === true)
+  const { user, profile } = useAuthStore()
+  const isAdmin = (user?.role || profile?.user?.role) === 'admin'
 
-  const { data: courses } = useQuery({
+  const { data: courses, isLoading: coursesLoading, isError: coursesError } = useQuery({
     queryKey: ['insightCourses'],
-    queryFn: courseService.getCourses,
+    queryFn: contentBuilderService.getExams,
   })
-  const courseList = courses?.results ?? courses ?? []
+  const courseList = courses ?? []
   const activeCourse = courseId || courseList[0]?.id
 
   const { data: overview, isLoading } = useQuery({
@@ -78,7 +89,13 @@ const InsightsHome = () => {
   })
   const taggingMutation = useMutation({ mutationFn: insightsService.runTagging })
 
-  if (!activeCourse) return <Loading fullScreen />
+  if (coursesLoading) return <Loading fullScreen />
+  if (coursesError) {
+    return <p className="text-surface-500">Could not load courses.</p>
+  }
+  if (!activeCourse) {
+    return <p className="text-surface-500">No courses assigned to you yet.</p>
+  }
 
   const config = overview?.config
 
@@ -103,21 +120,39 @@ const InsightsHome = () => {
               <option key={course.id} value={course.id}>{course.name}</option>
             ))}
           </select>
-          <button
-            onClick={() => taggingMutation.mutate()}
-            disabled={taggingMutation.isPending}
-            title="Queue an AI tagging pass over untagged questions"
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-surface-100 dark:bg-surface-800 text-sm hover:bg-surface-200 dark:hover:bg-surface-700"
-          >
-            <RefreshCw size={14} className={taggingMutation.isPending ? 'animate-spin' : ''} />
-            {taggingMutation.isSuccess ? 'Tagging queued' : 'Tag questions'}
-          </button>
+          {teacherView && isAdmin && (
+            <Link
+              to="/admin/insights/diagnosis-quality"
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-surface-100 dark:bg-surface-800 text-sm hover:bg-surface-200 dark:hover:bg-surface-700"
+            >
+              <Gauge size={14} /> Diagnosis quality
+            </Link>
+          )}
+          {syllabusOn && (
+            <Link
+              to="/admin/insights/tag-review"
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-surface-100 dark:bg-surface-800 text-sm hover:bg-surface-200 dark:hover:bg-surface-700"
+            >
+              <ClipboardCheck size={14} /> Tag review
+            </Link>
+          )}
+          {practiceOn && (
+            <button
+              onClick={() => taggingMutation.mutate()}
+              disabled={taggingMutation.isPending}
+              title="Queue an AI tagging pass over untagged questions"
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-surface-100 dark:bg-surface-800 text-sm hover:bg-surface-200 dark:hover:bg-surface-700"
+            >
+              <RefreshCw size={14} className={taggingMutation.isPending ? 'animate-spin' : ''} />
+              {taggingMutation.isSuccess ? 'Tagging queued' : 'Tag questions'}
+            </button>
+          )}
         </div>
       </div>
 
       {/* Tabs */}
       <div className="flex gap-2">
-        {[['class', 'Class view'], ['generated', 'Generated questions']].map(([key, label]) => (
+        {[['class', 'Class view'], ...(practiceOn ? [['generated', 'Generated questions']] : [])].map(([key, label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -137,7 +172,7 @@ const InsightsHome = () => {
       ) : tab === 'class' ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Concept mastery */}
-          <div className="lg:col-span-2">
+          <div className="lg:col-span-2 space-y-4">
             <Tile title="Class concept mastery (weakest first)">
               {overview?.concepts?.length ? (
                 <div className="space-y-3 max-h-[28rem] overflow-y-auto pr-1">
@@ -163,55 +198,62 @@ const InsightsHome = () => {
                 </p>
               )}
             </Tile>
+            {progressOn && <ClassHeatmap courseId={activeCourse} />}
           </div>
 
           <div className="space-y-4">
-            <Tile title="Active deficits (last 30 days)">
-              {Object.keys(overview?.deficit_counts || {}).length ? (
-                <ul className="space-y-2 text-sm">
-                  {Object.entries(overview.deficit_counts).map(([kind, count]) => (
-                    <li key={kind} className="flex justify-between">
-                      <span>{DEFICIT_LABELS[kind] || kind}</span>
-                      <span className="font-semibold">{count}</span>
+            {teacherView && <AnswerBehaviourTile courseId={activeCourse} />}
+
+            {practiceOn && (
+              <>
+                <Tile title="Active deficits (last 30 days)">
+                  {Object.keys(overview?.deficit_counts || {}).length ? (
+                    <ul className="space-y-2 text-sm">
+                      {Object.entries(overview.deficit_counts).map(([kind, count]) => (
+                        <li key={kind} className="flex justify-between">
+                          <span>{DEFICIT_LABELS[kind] || kind}</span>
+                          <span className="font-semibold">{count}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-sm text-surface-400">No open deficits.</p>
+                  )}
+                </Tile>
+
+                <Tile title="Practice adoption (30 days)">
+                  <ul className="space-y-2 text-sm">
+                    <li className="flex justify-between"><span>Suggested</span><span className="font-semibold">{overview?.practice_adoption?.suggested ?? 0}</span></li>
+                    <li className="flex justify-between"><span>Completed</span><span className="font-semibold text-success-500">{overview?.practice_adoption?.completed ?? 0}</span></li>
+                    <li className="flex justify-between"><span>Dismissed</span><span className="font-semibold text-surface-400">{overview?.practice_adoption?.dismissed ?? 0}</span></li>
+                    <li className="flex justify-between pt-2 border-t border-surface-200 dark:border-surface-700">
+                      <span className="flex items-center gap-1"><Flag size={14} /> Flagged questions</span>
+                      <span className="font-semibold">{overview?.flagged_items ?? 0}</span>
                     </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-sm text-surface-400">No open deficits.</p>
-              )}
-            </Tile>
+                  </ul>
+                </Tile>
 
-            <Tile title="Practice adoption (30 days)">
-              <ul className="space-y-2 text-sm">
-                <li className="flex justify-between"><span>Suggested</span><span className="font-semibold">{overview?.practice_adoption?.suggested ?? 0}</span></li>
-                <li className="flex justify-between"><span>Completed</span><span className="font-semibold text-success-500">{overview?.practice_adoption?.completed ?? 0}</span></li>
-                <li className="flex justify-between"><span>Dismissed</span><span className="font-semibold text-surface-400">{overview?.practice_adoption?.dismissed ?? 0}</span></li>
-                <li className="flex justify-between pt-2 border-t border-surface-200 dark:border-surface-700">
-                  <span className="flex items-center gap-1"><Flag size={14} /> Flagged questions</span>
-                  <span className="font-semibold">{overview?.flagged_items ?? 0}</span>
-                </li>
-              </ul>
-            </Tile>
-
-            {config && (
-              <Tile title="Smart Practice controls">
-                <div className="space-y-3">
-                  <Toggle
-                    label="Practice suggestions"
-                    checked={config.practice_enabled}
-                    onChange={() =>
-                      configMutation.mutate({ practice_enabled: !config.practice_enabled })
-                    }
-                  />
-                  <Toggle
-                    label="AI question generation"
-                    checked={config.generation_enabled}
-                    onChange={() =>
-                      configMutation.mutate({ generation_enabled: !config.generation_enabled })
-                    }
-                  />
-                </div>
-              </Tile>
+                {config && (
+                  <Tile title="Smart Practice controls">
+                    <div className="space-y-3">
+                      <Toggle
+                        label="Practice suggestions"
+                        checked={config.practice_enabled}
+                        onChange={() =>
+                          configMutation.mutate({ practice_enabled: !config.practice_enabled })
+                        }
+                      />
+                      <Toggle
+                        label="AI question generation"
+                        checked={config.generation_enabled}
+                        onChange={() =>
+                          configMutation.mutate({ generation_enabled: !config.generation_enabled })
+                        }
+                      />
+                    </div>
+                  </Tile>
+                )}
+              </>
             )}
           </div>
         </div>

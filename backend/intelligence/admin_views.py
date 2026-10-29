@@ -6,20 +6,28 @@ computation pipelines live in the product layer.
 from collections import Counter, defaultdict
 from datetime import timedelta
 
-from django.db.models import Avg, Count, Q
+from django.db.models import Avg, Count, F, Max, Min, Q
 from django.utils import timezone
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.permissions import IsTenantAdmin
 from exams.models import Course
 
+from . import visibility_config as VC
+from .access import (
+    assessment_course_ids, assessment_in_scope, can_manage_course, can_view_student,
+    diagnosis_scope_q, teachable_course_ids,
+)
 from .models import (
     Concept, CoursePracticeConfig, GeneratedItem, ItemStats, LearnerConceptState,
     PracticeGenerationJob, PracticeSet, ResponseDiagnosis,
 )
 from .recommendation import practice_config_for
 from .serializers import MasteryRowSerializer, PracticeSetSerializer
+from .services import visibility
+from .views import ProgressFeaturePermission, progress_course
 
 
 class IsTenantAdminOrInstructor(permissions.BasePermission):
@@ -33,8 +41,79 @@ class IsTenantAdminOrInstructor(permissions.BasePermission):
         )
 
 
+class TeacherDiagnosisPermission(permissions.BasePermission):
+    """The tenant must have the diagnosis teacher view on (which needs
+    Answer Diagnosis; ``get_features`` folds that in)."""
+
+    message = 'The diagnosis teacher view is not enabled for this academy.'
+
+    def has_permission(self, request, view):
+        tenant = getattr(request, 'tenant', None)
+        return bool(tenant and tenant.get_features().get('diagnosis_teacher_view'))
+
+
+TEACHER_DIAGNOSIS = [
+    permissions.IsAuthenticated, IsTenantAdminOrInstructor, TeacherDiagnosisPermission,
+]
+LABEL_DISPLAY = dict(ResponseDiagnosis.LABEL_CHOICES)
+
+
+def _load_assessment(request, kind, assessment_id):
+    from quiz.models import MockTest, Quiz
+
+    model = {'quiz': Quiz, 'mock': MockTest}.get(kind)
+    if model is None:
+        return None
+    return model.objects.filter(id=assessment_id, tenant=request.tenant).first()
+
+
+def _finished_attempt_ids(kind, assessment, limit):
+    """Ids of the newest ``limit`` finished attempts on an assessment."""
+    from quiz.models import MockTestAttempt, QuizAttempt
+
+    if kind == 'quiz':
+        attempts = QuizAttempt.objects.filter(quiz=assessment)
+    else:
+        attempts = MockTestAttempt.objects.filter(mock_test=assessment)
+    # nulls_last: on Postgres a plain '-completed_at' puts abandoned attempts
+    # with no completed_at first and can crowd real ones out of the cap.
+    return list(
+        attempts.exclude(status='in_progress')
+        .order_by(F('completed_at').desc(nulls_last=True))
+        .values_list('id', flat=True)[:limit]
+    )
+
+
+def _assessment_items(kind, assessment):
+    """[(item_key, question_text)] in paper order: bank questions, then a
+    mock's inline items."""
+    from quiz.models import MockTestItem, MockTestQuestion
+
+    # QuizQuestion / MockTestQuestion declare their own Meta and so have no
+    # default ordering: order explicitly, or Postgres returns any order.
+    if kind == 'quiz':
+        rows = [(f'bank:{qq.question_id}', qq.question.question_text)
+                for qq in assessment.quizquestion_set.select_related('question')
+                .order_by('order', 'created_at')]
+    else:
+        rows = [(f'bank:{mtq.question_id}', mtq.question.question_text)
+                for mtq in MockTestQuestion.objects.filter(mock_test=assessment)
+                .select_related('question').order_by('section', 'order', 'created_at')]
+        rows += [(f'item:{item.id}', item.question_text)
+                 for item in MockTestItem.objects.filter(mock_test=assessment)]
+    return [(key, (text or '')[:200]) for key, text in rows]
+
+
+def _item_key(question_id, mock_item_id):
+    return f'bank:{question_id}' if question_id else f'item:{mock_item_id}'
+
+
 def _course_or_404(request, course_id):
     return Course.objects.filter(id=course_id, tenant=request.tenant).first()
+
+
+def _forbidden():
+    return Response({'error': 'Not in your courses.'}, status=status.HTTP_403_FORBIDDEN)
 
 
 class TaggingRunView(APIView):
@@ -65,6 +144,8 @@ class OverviewView(APIView):
         course = _course_or_404(request, request.query_params.get('course'))
         if course is None:
             return Response({'error': 'Course not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not can_manage_course(request.user, course):
+            return _forbidden()
 
         # Class concept mastery (only concepts with real evidence).
         concept_rows = (
@@ -133,6 +214,8 @@ class AssessmentReportView(APIView):
             assessment = None
         if assessment is None:
             return Response({'error': 'Assessment not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not assessment_in_scope(request.user, kind, assessment):
+            return _forbidden()
 
         items = self._items(kind, assessment)
         concept_perf = {}
@@ -210,12 +293,7 @@ class AssessmentReportView(APIView):
 
     @staticmethod
     def _courses(kind, assessment):
-        if kind == 'quiz':
-            return [assessment.course] if assessment.course_id else []
-        courses = list(assessment.courses.all())
-        if not courses and assessment.course_id:
-            courses = [assessment.course]
-        return courses
+        return list(Course.objects.filter(id__in=assessment_course_ids(kind, assessment)))
 
 
 class StudentDiagnosisView(APIView):
@@ -231,19 +309,28 @@ class StudentDiagnosisView(APIView):
         ).select_related('user').first()
         if student is None:
             return Response({'error': 'Student not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not can_view_student(request.user, student):
+            return _forbidden()
 
         states = (
             LearnerConceptState.objects.filter(student=student)
             .select_related('concept__subject')
             .order_by('mastery')
         )
+        teachable = teachable_course_ids(request.user)
         course_id = request.query_params.get('course')
         if course_id:
+            if request.user.role != 'admin' and not any(str(c) == course_id for c in teachable):
+                return _forbidden()
             states = states.filter(concept__subject__course_id=course_id)
+        elif request.user.role != 'admin':
+            states = states.filter(concept__subject__course_id__in=teachable)
 
+        sets = PracticeSet.objects.filter(student=student)
+        if request.user.role != 'admin':
+            sets = sets.filter(course_id__in=teachable)
         sets = (
-            PracticeSet.objects.filter(student=student)
-            .select_related('course').prefetch_related('target_concepts', 'items')
+            sets.select_related('course').prefetch_related('target_concepts', 'items')
             .order_by('-created_at')[:30]
         )
         return Response({
@@ -254,6 +341,273 @@ class StudentDiagnosisView(APIView):
             },
             'concepts': MasteryRowSerializer(states[:200], many=True).data,
             'practice_history': PracticeSetSerializer(sets, many=True).data,
+        })
+
+
+class AssessmentBehaviourView(APIView):
+    """Per-question answer behaviour for one quiz or mock (spec 2B §4.1.1)."""
+
+    permission_classes = TEACHER_DIAGNOSIS
+
+    def get(self, request, kind, assessment_id):
+        assessment = _load_assessment(request, kind, assessment_id)
+        if assessment is None:
+            return Response({'error': 'Assessment not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not assessment_in_scope(request.user, kind, assessment):
+            return _forbidden()
+
+        attempt_ids = _finished_attempt_ids(kind, assessment, VC.BEHAVIOUR_MAX_ATTEMPTS)
+        grouped = defaultdict(list)
+        for question_id, mock_item_id, label, metrics, report in (
+            ResponseDiagnosis.objects.filter(attempt_kind=kind, attempt_id__in=attempt_ids)
+            .values_list('question_id', 'mock_item_id', 'final_label', 'metrics', 'self_report')
+            .iterator()
+        ):
+            grouped[_item_key(question_id, mock_item_id)].append((label, metrics or {}, report))
+
+        items = []
+        for key, text in _assessment_items(kind, assessment):
+            rows = grouped.get(key, [])
+            distribution = visibility.label_distribution([label for label, _m, _r in rows])
+            items.append({
+                'item_key': key,
+                'question_text': text,
+                'distribution': distribution,
+                'median_active_s': visibility.median([m.get('active_s') for _l, m, _r in rows]),
+                'usual_s': visibility.median([m.get('usual_s') for _l, m, _r in rows]),
+                'self_reports': sum(1 for _l, _m, report in rows if report),
+                'flags': visibility.question_flags(distribution),
+            })
+        return Response({
+            'assessment': {'id': str(assessment.id), 'title': assessment.title, 'kind': kind},
+            'labels': list(visibility.LABELS),
+            'answers': sum(item['distribution']['total'] for item in items),
+            'flagged': sum(1 for item in items if item['flags']),
+            'items': items,
+        })
+
+
+def _attempt_titles(pairs):
+    """{(kind, attempt_id): (title, completed_at)} for quiz/mock/practice attempts."""
+    from quiz.models import MockTestAttempt, QuizAttempt
+
+    ids = defaultdict(list)
+    for kind, attempt_id in pairs:
+        ids[kind].append(attempt_id)
+    titles = {}
+    for attempt in QuizAttempt.objects.filter(id__in=ids['quiz']).select_related('quiz'):
+        titles[('quiz', attempt.id)] = (attempt.quiz.title, attempt.completed_at)
+    for attempt in MockTestAttempt.objects.filter(id__in=ids['mock']).select_related('mock_test'):
+        titles[('mock', attempt.id)] = (attempt.mock_test.title, attempt.completed_at)
+    for practice_set in PracticeSet.objects.filter(id__in=ids['practice']):
+        titles[('practice', practice_set.id)] = ('Practice set', practice_set.completed_at)
+    return titles
+
+
+def _answer_rows(student, pairs):
+    """Diagnosis rows of the given attempts, as dicts, grouped per attempt."""
+    if not pairs:
+        return {}
+    match = Q()
+    for kind, attempt_id in pairs:
+        match |= Q(attempt_kind=kind, attempt_id=attempt_id)
+    grouped = defaultdict(list)
+    rows = (
+        ResponseDiagnosis.objects.filter(student=student).filter(match)
+        .select_related('question__topic', 'mock_item__topic')
+        .order_by('created_at', 'id')
+    )
+    for row in rows:
+        item = row.question or row.mock_item
+        topic = getattr(item, 'topic', None) if item else None
+        grouped[(row.attempt_kind, row.attempt_id)].append({
+            'id': str(row.id),
+            'item_key': _item_key(row.question_id, row.mock_item_id),
+            'question_text': ((item.question_text if item else '') or '')[:200],
+            'topic': topic.name if topic else None,
+            'label': row.final_label,
+            'label_display': LABEL_DISPLAY.get(row.final_label, row.final_label),
+            'confidence': row.confidence,
+            'is_correct': row.is_correct,
+            'answered': row.answered,
+            'active_s': (row.metrics or {}).get('active_s'),
+            'metrics': row.metrics or {},
+            'evidence': visibility.describe_evidence(row.evidence, row.metrics),
+            'self_report': row.self_report,
+        })
+    return grouped
+
+
+class StudentAnswersView(APIView):
+    """One student's diagnosed answers, newest attempt first, with patterns
+    over the newest attempts (spec 2B §4.1.2)."""
+
+    permission_classes = TEACHER_DIAGNOSIS
+
+    def get(self, request, student_id):
+        from users.models import StudentProfile
+
+        student = StudentProfile.objects.filter(
+            id=student_id, user__tenant=request.tenant,
+        ).select_related('user').first()
+        if student is None:
+            return Response({'error': 'Student not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not can_view_student(request.user, student):
+            return _forbidden()
+
+        try:
+            page = max(1, int(request.query_params.get('page', 1)))
+        except (TypeError, ValueError):
+            page = 1
+        attempts = (
+            ResponseDiagnosis.objects.filter(student=student)
+            .filter(diagnosis_scope_q(request.user, student))
+            .values('attempt_kind', 'attempt_id')
+            .annotate(first_seen=Min('created_at'), last_computed=Max('computed_at'))
+            # Rows written in one burst can share a created_at, and the
+            # database clock can be coarse, so break ties on when the
+            # diagnosis was computed (later = newer), then on the id.
+            .order_by('-first_seen', F('last_computed').desc(nulls_last=True), 'attempt_id')
+        )
+        total = attempts.count()
+        size = VC.ANSWERS_PAGE_SIZE
+        pages = max(1, -(-total // size))
+        page = min(page, pages)
+        page_pairs = [(a['attempt_kind'], a['attempt_id'])
+                      for a in attempts[(page - 1) * size:page * size]]
+        rows = _answer_rows(student, page_pairs)
+        titles = _attempt_titles(page_pairs)
+
+        patterns = []
+        if page == 1:
+            window = page_pairs[:VC.PATTERN_ATTEMPTS]
+            patterns = visibility.detect_patterns(
+                [{'answers': rows.get(pair, [])} for pair in window])
+
+        payload = []
+        for pair in page_pairs:
+            title, completed_at = titles.get(pair, ('Deleted attempt', None))
+            payload.append({
+                'attempt_kind': pair[0],
+                'attempt_id': str(pair[1]),
+                'title': title,
+                'completed_at': completed_at.isoformat() if completed_at else None,
+                'answers': [
+                    {key: value for key, value in answer.items() if key != 'metrics'}
+                    for answer in rows.get(pair, [])
+                ],
+            })
+        return Response({
+            'student': {
+                'id': str(student.id),
+                'name': getattr(student.user, 'full_name', '') or student.user.email,
+            },
+            'page': page,
+            'pages': pages,
+            'total_attempts': total,
+            'patterns': patterns,
+            'attempts': payload,
+        })
+
+
+class CourseBehaviourView(APIView):
+    """Answer-behaviour tile for one course (spec 2B §4.1.3): guess, slip and
+    time-pressure rates over the last 28 days, a weekly trend, and the
+    students most worth checking."""
+
+    permission_classes = TEACHER_DIAGNOSIS
+
+    def get(self, request, course_id):
+        from quiz.models import MockTestAttempt, QuizAttempt
+        from users.models import CourseEnrollment, StudentProfile
+
+        course = _course_or_404(request, course_id)
+        if course is None:
+            return Response({'error': 'Course not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not can_manage_course(request.user, course):
+            return _forbidden()
+
+        now = timezone.now()
+        since = now - timedelta(days=VC.COURSE_TILE_DAYS)
+        cap = VC.COURSE_TILE_MAX_ATTEMPTS
+        newest = '-completed_at'
+        found = []         # (kind, completed_at, attempt_id, assessment_id, title)
+
+        found += [('quiz', *row) for row in QuizAttempt.objects.filter(
+            quiz__course=course, completed_at__gte=since,
+        ).order_by(newest).values_list('completed_at', 'id', 'quiz_id', 'quiz__title')[:cap]]
+        found += [('mock', *row) for row in MockTestAttempt.objects.filter(
+            Q(mock_test__course=course) | Q(mock_test__courses=course),
+            completed_at__gte=since,
+        ).distinct().order_by(newest).values_list(
+            'completed_at', 'id', 'mock_test_id', 'mock_test__title')[:cap]]
+        found += [('practice', row_done, row_id, None, '') for row_id, row_done in
+                  PracticeSet.objects.filter(course=course, completed_at__gte=since)
+                  .order_by(newest).values_list('id', 'completed_at')[:cap]]
+        # Newest first across the three kinds, then cap the total.
+        found.sort(key=lambda row: row[1], reverse=True)
+
+        completed = {}     # (kind, attempt_id) → completed_at
+        assessments = {}   # (kind, assessment_id) → (title, latest completed_at)
+        for kind, done, attempt_id, assessment_id, title in found[:cap]:
+            completed[(kind, attempt_id)] = done
+            if assessment_id is None:
+                continue
+            key = (kind, assessment_id)
+            if key not in assessments or assessments[key][1] < done:
+                assessments[key] = (title, done)
+
+        ids_by_kind = defaultdict(list)
+        for kind, attempt_id in completed:
+            ids_by_kind[kind].append(attempt_id)
+        match = Q(pk__in=[])
+        for kind, ids in ids_by_kind.items():
+            match |= Q(attempt_kind=kind, attempt_id__in=ids)
+        rows = list(
+            ResponseDiagnosis.objects.filter(tenant=request.tenant).filter(match)
+            .values_list('attempt_kind', 'attempt_id', 'student_id', 'final_label')
+        )
+
+        weeks = [[] for _ in range(VC.COURSE_TILE_WEEKS)]
+        per_student = defaultdict(list)
+        for kind, attempt_id, student_id, label in rows:
+            per_student[student_id].append(label)
+            age_days = max(0, (now - completed[(kind, attempt_id)]).days)
+            index = VC.COURSE_TILE_WEEKS - 1 - min(age_days // 7, VC.COURSE_TILE_WEEKS - 1)
+            weeks[index].append(label)
+
+        trend = []
+        for index, labels in enumerate(weeks):
+            start = now - timedelta(days=7 * (VC.COURSE_TILE_WEEKS - index))
+            trend.append({'week_start': start.date().isoformat(),
+                          **visibility.behaviour_rates(labels)})
+
+        # The tile means "this course's students": a mock linked to several
+        # courses, or a rejected/pending enrollment, must not name anyone here.
+        enrolled = set(CourseEnrollment.objects.filter(
+            course=course, status='approved').values_list('student_id', flat=True))
+        per_student = {sid: labels for sid, labels in per_student.items() if sid in enrolled}
+        check = visibility.students_to_check(per_student)
+        names = {
+            profile.id: (getattr(profile.user, 'full_name', '') or profile.user.email)
+            for profile in StudentProfile.objects.filter(
+                id__in=[row['student_id'] for row in check]).select_related('user')
+        }
+        recent = sorted(assessments.items(), key=lambda pair: pair[1][1], reverse=True)
+        return Response({
+            'course': {'id': str(course.id), 'name': course.name},
+            'days': VC.COURSE_TILE_DAYS,
+            'rates': visibility.behaviour_rates([row[3] for row in rows]),
+            'trend': trend,
+            'students_to_check': [
+                {**row, 'student_id': str(row['student_id']), 'name': names.get(row['student_id'], '')}
+                for row in check
+            ],
+            'recent_assessments': [
+                {'kind': kind, 'id': str(assessment_id), 'title': title,
+                 'completed_at': done.isoformat()}
+                for (kind, assessment_id), (title, done) in recent[:VC.RECENT_ASSESSMENTS]
+            ],
         })
 
 
@@ -271,6 +625,8 @@ class GeneratedItemsView(APIView):
         course_id = request.query_params.get('course')
         if course_id:
             rows = rows.filter(question__courses__id=course_id)
+        if request.user.role != 'admin':
+            rows = rows.filter(question__courses__id__in=teachable_course_ids(request.user)).distinct()
         payload = []
         for row in rows[:200]:
             stats = None
@@ -301,6 +657,9 @@ class GeneratedItemsView(APIView):
         ).select_related('question').first()
         if row is None:
             return Response({'error': 'Item not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if request.user.role != 'admin' and not row.question.courses.filter(
+                id__in=teachable_course_ids(request.user)).exists():
+            return _forbidden()
         row.retired_at = timezone.now()
         row.save(update_fields=['retired_at', 'updated_at'])
         row.question.status = 'archived'
@@ -314,10 +673,10 @@ class GenerationJobsView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsTenantAdminOrInstructor]
 
     def get(self, request):
-        jobs = (
-            PracticeGenerationJob.objects.filter(tenant=request.tenant)
-            .select_related('course').order_by('-created_at')[:100]
-        )
+        jobs = PracticeGenerationJob.objects.filter(tenant=request.tenant)
+        if request.user.role != 'admin':
+            jobs = jobs.filter(course_id__in=teachable_course_ids(request.user))
+        jobs = jobs.select_related('course').order_by('-created_at')[:100]
         return Response([
             {
                 'id': str(job.id),
@@ -343,6 +702,8 @@ class CoursePracticeConfigView(APIView):
         course = _course_or_404(request, course_id)
         if course is None:
             return Response({'error': 'Course not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not can_manage_course(request.user, course):
+            return _forbidden()
         config = practice_config_for(course)
         return Response(self._payload(config))
 
@@ -350,6 +711,8 @@ class CoursePracticeConfigView(APIView):
         course = _course_or_404(request, course_id)
         if course is None:
             return Response({'error': 'Course not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not can_manage_course(request.user, course):
+            return _forbidden()
         config = practice_config_for(course)
         for field in ('practice_enabled', 'generation_enabled'):
             if field in request.data:
@@ -379,12 +742,14 @@ class DiagnosisCalibrationView(APIView):
 
     Label distribution, classifier-label × self-report confusion, per-label
     agreement, and how much of the data had a timeline / trusted usual time.
+    Admin only. Also reports the thresholds and classifier version in use.
     """
 
-    permission_classes = [permissions.IsAuthenticated, IsTenantAdminOrInstructor]
+    permission_classes = [permissions.IsAuthenticated, IsTenantAdmin]
 
     def get(self, request):
-        from .diagnosis_config import SELF_REPORT_LABEL
+        from .diagnosis_config import SELF_REPORT_LABEL, THRESHOLDS
+        from .versions import CLASSIFIER_VERSION
 
         try:
             days = max(1, min(365, int(request.query_params.get('days', 30))))
@@ -417,4 +782,65 @@ class DiagnosisCalibrationView(APIView):
             'stats_usual': stats_usual, 'labels': dict(labels),
             'confusion': {label: dict(reports) for label, reports in confusion.items()},
             'agreement': agreement,
+            'thresholds': THRESHOLDS,
+            'classifier_version': CLASSIFIER_VERSION,
         })
+
+
+TEACHER_PROGRESS = [
+    permissions.IsAuthenticated, IsTenantAdminOrInstructor, ProgressFeaturePermission,
+]
+
+
+class StudentProgressView(APIView):
+    """One student's My Progress data for a teacher (spec 2B §6.5)."""
+
+    permission_classes = TEACHER_PROGRESS
+
+    def get(self, request, student_id):
+        from users.models import StudentProfile
+
+        from .services import progress
+
+        student = StudentProfile.objects.filter(
+            id=student_id, user__tenant=request.tenant,
+        ).select_related('user').first()
+        if student is None:
+            return Response({'error': 'Student not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not can_view_student(request.user, student):
+            return _forbidden()
+        allowed = Course.objects.filter(
+            tenant=request.tenant, enrollments__student=student, enrollments__status='approved',
+        )
+        if request.user.role != 'admin':
+            allowed = allowed.filter(id__in=teachable_course_ids(request.user))
+        allowed = list(allowed.distinct().order_by('name'))
+        course, error = progress_course(request, allowed)
+        if error is not None:
+            return error
+        if course is None:
+            payload = progress.empty_payload()
+        else:
+            recent = bool(request.tenant.get_features().get('diagnosis_teacher_view'))
+            payload = progress.progress_payload(student, course, allowed, recent=recent)
+        payload['student'] = {
+            'id': str(student.id),
+            'name': getattr(student.user, 'full_name', '') or student.user.email,
+        }
+        return Response(payload)
+
+
+class CourseHeatmapView(APIView):
+    """Class topic heatmap for one course (spec 2B §6.5)."""
+
+    permission_classes = TEACHER_PROGRESS
+
+    def get(self, request, course_id):
+        from .services import progress
+
+        course = _course_or_404(request, course_id)
+        if course is None:
+            return Response({'error': 'Course not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not can_manage_course(request.user, course):
+            return _forbidden()
+        return Response(progress.heatmap(course))
