@@ -17,7 +17,10 @@ Topic → Concept (``Concept.topics``), with no sub-subject level.
 
 Everything above the "Database" line is pure.
 """
+from collections import defaultdict
 from datetime import timedelta
+
+from django.utils import timezone
 
 from intelligence import progress_config as C
 from intelligence.services.state import CONFIDENCE_HIGH, CONFIDENCE_MEDIUM
@@ -166,3 +169,164 @@ def topic_lists(subjects):
 
 
 # ── Database ─────────────────────────────────────────────────────────────────
+
+
+def _tree_children(subject):
+    """The subject's live, in-syllabus nodes as nested node dicts."""
+    from intelligence.models import SyllabusNode
+
+    nodes = (
+        SyllabusNode.objects.filter(subject=subject, status__in=LIVE_STATUSES, in_syllabus=True)
+        .order_by('order', 'name')
+    )
+    by_parent = defaultdict(list)
+    for node in nodes:
+        by_parent[node.parent_id].append(node)
+
+    def build(node):
+        return {
+            'id': node.id, 'name': node.name, 'level': node.level,
+            'weightage': node.weightage, 'concept_id': node.concept_id,
+            'children': [build(child) for child in by_parent.get(node.id, [])],
+        }
+
+    # Walking down from the roots drops anything under an excluded parent.
+    return [build(node) for node in by_parent.get(None, [])]
+
+
+def _has_subtopic(node):
+    return node['level'] == 'subtopic' or any(_has_subtopic(c) for c in node['children'])
+
+
+def _fallback_children(subject):
+    """subject → course Topic → Concept, from ``Concept.topics``."""
+    from intelligence.models import Concept
+
+    concepts = (
+        Concept.objects.filter(subject=subject, status='active')
+        .prefetch_related('topics').order_by('name')
+    )
+    groups, loose = {}, []
+    for concept in concepts:
+        topics = [topic for topic in concept.topics.all() if topic.subject_id == subject.id]
+        if not topics:
+            loose.append(concept)
+        for topic in topics:
+            groups.setdefault(topic.id, (topic, []))[1].append(concept)
+
+    def leaf(concept):
+        return {'id': concept.id, 'name': concept.name, 'level': 'concept',
+                'weightage': 0.0, 'concept_id': concept.id, 'children': []}
+
+    children = [
+        {'id': topic.id, 'name': topic.name, 'level': 'topic', 'weightage': 0.0,
+         'children': [leaf(concept) for concept in members]}
+        for topic, members in sorted(groups.values(), key=lambda pair: (pair[0].order, pair[0].name))
+    ]
+    if loose:
+        children.append({
+            'id': f'other:{subject.id}', 'name': 'Other concepts', 'level': 'topic',
+            'weightage': 0.0, 'children': [leaf(concept) for concept in loose],
+        })
+    return children
+
+
+def course_structure(course):
+    """Each course subject as a node tree: its syllabus tree when it has a
+    live subtopic, else the Topic → Concept fallback."""
+    structures = []
+    for subject in course.subjects.order_by('order', 'name'):
+        children = _tree_children(subject)
+        has_tree = any(_has_subtopic(child) for child in children)
+        if not has_tree:
+            children = _fallback_children(subject)
+        structures.append({
+            'subject': subject,
+            'has_tree': has_tree,
+            'node': {'id': subject.id, 'name': subject.name, 'level': 'subject',
+                     'weightage': 0.0, 'children': children},
+        })
+    return structures
+
+
+def leaf_concept_ids(node):
+    if node['level'] in LEAF_LEVELS:
+        return {node['concept_id']} if node.get('concept_id') else set()
+    ids = set()
+    for child in node.get('children') or []:
+        ids |= leaf_concept_ids(child)
+    return ids
+
+
+def _trend_events(student, concept_ids, now):
+    """(points, {concept_id: [point index]}) for the student's latest answers
+    on these concepts inside the trend window."""
+    from intelligence.models import ConceptLink, LearningEvent
+    from intelligence.services.state import (
+        PRACTICE_WEIGHT, _diagnosis_key, _diagnosis_weights, _items_condition,
+    )
+
+    concepts_by_item = defaultdict(set)
+    for concept_id, question_id, mock_item_id in ConceptLink.objects.filter(
+            concept_id__in=concept_ids).values_list('concept_id', 'question_id', 'mock_item_id'):
+        key = ('q', question_id) if question_id else ('m', mock_item_id)
+        concepts_by_item[key].add(concept_id)
+    if not concepts_by_item:
+        return [], {}
+
+    question_ids = [item_id for arm, item_id in concepts_by_item if arm == 'q']
+    mock_item_ids = [item_id for arm, item_id in concepts_by_item if arm == 'm']
+    newest = list(
+        LearningEvent.objects.filter(
+            student=student, occurred_at__gte=now - WEEK * C.TREND_WEEKS, occurred_at__lte=now,
+        ).filter(_items_condition(question_ids, mock_item_ids))
+        .order_by('-occurred_at', '-created_at')[:C.TREND_MAX_EVENTS]
+    )
+    latest = {}
+    for event in reversed(newest):   # oldest first, so a regrade wins
+        latest[event.dedup_key.rsplit(':', 1)[0]] = event
+
+    diagnosis = _diagnosis_weights(student, latest.values())
+    points, by_concept = [], defaultdict(list)
+    for event in latest.values():
+        key = ('q', event.question_id) if event.question_id else ('m', event.mock_item_id)
+        source = PRACTICE_WEIGHT if event.source_type == LearningEvent.SOURCE_PRACTICE_ANSWER else 1.0
+        points.append((
+            event.occurred_at,
+            max(0.0, min(1.0, event.score_fraction)),
+            source * diagnosis.get(_diagnosis_key(event), 1.0),
+        ))
+        for concept_id in concepts_by_item.get(key, ()):
+            by_concept[concept_id].append(len(points) - 1)
+    return points, by_concept
+
+
+def rollup_for(student, course, *, now=None, with_trend=True):
+    """The student's roll-up for one course: one payload per subject."""
+    from intelligence.models import LearnerConceptState
+
+    now = now or timezone.now()
+    structures = course_structure(course)
+    concept_ids = set()
+    for structure in structures:
+        concept_ids |= leaf_concept_ids(structure['node'])
+    states = {
+        concept_id: (mastery, evidence)
+        for concept_id, mastery, evidence in LearnerConceptState.objects.filter(
+            student=student, concept_id__in=concept_ids,
+        ).values_list('concept_id', 'mastery', 'effective_evidence')
+    }
+
+    trends = {}
+    if with_trend and concept_ids:
+        points, by_concept = _trend_events(student, concept_ids, now)
+        for structure in structures:
+            for node_id, indexes in node_event_sets(structure['node'], by_concept).items():
+                trends[node_id] = weekly_trend([points[i] for i in indexes], now)
+
+    subjects = []
+    for structure in structures:
+        payload = rollup_node(structure['node'], states, trends)
+        payload['has_tree'] = structure['has_tree']
+        subjects.append(payload)
+    return subjects
