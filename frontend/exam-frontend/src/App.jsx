@@ -292,7 +292,7 @@ function App() {
           <Route path="/practice/:setId" element={<LoginGate><FeatureRoute feature="practice"><PracticeSession /></FeatureRoute></LoginGate>} />
           {/* Learning insights (teacher-visible: admins + instructors) */}
           <Route path="/admin/insights" element={<LoginGate><EditorRoute><InsightsHome /></EditorRoute></LoginGate>} />
-          <Route path="/admin/insights/tag-review" element={<LoginGate><EditorRoute><TagReview /></EditorRoute></LoginGate>} />
+          <Route path="/admin/insights/tag-review" element={<LoginGate><FeatureRoute feature="syllabus_tools"><EditorRoute><TagReview /></EditorRoute></FeatureRoute></LoginGate>} />
           <Route path="/admin/insights/assessments/:kind/:assessmentId" element={<LoginGate><EditorRoute><AssessmentReport /></EditorRoute></LoginGate>} />
           <Route path="/admin/insights/students/:studentId" element={<LoginGate><EditorRoute><StudentDiagnosis /></EditorRoute></LoginGate>} />
           <Route path="/admin/insights/diagnosis-quality" element={<LoginGate><AdminRoute><DiagnosisQuality /></AdminRoute></LoginGate>} />

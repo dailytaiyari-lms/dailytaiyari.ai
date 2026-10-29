@@ -30,7 +30,11 @@ export default function TagReviewList({ courseId, courses }) {
   }
   const act = (fn, message) => ({
     mutationFn: fn,
-    onSuccess: () => { if (message) toast.success(message); refresh() },
+    onSuccess: (res) => {
+      if (res?.queued === false) toast('Queue unavailable — it will be re-tagged on the next run.')
+      else if (message) toast.success(message)
+      refresh()
+    },
     onError: (error) => toast.error(errorText(error)),
   })
   const accept = useMutation(act(syllabusService.acceptReview, 'Accepted'))

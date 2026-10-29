@@ -14,9 +14,11 @@ export default function TagEditForm({ taggingId, onClose, onSaved }) {
   useEffect(() => {
     if (!data) return
     const row = data.row
+    // Archived subtopics are not offered as choices; sending their ids back would be refused.
+    const live = new Set((data.choices?.topics || []).flatMap((t) => t.subtopics.map((s) => s.id)))
     setForm({
-      primary: row.primary?.id || '',
-      secondary: row.secondary.map((n) => n.id),
+      primary: live.has(row.primary?.id) ? row.primary.id : '',
+      secondary: row.secondary.map((n) => n.id).filter((id) => live.has(id)),
       thinking_level: row.thinking_level,
       skills: row.skills.map(({ key, role, reason }) => ({ key, role, reason })),
       special_format: row.special_format,

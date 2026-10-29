@@ -44,9 +44,20 @@ function useJobPoll(jobId, onDone) {
   return data
 }
 
+const ACTIVE = ['queued', 'running']
+
+// A run started earlier (or by someone else) is picked up when the view opens.
+const activeJobId = (tree, kind) => tree.jobs?.find((j) => j.kind === kind && ACTIVE.includes(j.status))?.id ?? null
+
+// 409 means a run is already active: follow it instead of only showing the error.
+const adoptActive = (error, follow) => {
+  if (error?.response?.status === 409 && error.response.data?.job) follow(error.response.data.job.id)
+  toast.error(errorText(error))
+}
+
 function BuildCard({ courseId, tree }) {
   const queryClient = useQueryClient()
-  const [jobId, setJobId] = useState(null)
+  const [jobId, setJobId] = useState(() => activeJobId(tree, 'tree_build'))
   const estimate = useQuery({
     queryKey: ['syllabusBuildEstimate', courseId],
     queryFn: () => syllabusService.estimateBuild(courseId),
@@ -54,7 +65,7 @@ function BuildCard({ courseId, tree }) {
   const start = useMutation({
     mutationFn: () => syllabusService.startBuild(courseId),
     onSuccess: (job) => setJobId(job.id),
-    onError: (error) => toast.error(errorText(error)),
+    onError: (error) => adoptActive(error, setJobId),
   })
   const job = useJobPoll(jobId, (finished) => {
     queryClient.invalidateQueries({ queryKey: ['syllabusTree', courseId] })
@@ -139,9 +150,9 @@ function ExamCard({ courseId, tree }) {
   )
 }
 
-function TagCard({ courseId }) {
+function TagCard({ courseId, tree }) {
   const queryClient = useQueryClient()
-  const [runId, setRunId] = useState(null)
+  const [runId, setRunId] = useState(() => activeJobId(tree, 'tagging'))
   const estimate = useQuery({
     queryKey: ['syllabusTagEstimate', courseId],
     queryFn: () => syllabusService.estimateTagging(courseId),
@@ -149,7 +160,7 @@ function TagCard({ courseId }) {
   const start = useMutation({
     mutationFn: () => syllabusService.startTagging(courseId),
     onSuccess: (run) => setRunId(run.id),
-    onError: (error) => toast.error(errorText(error)),
+    onError: (error) => adoptActive(error, setRunId),
   })
   const run = useJobPoll(runId, (finished) => {
     queryClient.invalidateQueries({ queryKey: ['syllabusTree', courseId] })
@@ -225,7 +236,7 @@ export default function SyllabusPanel({ courseId }) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {tree.kind !== 'exam' && <BuildCard courseId={courseId} tree={tree} />}
         {tree.kind !== 'custom' && <ExamCard courseId={courseId} tree={tree} />}
-        <TagCard courseId={courseId} />
+        <TagCard courseId={courseId} tree={tree} />
       </div>
       <JobHistory jobs={tree.jobs} />
       <TreeEditor courseId={courseId} tree={tree} />
