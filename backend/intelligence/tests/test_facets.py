@@ -1,4 +1,8 @@
 """Skill and thinking-level profiles (spec 2B §6.3)."""
+import io
+from unittest.mock import patch
+
+from django.core.management import call_command
 from django.db import IntegrityError, transaction
 from django.test import TestCase
 from django.utils import timezone
@@ -7,7 +11,8 @@ from core.models import Tenant
 from exams.models import Course, Subject
 from intelligence.models import ItemSkillTag, ItemTagging, LearnerFacetState, TagDefinition
 from intelligence.services import facets
-from intelligence.tests.progress_fixtures import ProgressTestCase
+from intelligence.tasks import diagnose_and_update_state, refresh_learner_state
+from intelligence.tests.progress_fixtures import PROGRESS_ON, ProgressTestCase
 from users.models import User
 
 
@@ -154,3 +159,59 @@ class ProfileTests(FacetFixture):
         skill = facets.profile_for(self.student, self.course)[0]['skills'][0]
         self.assertIsNone(skill['mastery'])
         self.assertEqual(skill['status'], 'not_enough_data')
+
+
+class JobTests(FacetFixture):
+    def test_diagnosis_job_recomputes_facets(self):
+        attempt = self.quiz_attempt(self.student)
+        with patch('intelligence.services.facets.update_for_attempt', return_value=1) as hook:
+            diagnose_and_update_state('quiz', str(attempt.id))
+        hook.assert_called_once_with('quiz', str(attempt.id))
+
+    def test_facet_failure_does_not_break_the_job(self):
+        attempt = self.quiz_attempt(self.student)
+        with patch('intelligence.services.facets.update_for_attempt', side_effect=RuntimeError):
+            self.assertEqual(diagnose_and_update_state('quiz', str(attempt.id)), 0)
+
+    def test_nightly_sweep_fills_facets_only_with_my_progress(self):
+        question = self.tagged_question(1, skills=[(self.vectors, 'core')])
+        self.event(question, score=1.0)
+        refresh_learner_state()
+        self.assertTrue(self.student.facet_states.exists())
+
+        self.student.facet_states.all().delete()
+        self.tenant.features = {'response_diagnosis': True}
+        self.tenant.save()
+        refresh_learner_state()
+        self.assertFalse(self.student.facet_states.exists())
+
+    def test_attempt_job_writes_no_facets_with_my_progress_off(self):
+        question = self.tagged_question(1, skills=[(self.vectors, 'core')])
+        attempt = self.quiz_attempt(self.student)
+        self.event(question, score=1.0, attempt=attempt)
+        self.tenant.features = {'response_diagnosis': True}
+        self.tenant.save()
+        diagnose_and_update_state('quiz', str(attempt.id))
+        self.assertFalse(self.student.facet_states.exists())
+
+        self.tenant.features = PROGRESS_ON
+        self.tenant.save()
+        diagnose_and_update_state('quiz', str(attempt.id))
+        self.assertTrue(self.student.facet_states.exists())
+
+    def test_command_recomputes_facets_unless_told_not_to(self):
+        question = self.tagged_question(1, skills=[(self.vectors, 'core')])
+        self.event(question, score=1.0)
+        call_command('recompute_learner_state', '--no-facets', tenant=str(self.tenant.id),
+                     stdout=io.StringIO())
+        self.assertFalse(self.student.facet_states.exists())
+        call_command('recompute_learner_state', tenant=str(self.tenant.id), stdout=io.StringIO())
+        self.assertEqual(self.student.facet_states.count(), 2)
+
+    def test_command_skips_tenants_with_my_progress_off(self):
+        question = self.tagged_question(1, skills=[(self.vectors, 'core')])
+        self.event(question, score=1.0)
+        self.tenant.features = {'response_diagnosis': True}
+        self.tenant.save()
+        call_command('recompute_learner_state', tenant=str(self.tenant.id), stdout=io.StringIO())
+        self.assertFalse(self.student.facet_states.exists())

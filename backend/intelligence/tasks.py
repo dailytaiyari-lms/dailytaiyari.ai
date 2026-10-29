@@ -38,9 +38,9 @@ def diagnose_and_update_state(kind, attempt_id):
 
     Ordered on purpose: state reads diagnosis weights. A diagnosis failure
     never blocks the state update (weights fall back to 1.0) and the nightly
-    sweep retries it.
+    sweep retries it. Facets (My Progress) follow the concept states.
     """
-    from .services import diagnose, state
+    from .services import diagnose, facets, state
 
     try:
         diagnose.diagnose_attempt(kind, attempt_id)
@@ -49,10 +49,15 @@ def diagnose_and_update_state(kind, attempt_id):
     if kind not in ('quiz', 'mock'):
         return 0
     try:
-        return state.update_for_attempt(kind, attempt_id)
+        updated = state.update_for_attempt(kind, attempt_id)
     except Exception:  # noqa: BLE001 — the nightly refresh catches up
         logger.exception('intelligence.update_learner_state failed for %s %s', kind, attempt_id)
-        return 0
+        updated = 0
+    try:
+        facets.update_for_attempt(kind, attempt_id)
+    except Exception:  # noqa: BLE001 — the nightly refresh catches up
+        logger.exception('intelligence.update_facets failed for %s %s', kind, attempt_id)
+    return updated
 
 
 @shared_task(name='intelligence.refresh_learner_state', time_limit=1800, queue='intelligence')
@@ -115,8 +120,37 @@ def refresh_learner_state():
             except Exception:  # noqa: BLE001 — one bad attempt must not stop the sweep
                 logger.exception('nightly state update failed for %s %s', kind, attempt_id)
 
-    logger.info('intelligence.refresh_learner_state: %d refreshed, %d catch-up concepts',
-                refreshed, caught_up)
+    # My Progress facets: students with fresh answers, and rows due for decay.
+    from core.models import Tenant
+    from users.models import StudentProfile
+
+    from .models import LearnerFacetState
+    from .progress_config import FACET_REFRESH_LIMIT
+    from .services import facets
+
+    facet_tenants = {
+        tenant.id for tenant in Tenant.objects.filter(id__in=enabled)
+        if facets.facets_enabled(tenant)
+    }
+    student_ids = set(
+        LearningEvent.objects.filter(created_at__gte=recent, tenant_id__in=facet_tenants)
+        .values_list('student_id', flat=True).distinct()[:FACET_REFRESH_LIMIT]
+    )
+    student_ids |= set(
+        LearnerFacetState.objects.filter(computed_at__lt=cutoff, tenant_id__in=facet_tenants)
+        .values_list('student_id', flat=True).distinct()[:FACET_REFRESH_LIMIT]
+    )
+    profiled = 0
+    for student in StudentProfile.objects.filter(
+            id__in=list(student_ids)[:FACET_REFRESH_LIMIT]).select_related('user__tenant'):
+        try:
+            facets.recompute_facets(student)
+            profiled += 1
+        except Exception:  # noqa: BLE001 — one bad student must not stop the sweep
+            logger.exception('nightly facet recompute failed for %s', student.id)
+
+    logger.info('intelligence.refresh_learner_state: %d refreshed, %d catch-up concepts, '
+                '%d facet profiles', refreshed, caught_up, profiled)
     return refreshed
 
 
