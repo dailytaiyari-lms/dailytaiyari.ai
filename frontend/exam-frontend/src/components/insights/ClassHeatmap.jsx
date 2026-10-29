@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { insightsService } from '../../services/insightsService'
@@ -54,48 +54,55 @@ export default function ClassHeatmap({ courseId }) {
             </thead>
             <tbody>
               {data.topics.map((topic) => (
-                <tr key={topic.id} className="border-b border-surface-100 dark:border-surface-700/50">
-                  <td className="py-2 pr-3">
-                    <span className="block truncate max-w-[14rem]">{topic.name}</span>
-                    <span className="text-xs text-surface-400">{topic.subject}</span>
-                  </td>
-                  <td className="py-2 pr-3 text-surface-500">{pct(topic.coverage)}</td>
-                  {data.bands.map((band) => (
-                    <td key={band} className="py-1 pr-2 text-center">
-                      <button
-                        type="button"
-                        disabled={!topic.counts[band]}
-                        onClick={() => setSelected({ topicId: topic.id, band })}
-                        className={`w-full min-w-[3rem] px-2 py-1.5 rounded-lg font-semibold disabled:opacity-40 ${BAND_CELL[band]}`}
-                      >
-                        {topic.counts[band]}
-                      </button>
+                <Fragment key={topic.id}>
+                  <tr className="border-b border-surface-100 dark:border-surface-700/50">
+                    <td className="py-2 pr-3">
+                      <span className="block truncate max-w-[14rem]">{topic.name}</span>
+                      <span className="text-xs text-surface-400">{topic.subject}</span>
                     </td>
-                  ))}
-                </tr>
+                    <td className="py-2 pr-3 text-surface-500">{pct(topic.coverage)}</td>
+                    {data.bands.map((band) => {
+                      const isOpen = picked?.id === topic.id && selected.band === band
+                      return (
+                        <td key={band} className="py-1 pr-2 text-center">
+                          <button
+                            type="button"
+                            disabled={!topic.counts[band]}
+                            aria-expanded={isOpen}
+                            onClick={() => setSelected(isOpen ? null : { topicId: topic.id, band })}
+                            className={`w-full min-w-[3rem] px-2 py-1.5 rounded-lg font-semibold disabled:opacity-40 ${BAND_CELL[band]} ${isOpen ? 'ring-2 ring-primary-400' : ''}`}
+                          >
+                            {topic.counts[band]}
+                          </button>
+                        </td>
+                      )
+                    })}
+                  </tr>
+                  {picked?.id === topic.id && (
+                    <tr className="border-b border-surface-100 dark:border-surface-700/50">
+                      <td colSpan={2 + data.bands.length} className="py-3">
+                        <p className="text-xs font-semibold text-surface-500 mb-2">
+                          {picked.name} · {BAND_TEXT[selected.band]}
+                        </p>
+                        <ul className="flex flex-wrap gap-2 text-sm">
+                          {picked.students[selected.band].map((student) => (
+                            <li key={student.id}>
+                              <Link
+                                to={`/admin/insights/students/${student.id}`}
+                                className="px-2.5 py-1 rounded-full bg-surface-100 dark:bg-surface-700 hover:text-primary-500"
+                              >
+                                {student.name}
+                              </Link>
+                            </li>
+                          ))}
+                        </ul>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
             </tbody>
           </table>
-        </div>
-      )}
-
-      {picked && (
-        <div className="mt-4 pt-3 border-t border-surface-200 dark:border-surface-700">
-          <p className="text-xs font-semibold text-surface-500 mb-2">
-            {picked.name} · {BAND_TEXT[selected.band]}
-          </p>
-          <ul className="flex flex-wrap gap-2 text-sm">
-            {picked.students[selected.band].map((student) => (
-              <li key={student.id}>
-                <Link
-                  to={`/admin/insights/students/${student.id}`}
-                  className="px-2.5 py-1 rounded-full bg-surface-100 dark:bg-surface-700 hover:text-primary-500"
-                >
-                  {student.name}
-                </Link>
-              </li>
-            ))}
-          </ul>
         </div>
       )}
     </div>

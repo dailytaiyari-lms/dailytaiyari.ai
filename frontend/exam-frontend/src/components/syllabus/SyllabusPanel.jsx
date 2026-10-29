@@ -70,6 +70,7 @@ function BuildCard({ courseId, tree }) {
   const job = useJobPoll(jobId, (finished) => {
     queryClient.invalidateQueries({ queryKey: ['syllabusTree', courseId] })
     queryClient.invalidateQueries({ queryKey: ['syllabusBuildEstimate', courseId] })
+    queryClient.invalidateQueries({ queryKey: ['syllabusTagEstimate', courseId] })
     if (finished.status === 'failed') toast.error(finished.error || 'Build failed')
     else toast.success('Syllabus tree built')
   })
@@ -117,6 +118,7 @@ function ExamCard({ courseId, tree }) {
     onSuccess: () => {
       toast.success('Exam syllabus applied')
       queryClient.invalidateQueries({ queryKey: ['syllabusTree', courseId] })
+      queryClient.invalidateQueries({ queryKey: ['syllabusTagEstimate', courseId] })
     },
     onError: (error) => toast.error(errorText(error)),
   })

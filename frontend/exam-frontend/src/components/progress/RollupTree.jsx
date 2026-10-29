@@ -7,19 +7,17 @@ function Row({ node, depth }) {
   const hasChildren = node.children?.length > 0
   return (
     <>
-      <div
-        className="flex items-center gap-3 py-2 border-b border-surface-100 dark:border-surface-700/50"
+      <button
+        type="button"
+        disabled={!hasChildren}
+        onClick={() => setOpen(!open)}
+        aria-expanded={hasChildren ? open : undefined}
+        className="w-full flex items-center gap-3 py-2 text-left border-b border-surface-100 dark:border-surface-700/50 enabled:hover:bg-surface-50 dark:enabled:hover:bg-surface-700/30 disabled:cursor-default"
         style={{ paddingLeft: depth * 18 }}
       >
-        <button
-          type="button"
-          disabled={!hasChildren}
-          onClick={() => setOpen(!open)}
-          className="w-5 shrink-0 text-surface-400 disabled:opacity-0"
-          aria-label={open ? 'Collapse' : 'Expand'}
-        >
+        <span className={`w-5 shrink-0 text-surface-400 ${hasChildren ? '' : 'opacity-0'}`}>
           {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-        </button>
+        </span>
         <span className="flex-1 min-w-0 truncate text-sm">{node.name}</span>
         <span className="hidden sm:block text-xs text-surface-400 w-28 text-right shrink-0">
           {node.total ? `${node.covered}/${node.total} covered` : ''}
@@ -27,7 +25,7 @@ function Row({ node, depth }) {
         <span className={`text-xs w-36 text-right shrink-0 ${STATUS_CLASS[node.status]}`}>
           {node.mastery != null ? `${pct(node.mastery)} · ${STATUS_TEXT[node.status]}` : STATUS_TEXT.not_enough_data}
         </span>
-      </div>
+      </button>
       {open && node.children.map((child) => (
         <Row key={child.id} node={child} depth={depth + 1} />
       ))}
