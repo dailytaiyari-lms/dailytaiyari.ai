@@ -247,3 +247,34 @@ class SyllabusApiGapTests(SyllabusTestCase):
         self.assertEqual(second.status_code, 409, second.content)
         self.assertEqual(second.json()['job']['id'], first.json()['id'])
         self.assertEqual(TaggingRun.objects.count(), 1)
+
+
+class OptOutTests(SyllabusTestCase):
+    """With every learning-layer switch off: no Part B endpoint is reachable
+    and nothing is queued."""
+
+    features = {}
+
+    def test_every_endpoint_is_403_and_nothing_is_queued(self):
+        node = self.friction
+        urls = [
+            ('get', f'{BASE}/courses/{self.course.id}/tree/'),
+            ('post', f'{BASE}/courses/{self.course.id}/tree/estimate/'),
+            ('post', f'{BASE}/courses/{self.custom.id}/tree/build/'),
+            ('post', f'{BASE}/courses/{self.course.id}/tree/exam/'),
+            ('post', f'{BASE}/courses/{self.course.id}/nodes/'),
+            ('patch', f'{BASE}/nodes/{node.id}/'),
+            ('post', f'{BASE}/nodes/{node.id}/merge/'),
+            ('patch', f'{BASE}/courses/{self.course.id}/skill-packs/'),
+            ('post', f'{BASE}/courses/{self.course.id}/tagging/estimate/'),
+            ('post', f'{BASE}/courses/{self.course.id}/tagging/run/'),
+            ('get', f'{BASE}/review/'),
+            ('post', f'{BASE}/review/bulk-accept/'),
+        ]
+        client = self.client_for(self.admin)
+        with patch('intelligence.api.enqueue') as enqueue:
+            for method, url in urls:
+                self.assertEqual(getattr(client, method)(url, {}, format='json').status_code, 403, url)
+        enqueue.assert_not_called()
+        self.assertFalse(TreeBuildJob.objects.exists())
+        self.assertFalse(TaggingRun.objects.exists())
