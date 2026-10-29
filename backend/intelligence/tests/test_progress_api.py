@@ -121,3 +121,51 @@ class PracticeSerializerTests(ProgressTestCase):
         practice_set.target_concepts.add(self.concepts['velocity'])
         self.assertEqual(PracticeSetSerializer(practice_set).data['concept_ids'],
                          [str(self.concepts['velocity'].id)])
+
+
+from unittest.mock import patch
+
+from intelligence.models import ItemSkillTag, ItemTagging, LearnerFacetState, TagDefinition
+
+
+class OptOutTests(ProgressTestCase):
+    """With every learning-layer switch off: no Part C endpoint is reachable,
+    no facet rows appear, and the nightly sweep does no facet work."""
+
+    features = {}
+
+    def test_every_endpoint_is_403(self):
+        urls = [
+            (self.student_user, MY),
+            (self.admin, f'{INSIGHTS}/students/{self.student.id}/progress/'),
+            (self.admin, f'{INSIGHTS}/courses/{self.course.id}/heatmap/'),
+        ]
+        for user, url in urls:
+            self.assertEqual(self.client_for(user).get(url).status_code, 403, url)
+
+    def test_no_facets_without_my_progress(self):
+        from intelligence.services import facets
+        from intelligence.tasks import refresh_learner_state
+
+        skill = TagDefinition.objects.create(kind='skill', key='k', label='K', definition='-')
+        question = self.make_question(1)
+        ItemTagging.objects.create(tenant=self.tenant, question=question,
+                                   primary_node=self.velocity, thinking_level='apply')
+        ItemSkillTag.objects.create(tenant=self.tenant, question=question, skill=skill, role='core')
+        attempt = self.quiz_attempt(self.student)
+        self.event(question, score=1.0, attempt=attempt)
+
+        self.assertEqual(facets.update_for_attempt('quiz', str(attempt.id)), 0)
+        with patch('intelligence.services.facets.recompute_facets') as recompute:
+            refresh_learner_state()
+        recompute.assert_not_called()
+        self.assertFalse(LearnerFacetState.objects.exists())
+
+    def test_practice_alone_does_not_turn_on_facets(self):
+        from intelligence.services import facets
+
+        self.tenant.features = {'practice': True}
+        self.tenant.save()
+        self.assertFalse(facets.facets_enabled(self.tenant))
+        self.assertEqual(
+            self.client_for(self.student_user).get(MY).status_code, 403)
