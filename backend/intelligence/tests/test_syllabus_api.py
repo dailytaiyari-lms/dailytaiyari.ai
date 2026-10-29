@@ -138,6 +138,30 @@ class ReviewEndpointTests(SyllabusTestCase):
         by_topic = self.client_for(self.admin).get(f'{BASE}/review/', {'topic': str(self.laws.id)}).json()
         self.assertEqual(by_topic['total'], 1)
 
+    def test_filters_cannot_widen_a_faculty_scope(self):
+        faculty = self.client_for(self.faculty)
+        other_course = faculty.get(f'{BASE}/review/', {'course': str(self.custom.id)}).json()
+        self.assertEqual(other_course['total'], 0)
+        other_topic = faculty.get(f'{BASE}/review/', {'topic': str(self.two_sum.id)}).json()
+        self.assertEqual(other_topic['total'], 0)
+
+    def test_pagination(self):
+        for number in range(24):
+            ItemTagging.objects.create(
+                tenant=self.tenant, question=self.question(f'Extra {number}'),
+                review_status='needs_review', review_reasons=['low_confidence'])
+        client = self.client_for(self.faculty)
+        first = client.get(f'{BASE}/review/').json()
+        self.assertEqual((first['total'], first['pages'], len(first['results'])), (25, 1, 25))
+        ItemTagging.objects.create(
+            tenant=self.tenant, question=self.question('One more'),
+            review_status='needs_review', review_reasons=['low_confidence'])
+        page_one = client.get(f'{BASE}/review/').json()
+        page_two = client.get(f'{BASE}/review/', {'page': 2}).json()
+        self.assertEqual((page_one['total'], page_one['pages']), (26, 2))
+        self.assertEqual(len(page_one['results']), 25)
+        self.assertEqual((page_two['page'], len(page_two['results'])), (2, 1))
+
     def test_accept_bulk_and_scope(self):
         client = self.client_for(self.faculty)
         self.assertEqual(client.post(f'{BASE}/review/{self.other_tagging.id}/accept/').status_code, 403)
@@ -161,10 +185,28 @@ class ReviewEndpointTests(SyllabusTestCase):
         self.assertEqual(bad.status_code, 400)
 
     def test_retag_queues(self):
-        with patch('intelligence.syllabus_views._enqueue_retag') as queued:
+        self.tagging.source = 'manual'
+        self.tagging.save()
+        self.item.tagging_status = 'tagged'
+        self.item.save()
+
+        at_enqueue = []
+
+        def record_state(kind, item_id):
+            # What the database holds the moment the task is queued. Recorded
+            # here and asserted below: the view swallows exceptions from this call.
+            at_enqueue.append((ItemTagging.objects.get(id=self.tagging.id).source,
+                               type(self.item).objects.get(id=self.item.id).tagging_status))
+
+        with patch('intelligence.syllabus_views._enqueue_retag', side_effect=record_state) as queued:
             response = self.client_for(self.admin).post(f'{BASE}/review/{self.tagging.id}/retag/')
         self.assertEqual(response.json(), {'queued': True})
+        self.assertEqual(at_enqueue, [('llm_tagger', 'stale')])
         queued.assert_called_once_with('bank', str(self.item.id))
+        self.tagging.refresh_from_db()
+        self.item.refresh_from_db()
+        self.assertEqual(self.tagging.source, 'llm_tagger')
+        self.assertEqual(self.item.tagging_status, 'stale')
 
     def test_add_to_tree(self):
         self.tagging.primary_node = None
