@@ -299,8 +299,9 @@ class RegisterView(generics.CreateAPIView):
 ## Response diagnosis (intelligence)
 
 **Opt-in per tenant.** The whole learning layer runs only for tenants with at
-least one of `practice`, `ai_grading` or `response_diagnosis` on
-(`intelligence.api.intelligence_enabled`; all three are off by default). For
+least one of `practice`, `ai_grading`, `response_diagnosis`, `syllabus_tools`
+or `my_progress` on (`intelligence.api.LEARNING_FEATURES` /
+`intelligence_enabled`; all are off by default). For
 any other tenant: the attempt screens capture no timeline and send the same
 payload as before the layer existed, `POST /intelligence/timeline/` answers
 204 and writes nothing, submits and grading write no `LearningEvent` and
@@ -494,7 +495,9 @@ redirecting output (it contains non-ASCII).
 ### Syllabus & tagging tools (2B Part B)
 
 Opt-in switch `syllabus_tools` (also a learning-layer switch: turning it on
-starts event collection like the other three). Admins, and faculty on their
+starts event collection like the others, and enrols the tenant in the weekly
+tagging sweep — v2 on subjects with a tree, including items made stale by tree
+edits, and v1 on the rest, up to 200 items, budget-gated). Admins, and faculty on their
 assigned courses, get a **Syllabus** view on the course editor and
 **Learning Insights → Tag review**.
 
