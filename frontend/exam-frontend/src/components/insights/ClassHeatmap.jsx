@@ -20,11 +20,18 @@ const BAND_CELL = {
 /** Insights home: students per topic and mastery band, for one course. */
 export default function ClassHeatmap({ courseId }) {
   const [selected, setSelected] = useState(null) // { topicId, band }
-  const { data } = useQuery({
+  const { data, isError, error } = useQuery({
     queryKey: ['courseHeatmap', courseId],
     queryFn: () => insightsService.getCourseHeatmap(courseId),
     enabled: !!courseId,
   })
+  if (isError) {
+    return (
+      <p className="text-sm text-error-600 dark:text-error-300">
+        {error?.response?.data?.error || 'Could not load the heatmap.'}
+      </p>
+    )
+  }
   if (!data) return null
 
   const picked = selected && data.topics.find((t) => t.id === selected.topicId)

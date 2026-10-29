@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { LineChart } from 'lucide-react'
 import { progressService } from '../services/progressService'
 import { useTenantStore } from '../context/tenantStore'
@@ -10,12 +10,20 @@ import ProgressView from '../components/progress/ProgressView'
 export default function MyProgress() {
   const [courseId, setCourseId] = useState('')
   const practiceOn = useTenantStore((s) => s.tenant?.features?.practice === true)
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['myProgress', courseId],
     queryFn: () => progressService.getMyProgress(courseId || undefined),
+    placeholderData: keepPreviousData,
   })
 
-  if (isLoading) return <Loading fullScreen />
+  if (!data && isLoading) return <Loading fullScreen />
+  if (!data && isError) {
+    return (
+      <p className="text-sm text-error-600 dark:text-error-300">
+        {error?.response?.data?.error || 'Could not load progress.'}
+      </p>
+    )
+  }
   if (!data) return null
 
   return (

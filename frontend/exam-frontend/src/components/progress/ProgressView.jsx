@@ -138,7 +138,9 @@ export default function ProgressView({ data, onCourseChange, practiceOn = false,
                       </p>
                     </div>
                     <p className="text-xs text-surface-500 text-right">
-                      {row.noted ? row.summary : 'Nothing to flag'}
+                      {row.results_pending
+                        ? 'Results not released yet'
+                        : row.noted ? row.summary : 'Nothing to flag'}
                     </p>
                   </div>
                 )
