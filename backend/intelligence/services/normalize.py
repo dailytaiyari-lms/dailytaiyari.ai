@@ -117,7 +117,8 @@ def resolve_concept(tenant, subject, raw_label, *, source='manual', topic=None):
 def merge_concept(loser, winner):
     """Merge ``loser`` into ``winner``: re-point links and aliases, mark merged.
 
-    Callers are responsible for recomputing affected learner states afterwards
+    A link both concepts hold keeps the stronger of the two (primary, weight,
+    manual source). Callers are responsible for recomputing affected learner states afterwards
     (``recompute_learner_state`` command).
     """
     from intelligence.models import ConceptLink, LearnerConceptState
@@ -125,12 +126,18 @@ def merge_concept(loser, winner):
     if loser.id == winner.id:
         return winner
 
-    # Re-point links, dropping ones that would collide with an existing link.
+    # Re-point links. When the item is already linked to the winner, fold the
+    # loser's link into it first so a manual or primary link isn't lost.
     for link in ConceptLink.objects.filter(concept=loser):
-        exists = ConceptLink.objects.filter(
+        survivor = ConceptLink.objects.filter(
             concept=winner, question=link.question, mock_item=link.mock_item,
-        ).exists()
-        if exists:
+        ).first()
+        if survivor:
+            survivor.is_primary = survivor.is_primary or link.is_primary
+            survivor.weight = max(survivor.weight, link.weight)
+            if link.source == 'manual':
+                survivor.source = 'manual'
+            survivor.save(update_fields=['is_primary', 'weight', 'source', 'updated_at'])
             link.delete()
         else:
             link.concept = winner

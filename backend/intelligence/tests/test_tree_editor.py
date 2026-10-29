@@ -5,6 +5,7 @@ from intelligence.models import (
 from intelligence.services import syllabus, tree_editor
 from intelligence.services.tree_editor import EditError
 from intelligence.tests.syllabus_fixtures import SyllabusTestCase
+from users.models import User
 
 
 class PayloadTests(SyllabusTestCase):
@@ -87,6 +88,41 @@ class AddAndUpdateTests(SyllabusTestCase):
             tree_editor.update_node(self.mechanics, {'status': 'archived'})  # has live topics
 
 
+class TreeVersionTests(SyllabusTestCase):
+    """Decision 3: which edits change the subject's tree version."""
+
+    def version(self):
+        return syllabus.compute_tree_version(self.physics)
+
+    def test_add_changes_version(self):
+        before = self.version()
+        tree_editor.add_node(self.physics, level='subtopic', name='Static friction',
+                             parent=self.laws_node)
+        self.assertNotEqual(self.version(), before)
+
+    def test_archive_changes_version(self):
+        before = self.version()
+        tree_editor.update_node(self.friction, {'status': 'archived'})
+        self.assertNotEqual(self.version(), before)
+
+    def test_merge_changes_version(self):
+        before = self.version()
+        tree_editor.merge_nodes(self.friction, self.newton)
+        self.assertNotEqual(self.version(), before)
+
+    def test_move_weightage_and_accept_keep_version(self):
+        target = tree_editor.add_node(self.physics, level='sub_subject', name='Dynamics')
+        self.friction.status = 'proposed'
+        self.friction.save()
+        before = self.version()
+        tree_editor.update_node(self.laws_node, {'parent': str(target.id)})
+        self.assertEqual(self.version(), before)
+        tree_editor.update_node(self.newton, {'weightage': 0.4})
+        self.assertEqual(self.version(), before)
+        tree_editor.update_node(self.friction, {'status': 'active'})
+        self.assertEqual(self.version(), before)
+
+
 class MergeTests(SyllabusTestCase):
     def test_merge_moves_links_taggings_and_archives_source(self):
         question = self.question('A block slides…')
@@ -101,6 +137,12 @@ class MergeTests(SyllabusTestCase):
                                                primary_node=self.newton)
         secondary.secondary_nodes.add(self.friction)
 
+        student = User.objects.create_user(
+            email='syl-student@example.com', password='pw-syl-1', tenant=self.tenant,
+            role='student').profile
+        LearnerConceptState.objects.create(
+            tenant=self.tenant, student=student, concept=friction_concept)
+
         summary = tree_editor.merge_nodes(self.friction, self.newton)
 
         self.assertEqual(summary['primary_moved'], 1)
@@ -114,6 +156,23 @@ class MergeTests(SyllabusTestCase):
         friction_concept.refresh_from_db()
         self.assertEqual(friction_concept.status, 'merged')
         self.assertFalse(LearnerConceptState.objects.filter(concept=friction_concept).exists())
+
+    def test_merge_keeps_manual_and_primary_when_item_has_both_links(self):
+        question = self.question('A block slides…')
+        friction_concept = syllabus.ensure_node_concept(self.friction)
+        newton_concept = syllabus.ensure_node_concept(self.newton)
+        ConceptLink.objects.create(tenant=self.tenant, concept=friction_concept, question=question,
+                                   is_primary=True, weight=1.0, source='manual')
+        ConceptLink.objects.create(tenant=self.tenant, concept=newton_concept, question=question,
+                                   is_primary=False, weight=0.5, source='llm_tagger')
+
+        tree_editor.merge_nodes(self.friction, self.newton)
+
+        link = ConceptLink.objects.get(question=question)
+        self.assertEqual(link.concept_id, newton_concept.id)
+        self.assertTrue(link.is_primary)
+        self.assertEqual(link.weight, 1.0)
+        self.assertEqual(link.source, 'manual')
 
     def test_merge_needs_two_live_subtopics_of_one_subject(self):
         with self.assertRaises(EditError):

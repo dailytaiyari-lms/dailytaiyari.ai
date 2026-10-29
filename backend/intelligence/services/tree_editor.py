@@ -11,6 +11,7 @@ import uuid
 from collections import defaultdict
 
 from django.db import transaction
+from django.utils import timezone
 
 from intelligence.models import CourseSyllabus, ItemTagging, SkillPack, SyllabusNode
 from intelligence.services.course_tree import _slug, _subject_code, _unique_key
@@ -239,7 +240,8 @@ def merge_nodes(source, target):
     if source.concept_id and source.concept_id != target_concept.id:
         merge_concept(source.concept, target_concept)
 
-    primary_moved = ItemTagging.objects.filter(primary_node=source).update(primary_node=target)
+    primary_moved = ItemTagging.objects.filter(primary_node=source).update(
+        primary_node=target, updated_at=timezone.now())
     secondary_moved = 0
     for tagging in ItemTagging.objects.filter(secondary_nodes=source):
         tagging.secondary_nodes.remove(source)
