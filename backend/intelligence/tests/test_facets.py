@@ -38,7 +38,6 @@ class FacetModelTests(TestCase):
         self.assertEqual(student.facet_states.get().model_version, '1')
 
 
-
 class FacetFixture(ProgressTestCase):
     @classmethod
     def setUpTestData(cls):
@@ -149,7 +148,8 @@ class RecomputeTests(FacetFixture):
         self.assertNotEqual(after.mastery, before.mastery)
         self.assertEqual((before.evidence_count, after.evidence_count), (1, 2))
         self.assertEqual(after.model_version, '1')
-        self.assertGreater(after.updated_at, before.updated_at)
+        self.assertEqual(after.computed_at, later)
+        self.assertGreaterEqual(after.updated_at, before.updated_at)
         self.assertEqual(after.created_at, before.created_at)
 
     def test_recompute_over_a_row_it_did_not_read_does_not_collide(self):

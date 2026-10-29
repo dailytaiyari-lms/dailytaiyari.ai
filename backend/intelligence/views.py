@@ -217,7 +217,8 @@ class MyProgressView(APIView):
         if course is None:
             return Response(progress.empty_payload())
         recent = bool(request.tenant.get_features().get('diagnosis_student_view'))
-        return Response(progress.progress_payload(student, course, allowed, recent=recent))
+        return Response(progress.progress_payload(
+            student, course, allowed, recent=recent, respect_release=True))
 
 
 class TimelineThrottle(UserRateThrottle):

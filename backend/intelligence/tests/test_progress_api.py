@@ -1,10 +1,12 @@
 """My Progress: switch, endpoints, scope and opt-out."""
 import uuid
+from unittest.mock import patch
 
 from django.test import TestCase
 
 from core.models import Tenant
 from intelligence import api
+from intelligence.models import ItemSkillTag, ItemTagging, LearnerFacetState, TagDefinition
 from intelligence.tests.progress_fixtures import ProgressTestCase
 
 
@@ -123,11 +125,6 @@ class PracticeSerializerTests(ProgressTestCase):
                          [str(self.concepts['velocity'].id)])
 
 
-from unittest.mock import patch
-
-from intelligence.models import ItemSkillTag, ItemTagging, LearnerFacetState, TagDefinition
-
-
 class OptOutTests(ProgressTestCase):
     """With every learning-layer switch off: no Part C endpoint is reachable,
     no facet rows appear, and the nightly sweep does no facet work."""
@@ -199,3 +196,46 @@ class TeacherProgressScopeTests(ProgressTestCase):
         response = self.client_for(self.faculty).get(self.url())
         self.assertEqual(response.status_code, 200, response.content)
         self.assertIsNone(response.json()['recent_answers'])
+
+
+class UnreleasedMockTests(ProgressTestCase):
+    """A mock whose results are not released must not leak its diagnoses."""
+
+    def make_attempt(self, visibility, released=False):
+        from quiz.models import MockTest, MockTestAttempt
+
+        mock = MockTest.objects.create(
+            tenant=self.tenant, course=self.course, title='Weekly mock', duration_minutes=60,
+            total_marks=4, result_visibility=visibility, results_released=released)
+        attempt = MockTestAttempt.objects.create(
+            student=self.student, mock_test=mock, status='completed')
+        for number in range(3):
+            self.diagnose(attempt, self.make_question(number), 'guess', kind='mock')
+        return attempt
+
+    def student_rows(self):
+        return self.client_for(self.student_user).get(MY).json()['recent_answers']
+
+    def teacher_rows(self):
+        url = f'{INSIGHTS}/students/{self.student.id}/progress/'
+        return self.client_for(self.faculty).get(url).json()['recent_answers']
+
+    def test_on_release_mock_is_withheld_from_the_student_only(self):
+        self.make_attempt('on_release')
+        row = self.student_rows()[0]
+        self.assertEqual((row['results_pending'], row['summary'], row['noted']), (True, '', 0))
+        teacher = self.teacher_rows()[0]
+        self.assertEqual((teacher['results_pending'], teacher['noted']), (False, 3))
+        self.assertEqual(teacher['summary'], '3 quick guesses')
+
+    def test_released_and_immediate_mocks_show_their_summary(self):
+        self.make_attempt('on_release', released=True)
+        self.make_attempt('immediate')
+        rows = self.student_rows()
+        self.assertEqual([row['results_pending'] for row in rows], [False, False])
+        self.assertEqual({row['summary'] for row in rows}, {'3 quick guesses'})
+
+    def test_quizzes_are_never_pending(self):
+        attempt = self.quiz_attempt(self.student)
+        self.diagnose(attempt, self.make_question(1), 'guess')
+        self.assertFalse(self.student_rows()[0]['results_pending'])

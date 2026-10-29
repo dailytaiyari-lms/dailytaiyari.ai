@@ -4,7 +4,7 @@ teacher) and the class topic heatmap. Thin assembly over ``rollup`` and
 """
 from collections import Counter, defaultdict
 
-from django.db.models import Q
+from django.db.models import F, Q
 
 from intelligence import progress_config as C
 from intelligence.services import facets, rollup
@@ -24,9 +24,15 @@ def summarize(counts):
     return ', '.join(parts)
 
 
-def recent_answers(student, course):
+def recent_answers(student, course, *, respect_release=False):
     """The student's last finished attempts in this course, each with a
-    plain-language count of its noted answers. Never a bare label."""
+    plain-language count of its noted answers. Never a bare label.
+
+    With ``respect_release`` (the student's own page), a mock whose results
+    are not yet released to the student reports no count and no summary,
+    just ``results_pending``.
+    """
+    from quiz.mock_grading import results_visible_for
     from quiz.models import MockTestAttempt, QuizAttempt
 
     from intelligence.models import ResponseDiagnosis
@@ -35,13 +41,13 @@ def recent_answers(student, course):
     quizzes = (
         QuizAttempt.objects.filter(student=student, quiz__course=course)
         .exclude(status='in_progress').select_related('quiz')
-        .order_by('-completed_at')[:C.RECENT_ATTEMPTS]
+        .order_by(F('completed_at').desc(nulls_last=True))[:C.RECENT_ATTEMPTS]
     )
     mocks = (
         MockTestAttempt.objects.filter(student=student)
         .filter(Q(mock_test__course=course) | Q(mock_test__courses=course))
         .exclude(status='in_progress').select_related('mock_test').distinct()
-        .order_by('-completed_at')[:C.RECENT_ATTEMPTS]
+        .order_by(F('completed_at').desc(nulls_last=True))[:C.RECENT_ATTEMPTS]
     )
     attempts = [('quiz', attempt, attempt.quiz.title, 'quiz') for attempt in quizzes]
     attempts += [
@@ -62,12 +68,14 @@ def recent_answers(student, course):
 
     rows = []
     for kind, attempt, title, review in attempts:
-        noted = counts[(kind, attempt.id)]
+        pending = bool(respect_release and kind == 'mock' and not results_visible_for(attempt))
+        noted = Counter() if pending else counts[(kind, attempt.id)]
         done = attempt.completed_at or attempt.started_at
         rows.append({
             'kind': kind, 'attempt_id': str(attempt.id), 'title': title,
             'completed_at': done.isoformat() if done else None, 'review': review,
             'noted': sum(noted.values()), 'summary': summarize(noted),
+            'results_pending': pending,
         })
     return rows
 
@@ -83,7 +91,7 @@ def empty_payload():
     }
 
 
-def progress_payload(student, course, courses, *, recent):
+def progress_payload(student, course, courses, *, recent, respect_release=False):
     subjects = rollup.rollup_for(student, course)
     weak, strong = rollup.topic_lists(subjects)
     return {
@@ -93,7 +101,9 @@ def progress_payload(student, course, courses, *, recent):
         'weak': weak,
         'strong': strong,
         'profiles': facets.profile_for(student, course),
-        'recent_answers': recent_answers(student, course) if recent else None,
+        'recent_answers': (
+            recent_answers(student, course, respect_release=respect_release) if recent else None
+        ),
         'thresholds': _thresholds(),
     }
 

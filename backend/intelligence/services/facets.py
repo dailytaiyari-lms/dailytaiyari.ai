@@ -133,10 +133,12 @@ def recompute_facets(student, now=None):
                 continue
             rows.append(LearnerFacetState(
                 tenant=tenant, student=student, subject_id=subject_id, kind=kind, key=key,
-                updated_at=now,       # auto_now does not run on the conflict-update path
                 **fields,
             ))
         if rows:
+            # Fixed order: concurrent upserts lock rows in the same sequence.
+            rows.sort(key=lambda r: (str(r.subject_id), r.kind, r.key))
+            # bulk_create stamps updated_at (auto_now); listing it in update_fields makes the upsert copy it.
             LearnerFacetState.objects.bulk_create(
                 rows, update_conflicts=True, unique_fields=UNIQUE_FIELDS,
                 update_fields=[*FIELDS, 'model_version', 'updated_at'],
