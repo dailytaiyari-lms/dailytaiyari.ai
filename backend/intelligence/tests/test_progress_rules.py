@@ -1,9 +1,10 @@
 """Pure My Progress rules, against hand-computed fixtures."""
+from collections import Counter
 from datetime import datetime, timedelta, timezone as dt_timezone
 
 from django.test import SimpleTestCase
 
-from intelligence.services import rollup
+from intelligence.services import progress, rollup
 
 A, B, C, D = 'concept-a', 'concept-b', 'concept-c', 'concept-d'
 
@@ -138,3 +139,17 @@ class TrendTests(SimpleTestCase):
         self.assertEqual(sets['kinematics'], {0, 1, 2})
         self.assertEqual(sets['physics'], {0, 1, 2, 3})
         self.assertEqual(sets['relative'], set())
+
+
+class SummaryTests(SimpleTestCase):
+    def test_counts_most_first_with_plurals(self):
+        counts = Counter({'time_pressure': 1, 'guess': 2})
+        self.assertEqual(progress.summarize(counts), '2 quick guesses, 1 ran out of time')
+
+    def test_ties_follow_config_order_and_singulars(self):
+        counts = Counter({'careless_slip': 1, 'guess': 1, 'concept_gap': 2})
+        self.assertEqual(progress.summarize(counts),
+                         '2 need more practice, 1 quick guess, 1 possible slip')
+
+    def test_empty(self):
+        self.assertEqual(progress.summarize(Counter()), '')
