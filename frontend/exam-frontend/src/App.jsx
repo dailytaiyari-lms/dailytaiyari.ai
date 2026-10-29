@@ -40,6 +40,7 @@ import MockTestReview from './pages/MockTestReview'
 import Analytics from './pages/Analytics'
 import Practice from './pages/Practice'
 import PracticeSession from './pages/PracticeSession'
+import MyProgress from './pages/MyProgress'
 import InsightsHome from './pages/InsightsHome'
 import TagReview from './pages/TagReview'
 import AssessmentReport from './pages/AssessmentReport'
@@ -290,6 +291,7 @@ function App() {
           <Route path="/pyp" element={<LoginGate><FeatureRoute feature="pyq"><PreviousYearPapers /></FeatureRoute></LoginGate>} />
           <Route path="/practice" element={<LoginGate><FeatureRoute feature="practice"><Practice /></FeatureRoute></LoginGate>} />
           <Route path="/practice/:setId" element={<LoginGate><FeatureRoute feature="practice"><PracticeSession /></FeatureRoute></LoginGate>} />
+          <Route path="/progress" element={<LoginGate><FeatureRoute feature="my_progress"><MyProgress /></FeatureRoute></LoginGate>} />
           {/* Learning insights (teacher-visible: admins + instructors) */}
           <Route path="/admin/insights" element={<LoginGate><EditorRoute><InsightsHome /></EditorRoute></LoginGate>} />
           <Route path="/admin/insights/tag-review" element={<LoginGate><FeatureRoute feature="syllabus_tools"><EditorRoute><TagReview /></EditorRoute></FeatureRoute></LoginGate>} />

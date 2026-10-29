@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { practiceService } from '../services/practiceService'
 import Loading from '../components/common/Loading'
@@ -105,6 +105,10 @@ const HistoryRow = ({ set }) => (
 const Practice = () => {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const [searchParams] = useSearchParams()
+  const focusConcepts = (searchParams.get('concepts') || '').split(',').filter(Boolean)
+  const focusTopic = searchParams.get('topic') || ''
+  const inFocus = (ids) => !focusConcepts.length || (ids || []).some((id) => focusConcepts.includes(String(id)))
 
   const { data: suggested, isLoading } = useQuery({
     queryKey: ['practiceSets', 'suggested'],
@@ -132,9 +136,11 @@ const Practice = () => {
 
   if (isLoading) return <Loading fullScreen />
 
-  const sets = (suggested?.results ?? suggested ?? [])
+  const sets = (suggested?.results ?? suggested ?? []).filter((set) => inFocus(set.concept_ids))
   const history = (completed?.results ?? completed ?? []).slice(0, 10)
-  const masteryRows = (mastery ?? []).filter((row) => row.confidence !== 'low').slice(0, 12)
+  const masteryRows = (mastery ?? [])
+    .filter((row) => row.confidence !== 'low' && inFocus([row.concept_id]))
+    .slice(0, 12)
 
   return (
     <div className="space-y-8">
@@ -155,16 +161,26 @@ const Practice = () => {
         </button>
       </div>
 
+      {focusConcepts.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-primary-50 dark:bg-primary-900/30 text-sm">
+          <span>Showing practice for <strong>{focusTopic || 'one topic'}</strong></span>
+          <Link to="/practice" className="font-medium text-primary-600 hover:text-primary-700">Show all</Link>
+        </div>
+      )}
+
       {/* Suggested sets */}
       <section>
         <h2 className="text-lg font-semibold mb-3">Suggested for you</h2>
         {sets.length === 0 ? (
           <div className="p-8 rounded-2xl bg-surface-50 dark:bg-surface-800/50 border border-dashed border-surface-300 dark:border-surface-700 text-center text-surface-500">
             <Sparkles className="mx-auto mb-2" />
-            <p className="font-medium">Nothing to practise right now.</p>
+            <p className="font-medium">
+              {focusConcepts.length ? 'No set for this topic yet.' : 'Nothing to practise right now.'}
+            </p>
             <p className="text-sm mt-1">
-              Complete a quiz or mock test and suggestions will appear here as the
-              system learns what you know.
+              {focusConcepts.length
+                ? 'Try "Refresh suggestions", or show all sets.'
+                : 'Complete a quiz or mock test and suggestions will appear here as the system learns what you know.'}
             </p>
           </div>
         ) : (

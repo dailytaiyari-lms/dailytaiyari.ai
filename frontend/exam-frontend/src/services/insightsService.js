@@ -71,4 +71,16 @@ export const insightsService = {
     const response = await api.get(`${BASE}/diagnosis/calibration/`, { params: { days } })
     return response.data
   },
+
+  getStudentProgress: async (studentId, courseId) => {
+    const response = await api.get(`${BASE}/students/${studentId}/progress/`, {
+      params: courseId ? { course: courseId } : {},
+    })
+    return response.data
+  },
+
+  getCourseHeatmap: async (courseId) => {
+    const response = await api.get(`${BASE}/courses/${courseId}/heatmap/`)
+    return response.data
+  },
 }

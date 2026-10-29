@@ -19,7 +19,8 @@ import {
   Briefcase,
   Rocket,
   Bookmark,
-  Target
+  Target,
+  LineChart
 } from 'lucide-react'
 
 // Navigation items with professional icons.
@@ -34,6 +35,7 @@ const navItems = [
   { path: '/revision', label: 'Revision', icon: Bookmark, feature: 'study' },
   { path: '/quiz', label: 'Practice Quiz', icon: PenTool, feature: 'quiz', renamable: true },
   { path: '/practice', label: 'Smart Practice', icon: Target, feature: 'practice', renamable: true },
+  { path: '/progress', label: 'My Progress', icon: LineChart, feature: 'my_progress', renamable: true },
   { path: '/mock-test', label: 'Mock Tests', icon: ClipboardList, feature: 'mock_tests', renamable: true },
   { path: '/pyp', label: 'PYQ Papers', icon: FileText, feature: 'pyq', renamable: true },
   { path: '/community', label: 'Community', icon: Users, feature: 'community', renamable: true },
