@@ -1,5 +1,5 @@
 """Tenant-admin intelligence routes, mounted at /api/v1/tenant-admin/intelligence/."""
-from django.urls import path
+from django.urls import include, path
 
 from .admin_views import (
     AssessmentBehaviourView, AssessmentReportView, CourseBehaviourView, StudentAnswersView, CoursePracticeConfigView, GeneratedItemsView,
@@ -25,4 +25,5 @@ urlpatterns = [
          name='intelligence-course-behaviour'),
     path('diagnosis/calibration/', DiagnosisCalibrationView.as_view(),
          name='intelligence-diagnosis-calibration'),
+    path('syllabus/', include('intelligence.syllabus_urls')),
 ]
