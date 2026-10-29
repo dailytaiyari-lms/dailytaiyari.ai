@@ -137,8 +137,11 @@ def _clean(tagging, data, subject, require_thinking):
         raise ReviewError('Send the tags as an object.')
     choices = edit_choices(subject)
     primary = _subtopic(subject, data.get('primary'))
+    secondary_ids = data.get('secondary') or []
+    if not isinstance(secondary_ids, list):
+        raise ReviewError('Send the secondary subtopics as a list.')
     secondary = []
-    for node_id in data.get('secondary') or []:
+    for node_id in secondary_ids:
         node = _subtopic(subject, node_id)
         if node.id != primary.id and node not in secondary:
             secondary.append(node)
@@ -146,8 +149,11 @@ def _clean(tagging, data, subject, require_thinking):
     if thinking not in {row['key'] for row in choices['thinking_levels']} and (thinking or require_thinking):
         raise ReviewError('Pick a thinking level.')
     skill_keys = {row['key'] for row in choices['skills']}
+    raw_skills = data.get('skills') or []
+    if not isinstance(raw_skills, list):
+        raise ReviewError('Send the skills as a list.')
     skills, seen = [], set()
-    for raw in data.get('skills') or []:
+    for raw in raw_skills:
         key = raw.get('key') if isinstance(raw, dict) else None
         if key not in skill_keys:
             raise ReviewError('Pick skills from the list for this subject.')
@@ -168,7 +174,7 @@ def _clean(tagging, data, subject, require_thinking):
     else:
         try:
             seconds = min(SOLVE_SECONDS[1], max(SOLVE_SECONDS[0], int(seconds)))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             raise ReviewError('Solve time is a number of seconds.') from None
     return primary, secondary, thinking, skills, special, difficulty, seconds
 
@@ -221,6 +227,7 @@ def save_manual(tagging, data, *, require_thinking=True):
     return tagging
 
 
+@transaction.atomic
 def mark_for_retag(tagging):
     """Hand the item back to the tagger: unlock it and mark it stale."""
     item = item_of(tagging)

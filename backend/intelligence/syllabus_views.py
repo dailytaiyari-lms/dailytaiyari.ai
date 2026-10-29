@@ -63,7 +63,13 @@ def _node(request, node_id):
     return node, None
 
 
+def _expire_stale(course):
+    TreeBuildJob.expire_stale(course)
+    TaggingRun.expire_stale(course)
+
+
 def _jobs(course):
+    _expire_stale(course)
     rows = (list(TreeBuildJob.objects.filter(course=course).select_related('started_by')[:JOB_HISTORY])
             + list(TaggingRun.objects.filter(course=course).select_related('started_by')[:JOB_HISTORY]))
     rows.sort(key=lambda job: job.created_at, reverse=True)
@@ -74,6 +80,7 @@ def _start(model, course, request, task, options=None):
     """Create a queued job and enqueue it. 409 when one is already active."""
     from .api import enqueue
 
+    model.expire_stale(course)
     active = model.objects.filter(course=course, status__in=model.ACTIVE_STATUSES).first()
     if active is not None:
         return Response({'error': 'A run is already in progress.', 'job': active.payload()},
@@ -331,6 +338,8 @@ class JobDetailView(APIView):
             return _not_found('Job')
         if not can_manage_course(request.user, job.course):
             return _forbidden()
+        type(job).expire_stale(job.course)
+        job.refresh_from_db()
         return Response(job.payload())
 
 

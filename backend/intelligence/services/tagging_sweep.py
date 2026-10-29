@@ -134,7 +134,7 @@ def _replace_skill_tags(item, arm, skills):
 def write_result(item, result, context, nodes, tagger_version, *, subject, allow_difficulty):
     """Persist one TagResult. Returns the ItemTagging, or None when locked."""
     arm = _arm(item)
-    tagging = ItemTagging.objects.filter(**{arm: item}).first()
+    tagging = ItemTagging.objects.select_for_update().filter(**{arm: item}).first()
     if tagging is not None and tagging.source == 'manual':
         return None
     was_untagged = not item.tagging_status

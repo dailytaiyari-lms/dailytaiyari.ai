@@ -507,7 +507,10 @@ assigned courses, get a **Syllabus** view on the course editor and
   course's treed subjects, at most 500 items per run, and records tagged /
   needs-review / failed counts.
 - Both refuse to start when the tenant's monthly token budget is used up, and
-  only one of each runs per course at a time.
+  only one of each runs per course at a time. A job still `running` after the
+  task's hard limit (plus 5 min), or `queued` for 6 h, is marked `failed`
+  ("The run stopped without finishing") the next time the course's jobs are
+  read or a new run starts, so a dead worker cannot block the course.
 - **Editor:** add / rename / archive sub-subjects and subtopics, move topics,
   set weightage, accept suggestions, merge subtopics (queues
   `intelligence.recompute_concept_states` for the target concept), choose

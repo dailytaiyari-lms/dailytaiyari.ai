@@ -1,8 +1,13 @@
 """Syllabus tools API: switch, scope, and each operation end to end."""
 import uuid
+from datetime import timedelta
 from unittest.mock import patch
 
-from intelligence.models import ItemTagging, SyllabusNode, TaggingRun, TreeBuildJob
+from django.utils import timezone
+
+from intelligence.models import (
+    STALE_JOB_ERROR, ItemTagging, SyllabusNode, TaggingRun, TreeBuildJob,
+)
 from intelligence.tasks import recompute_concept_states, run_tagging_run
 from intelligence.tests.syllabus_fixtures import SyllabusTestCase
 from intelligence.tests.test_course_tree import FakeCall as BuildCall
@@ -183,6 +188,12 @@ class ReviewEndpointTests(SyllabusTestCase):
         self.assertEqual(response.json()['source'], 'manual')
         bad = client.put(f'{BASE}/review/{self.tagging.id}/', {'primary': 'nope'}, format='json')
         self.assertEqual(bad.status_code, 400)
+        for field, value in (('secondary', 5), ('skills', 'free_body_diagram')):
+            body = {'primary': str(self.newton.id), 'thinking_level': 'conceptual', 'skills': [],
+                    field: value}
+            response = client.put(f'{BASE}/review/{self.tagging.id}/', body, format='json')
+            self.assertEqual(response.status_code, 400, (field, response.content))
+            self.assertIn('error', response.json())
 
     def test_retag_queues(self):
         self.tagging.source = 'manual'
@@ -320,3 +331,53 @@ class OptOutTests(SyllabusTestCase):
         enqueue.assert_not_called()
         self.assertFalse(TreeBuildJob.objects.exists())
         self.assertFalse(TaggingRun.objects.exists())
+
+
+class StaleJobTests(SyllabusTestCase):
+    """A job whose worker died must not block its course forever."""
+
+    def _aged(self, model, hours, **fields):
+        job = model.objects.create(tenant=self.tenant, course=self.custom, **fields)
+        when = timezone.now() - timedelta(hours=hours)
+        model.objects.filter(id=job.id).update(created_at=when, **(
+            {'started_at': when} if fields.get('status') == 'running' else {}))
+        return job
+
+    def test_old_running_job_no_longer_blocks_build(self):
+        old = self._aged(TreeBuildJob, 3, status='running')
+        client = self.client_for(self.admin)
+        with patch('intelligence.api.enqueue'):
+            response = client.post(f'{BASE}/courses/{self.custom.id}/tree/build/', {}, format='json')
+        self.assertEqual(response.status_code, 202, response.content)
+        old.refresh_from_db()
+        self.assertEqual(old.status, 'failed')
+        self.assertEqual(old.error, STALE_JOB_ERROR)
+        self.assertIsNotNone(old.finished_at)
+
+    def test_recent_running_job_still_blocks(self):
+        self._aged(TreeBuildJob, 0.1, status='running')
+        response = self.client_for(self.admin).post(
+            f'{BASE}/courses/{self.custom.id}/tree/build/', {}, format='json')
+        self.assertEqual(response.status_code, 409, response.content)
+
+    def test_old_queued_tagging_run_expires(self):
+        old = self._aged(TaggingRun, 7)
+        recent = self._aged(TaggingRun, 1)
+        tree = self.client_for(self.admin).get(f'{BASE}/courses/{self.custom.id}/tree/').json()
+        by_id = {job['id']: job for job in tree['jobs']}
+        self.assertEqual(by_id[str(old.id)]['status'], 'failed')
+        self.assertEqual(by_id[str(old.id)]['error'], STALE_JOB_ERROR)
+        self.assertEqual(by_id[str(recent.id)]['status'], 'queued')
+
+    def test_job_detail_returns_the_expired_status(self):
+        old = self._aged(TaggingRun, 3, status='running')
+        data = self.client_for(self.admin).get(f'{BASE}/jobs/{old.id}/').json()
+        self.assertEqual(data['status'], 'failed')
+        self.assertEqual(data['error'], STALE_JOB_ERROR)
+        self.assertIsNotNone(data['finished_at'])
+
+    def test_finished_jobs_are_left_alone(self):
+        done = self._aged(TreeBuildJob, 30, status='done')
+        TreeBuildJob.expire_stale(self.custom)
+        done.refresh_from_db()
+        self.assertEqual(done.status, 'done')

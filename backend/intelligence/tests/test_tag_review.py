@@ -72,6 +72,15 @@ class ManualEditTests(ReviewTestCase):
         self.item.refresh_from_db()
         self.assertEqual(self.item.cognitive_type, 'application')
 
+    def test_non_list_secondary_or_skills_is_refused(self):
+        for field in ('secondary', 'skills'):
+            with self.assertRaises(ReviewError, msg=field):
+                self.edit(**{field: 5})
+
+    def test_infinite_solve_time_is_refused(self):
+        with self.assertRaises(ReviewError):
+            self.edit(est_solve_seconds=float('inf'))
+
     def test_next_sweep_skips_a_manual_item(self):
         self.edit()
         call = FakeCall(tag={str(self.item.id): tag_entry()})
@@ -137,3 +146,16 @@ class RetagAndAddToTreeTests(ReviewTestCase):
     def test_add_to_tree_needs_a_proposal(self):
         with self.assertRaises(ReviewError):
             tag_review.add_to_tree(self.tagging)
+
+
+class RetagAtomicityTests(ReviewTestCase):
+    def test_mark_for_retag_rolls_back_when_it_fails_midway(self):
+        from unittest.mock import patch
+
+        self.tagging.source = 'manual'
+        self.tagging.save()
+        with patch.object(type(self.item), 'save', side_effect=RuntimeError('boom')):
+            with self.assertRaises(RuntimeError):
+                tag_review.mark_for_retag(self.tagging)
+        self.tagging.refresh_from_db()
+        self.assertEqual(self.tagging.source, 'manual')

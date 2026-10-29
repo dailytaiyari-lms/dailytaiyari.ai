@@ -13,8 +13,11 @@ Three layers, kept strictly separate:
 Other apps must not import these models directly; they go through
 ``intelligence.api`` so the dependency surface stays one file wide.
 """
+from datetime import timedelta
+
 from django.db import models
 from django.db.models import Q
+from django.utils import timezone
 
 from core.models import TimeStampedModel
 from exams.models import Course, Subject, Topic
@@ -1095,6 +1098,14 @@ class ItemSkillTag(TimeStampedModel):
 # ─── Syllabus tools: background job history (spec 2B §5.1) ───────────────────
 
 
+# Hard time limit of the build/tagging celery tasks (tasks.py), plus a margin.
+SYLLABUS_TASK_HARD_LIMIT_SECONDS = 1560
+STALE_RUNNING_AFTER = timedelta(seconds=SYLLABUS_TASK_HARD_LIMIT_SECONDS + 5 * 60)
+# Nothing consumed the aigen queue for this long: the job will not start.
+STALE_QUEUED_AFTER = timedelta(hours=6)
+STALE_JOB_ERROR = 'The run stopped without finishing. Start it again.'
+
+
 class SyllabusJob(TimeStampedModel):
     """Shared shape of a background syllabus job (one row per run)."""
 
@@ -1127,6 +1138,21 @@ class SyllabusJob(TimeStampedModel):
     class Meta:
         abstract = True
         ordering = ['-created_at']
+
+    @classmethod
+    def expire_stale(cls, course):
+        """Fail jobs whose worker died, so they stop blocking the course.
+
+        A hard-killed worker leaves `running` rows; a dead queue leaves `queued`
+        rows. The status filter in each update keeps a job that finishes
+        concurrently from being overwritten.
+        """
+        now = timezone.now()
+        fail = {'status': cls.STATUS_FAILED, 'error': STALE_JOB_ERROR, 'finished_at': now,
+                'updated_at': now}
+        jobs = cls.objects.filter(course=course)
+        jobs.filter(status=cls.STATUS_RUNNING, started_at__lt=now - STALE_RUNNING_AFTER).update(**fail)
+        jobs.filter(status=cls.STATUS_QUEUED, created_at__lt=now - STALE_QUEUED_AFTER).update(**fail)
 
     def payload(self):
         return {
