@@ -1,5 +1,6 @@
 """Skill and thinking-level profiles (spec 2B §6.3)."""
 import io
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.core.management import call_command
@@ -132,6 +133,38 @@ class RecomputeTests(FacetFixture):
         self.tenant.save()
         self.assertEqual(facets.update_for_attempt('quiz', str(attempt.id)), 0)
         self.assertFalse(self.student.facet_states.exists())
+
+
+    def test_recompute_updates_existing_rows_in_place(self):
+        question = self.tagged_question(1, skills=[(self.vectors, 'core')])
+        self.event(question, score=1.0, now=self.now)
+        facets.recompute_facets(self.student, now=self.now)
+        before = self.rows()[('skill', 'vector_resolution')]
+        LearnerFacetState.objects.filter(id=before.id).update(model_version='0')
+        self.event(question, score=0.0, now=self.now)
+        later = self.now + timedelta(hours=1)
+        facets.recompute_facets(self.student, now=later)
+        after = self.rows()[('skill', 'vector_resolution')]
+        self.assertEqual(after.id, before.id)
+        self.assertNotEqual(after.mastery, before.mastery)
+        self.assertEqual((before.evidence_count, after.evidence_count), (1, 2))
+        self.assertEqual(after.model_version, '1')
+        self.assertGreater(after.updated_at, before.updated_at)
+        self.assertEqual(after.created_at, before.created_at)
+
+    def test_recompute_over_a_row_it_did_not_read_does_not_collide(self):
+        # A concurrent recompute that committed first leaves exactly this row behind.
+        question = self.tagged_question(1, skills=[(self.vectors, 'core')])
+        self.event(question, score=1.0, now=self.now)
+        racer = LearnerFacetState.objects.create(
+            tenant=self.tenant, student=self.student, subject=self.subject,
+            kind='skill', key='vector_resolution', mastery=0.1, model_version='0')
+        self.assertEqual(facets.recompute_facets(self.student, now=self.now), 2)
+        row = self.rows()[('skill', 'vector_resolution')]
+        self.assertEqual(row.id, racer.id)
+        self.assertAlmostEqual(row.mastery, 0.625, places=4)
+        self.assertEqual(row.model_version, '1')
+        self.assertEqual(self.student.facet_states.count(), 2)
 
 
 class ProfileTests(FacetFixture):

@@ -25,6 +25,7 @@ from intelligence.services import state
 from intelligence.versions import FACET_MODEL_VERSION
 
 KINDS = (LearnerFacetState.KIND_SKILL, LearnerFacetState.KIND_THINKING)
+UNIQUE_FIELDS = ['student', 'subject', 'kind', 'key']
 FIELDS = ('mastery', 'evidence_count', 'effective_evidence', 'confidence', 'computed_at')
 
 
@@ -116,37 +117,38 @@ def compute_facet_fields(observations, now=None):
 
 
 def recompute_facets(student, now=None):
-    """Recompute every facet row of one student; returns rows written."""
+    """Recompute every facet row of one student; returns rows written.
+
+    Compute and write run in one transaction, and the write is an upsert on
+    the unique key, so two recomputes for the same student (two attempts
+    finishing together) cannot collide on ``uniq_learner_facet_state``.
+    """
     now = now or timezone.now()
     tenant = student.user.tenant
-    existing = {
-        (row.subject_id, row.kind, row.key): row
-        for row in LearnerFacetState.objects.filter(student=student)
-    }
-    to_create, to_update, kept = [], [], set()
-    for ident, observations in facet_observations(student).items():
-        fields = compute_facet_fields(observations, now=now)
-        if fields is None:
-            continue
-        kept.add(ident)
-        row = existing.get(ident)
-        if row is None:
-            subject_id, kind, key = ident
-            to_create.append(LearnerFacetState(
-                tenant=tenant, student=student, subject_id=subject_id, kind=kind, key=key, **fields))
-            continue
-        for name, value in fields.items():
-            setattr(row, name, value)
-        row.updated_at = now      # bulk_update does not run auto_now
-        to_update.append(row)
     with transaction.atomic():
-        LearnerFacetState.objects.filter(
-            id__in=[row.id for ident, row in existing.items() if ident not in kept]).delete()
-        if to_update:
-            LearnerFacetState.objects.bulk_update(to_update, [*FIELDS, 'model_version', 'updated_at'])
-        if to_create:
-            LearnerFacetState.objects.bulk_create(to_create)
-    return len(kept)
+        rows = []
+        for (subject_id, kind, key), observations in facet_observations(student).items():
+            fields = compute_facet_fields(observations, now=now)
+            if fields is None:
+                continue
+            rows.append(LearnerFacetState(
+                tenant=tenant, student=student, subject_id=subject_id, kind=kind, key=key,
+                updated_at=now,       # auto_now does not run on the conflict-update path
+                **fields,
+            ))
+        if rows:
+            LearnerFacetState.objects.bulk_create(
+                rows, update_conflicts=True, unique_fields=UNIQUE_FIELDS,
+                update_fields=[*FIELDS, 'model_version', 'updated_at'],
+            )
+        kept = {(row.subject_id, row.kind, row.key) for row in rows}
+        LearnerFacetState.objects.filter(id__in=[
+            row_id for row_id, subject_id, kind, key in
+            LearnerFacetState.objects.filter(student=student)
+            .values_list('id', 'subject_id', 'kind', 'key')
+            if (subject_id, kind, key) not in kept
+        ]).delete()
+    return len(rows)
 
 
 def update_for_attempt(kind, attempt_id):
