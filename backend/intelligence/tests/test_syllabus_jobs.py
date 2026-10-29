@@ -128,3 +128,176 @@ class SweepCountTests(TestCase):
         status = budget_status(self.tenant)
         self.assertEqual(status['monthly_budget'], None)
         self.assertFalse(status['exhausted'])
+
+
+from django.utils import timezone
+
+from coursegen.generation import GenerationError
+from intelligence import tasks
+from intelligence.models import Concept, ConceptLink, LearningEvent
+from users.models import User
+
+
+class WorkerTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.tenant = Tenant.objects.create(name='Worker Academy', features={'syllabus_tools': True})
+        cls.course = Course.objects.create(
+            tenant=cls.tenant, name='DSA', code='work-dsa', course_type='skill')
+        cls.subject = Subject.objects.create(
+            tenant=cls.tenant, course=cls.course, name='Arrays', code='arrays')
+        Topic.objects.create(tenant=cls.tenant, subject=cls.subject, name='Two Sum', code='two-sum')
+
+    def fake_call(self, call):
+        call.meter = type('M', (), {'usage': type('U', (), {'total_tokens': 1234})()})()
+        call.cost_usd = lambda: 0.01
+        return patch('intelligence.services.llm.tenant_tagging_call', return_value=call)
+
+    def test_build_job_runs_and_records(self):
+        job = TreeBuildJob.objects.create(tenant=self.tenant, course=self.course, options={'packs': []})
+        with self.fake_call(BuildCall(subtopics={'Two Sum': ['Hash map']})):
+            tasks.run_tree_build(str(job.id))
+        job.refresh_from_db()
+        self.assertEqual(job.status, 'done', job.error)
+        self.assertEqual(job.summary['proposed_subtopics'], 1)
+        self.assertEqual(job.tokens, 1234)
+        self.assertIsNotNone(job.finished_at)
+
+    def test_second_delivery_is_a_no_op(self):
+        job = TreeBuildJob.objects.create(tenant=self.tenant, course=self.course, status='done')
+        with self.fake_call(BuildCall()) as patched:
+            tasks.run_tree_build(str(job.id))
+        patched.assert_not_called()
+
+    def test_budget_refusal_fails_the_job(self):
+        job = TreeBuildJob.objects.create(tenant=self.tenant, course=self.course)
+        with patch('coursegen.generation._check_budget', side_effect=GenerationError('over budget')):
+            tasks.run_tree_build(str(job.id))
+        job.refresh_from_db()
+        self.assertEqual((job.status, job.error), ('failed', 'over budget'))
+
+    def test_switch_off_fails_the_job(self):
+        self.tenant.features = {}
+        self.tenant.save()
+        run = TaggingRun.objects.create(tenant=self.tenant, course=self.course)
+        tasks.run_tagging_run(str(run.id))
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'failed')
+
+    def test_unexpected_error_never_leaves_running(self):
+        job = TreeBuildJob.objects.create(tenant=self.tenant, course=self.course)
+        with self.fake_call(BuildCall()), patch(
+                'intelligence.services.course_tree.build_course_tree', side_effect=RuntimeError('boom')):
+            tasks.run_tree_build(str(job.id))
+        job.refresh_from_db()
+        self.assertEqual(job.status, 'failed')
+
+    def test_tagging_run_without_a_tree_says_what_to_do(self):
+        run = TaggingRun.objects.create(tenant=self.tenant, course=self.course)
+        with self.fake_call(TagCall()):
+            tasks.run_tagging_run(str(run.id))
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'failed')
+        self.assertIn('tree', run.error)
+
+
+class TaggingWorkerTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.tenant = Tenant.objects.create(name='Tagrun Academy', features={'syllabus_tools': True})
+        cls.course = Course.objects.create(
+            tenant=cls.tenant, name='Mini', code='tagrun-mini', course_type='competitive')
+        cls.subject = Subject.objects.create(
+            tenant=cls.tenant, course=cls.course, name='Physics', code='physics')
+        cls.laws = Topic.objects.create(
+            tenant=cls.tenant, subject=cls.subject, name='Laws of Motion', code='laws-of-motion')
+        sync_mini_vocabulary()
+        with patched_tree():
+            syllabus.instantiate_exam_tree(cls.course, 'mini', {'physics': cls.subject})
+
+    def fake_call(self, call):
+        call.meter = type('M', (), {'usage': type('U', (), {'total_tokens': 50})()})()
+        call.cost_usd = lambda: 0.002
+        return patch('intelligence.services.llm.tenant_tagging_call', return_value=call)
+
+    def make_question(self, text='Friction on a 2 kg block?'):
+        return Question.objects.create(
+            tenant=self.tenant, subject=self.subject, topic=self.laws, question_type='numerical',
+            question_text=text, numerical_answer=10)
+
+    def test_empty_run_finishes_with_zero_counts(self):
+        run = TaggingRun.objects.create(tenant=self.tenant, course=self.course)
+        with self.fake_call(TagCall()), patched_tree():
+            tasks.run_tagging_run(str(run.id))
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'done', run.error)
+        self.assertEqual(run.summary, {'tagged': 0, 'needs_review': 0, 'failed': 0, 'locked': 0})
+
+    def test_run_tags_items_and_records_counts(self):
+        question = self.make_question()
+        run = TaggingRun.objects.create(tenant=self.tenant, course=self.course)
+        with self.fake_call(TagCall(tag={str(question.id): tag_entry()})), patched_tree():
+            tasks.run_tagging_run(str(run.id))
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'done', run.error)
+        self.assertEqual(run.summary['tagged'], 1)
+        self.assertEqual(run.tokens, 50)
+        self.assertTrue(ItemTagging.objects.filter(question=question).exists())
+
+    def test_retag_item_tags_one_question(self):
+        question = self.make_question()
+        with self.fake_call(TagCall(tag={str(question.id): tag_entry()})), patched_tree():
+            self.assertEqual(tasks.retag_item('bank', str(question.id)), 1)
+        self.assertTrue(ItemTagging.objects.filter(question=question).exists())
+
+    def test_retag_item_ignores_unknown_kind_missing_item_and_switch_off(self):
+        question = self.make_question()
+        self.assertEqual(tasks.retag_item('nonsense', str(question.id)), 0)
+        self.assertEqual(tasks.retag_item('bank', '00000000-0000-0000-0000-000000000000'), 0)
+        self.tenant.features = {}
+        self.tenant.save()
+        with self.fake_call(TagCall()) as patched:
+            self.assertEqual(tasks.retag_item('bank', str(question.id)), 0)
+        patched.assert_not_called()
+
+    def test_retag_item_swallows_budget_refusal(self):
+        question = self.make_question()
+        with patch('coursegen.generation._check_budget', side_effect=GenerationError('over')):
+            self.assertEqual(tasks.retag_item('bank', str(question.id)), 0)
+
+
+class RecomputeWorkerTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.tenant = Tenant.objects.create(name='Recompute Academy', features={'syllabus_tools': True})
+        cls.user = User.objects.create_user(
+            email='recompute-student@example.com', password='pw-student-1',
+            tenant=cls.tenant, role='student')
+        cls.student = cls.user.profile
+        cls.course = Course.objects.create(
+            tenant=cls.tenant, name='DSA', code='rec-dsa', course_type='skill')
+        cls.subject = Subject.objects.create(
+            tenant=cls.tenant, course=cls.course, name='Arrays', code='arrays')
+        cls.concept = Concept.objects.create(
+            tenant=cls.tenant, subject=cls.subject, name='Hash map', slug='hash-map')
+        cls.topic = Topic.objects.create(
+            tenant=cls.tenant, subject=cls.subject, name='Two Sum', code='two-sum')
+        cls.question = Question.objects.create(
+            tenant=cls.tenant, subject=cls.subject, topic=cls.topic, question_type='numerical',
+            question_text='Count pairs?', numerical_answer=2)
+        ConceptLink.objects.create(
+            tenant=cls.tenant, concept=cls.concept, question=cls.question,
+            is_primary=True, weight=1.0, source='llm_tagger')
+        LearningEvent.objects.create(
+            tenant=cls.tenant, student=cls.student, question=cls.question,
+            source_type='quiz_answer', occurred_at=timezone.now(),
+            dedup_key='quiz_answer:rec:0', attempt_kind='quiz')
+
+    def test_recomputes_each_student_with_events_on_the_concept(self):
+        with patch('intelligence.services.state.recompute_state') as recompute:
+            self.assertEqual(tasks.recompute_concept_states(str(self.concept.id)), 1)
+        recompute.assert_called_once_with(self.student, self.concept)
+
+    def test_missing_concept_is_a_no_op(self):
+        self.assertEqual(
+            tasks.recompute_concept_states('00000000-0000-0000-0000-000000000000'), 0)

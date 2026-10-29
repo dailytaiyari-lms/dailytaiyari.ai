@@ -24,6 +24,14 @@ class ScheduleAndQueueTests(SimpleTestCase):
             tasks.refresh_learner_state,
             tasks.recompute_item_stats,
             tasks.recompute_recommendations,
+            tasks.recompute_concept_states,
         ):
             with self.subTest(task=task.name):
                 self.assertEqual(task.queue, 'intelligence')
+
+    def test_syllabus_llm_tasks_run_on_the_aigen_queue(self):
+        from intelligence import tasks
+
+        for task in (tasks.run_tree_build, tasks.run_tagging_run, tasks.retag_item):
+            with self.subTest(task=task.name):
+                self.assertEqual(task.queue, 'aigen')
