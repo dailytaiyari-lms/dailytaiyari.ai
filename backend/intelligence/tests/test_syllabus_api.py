@@ -1,7 +1,7 @@
 """Syllabus tools API: switch, scope, and each operation end to end."""
 from unittest.mock import patch
 
-from intelligence.models import SyllabusNode, TaggingRun, TreeBuildJob
+from intelligence.models import ItemTagging, SyllabusNode, TaggingRun, TreeBuildJob
 from intelligence.tests.syllabus_fixtures import SyllabusTestCase
 from intelligence.tests.test_course_tree import FakeCall as BuildCall
 
@@ -108,3 +108,73 @@ class CourseEndpointTests(SyllabusTestCase):
         refused = client.post(f'{BASE}/courses/{self.custom.id}/tagging/run/', {}, format='json')
         self.assertEqual(refused.status_code, 400)
         self.assertFalse(TaggingRun.objects.exists())
+
+
+class ReviewEndpointTests(SyllabusTestCase):
+    def setUp(self):
+        super().setUp()
+        self.item = self.question('A block slides down…')
+        self.tagging = ItemTagging.objects.create(
+            tenant=self.tenant, question=self.item, primary_node=self.friction,
+            thinking_level='recall', review_status='needs_review',
+            review_reasons=['low_confidence'])
+        other = self.question('Two sum?', subject=self.arrays, topic=self.two_sum)
+        self.other_tagging = ItemTagging.objects.create(
+            tenant=self.tenant, question=other, review_status='needs_review',
+            review_reasons=['invalid_key'])
+
+    def test_list_scope_filters_and_pagination(self):
+        admin = self.client_for(self.admin).get(f'{BASE}/review/').json()
+        self.assertEqual(admin['total'], 2)
+        faculty = self.client_for(self.faculty).get(f'{BASE}/review/').json()
+        self.assertEqual([r['id'] for r in faculty['results']], [str(self.tagging.id)])
+        filtered = self.client_for(self.admin).get(f'{BASE}/review/', {'reason': 'invalid_key'}).json()
+        self.assertEqual([r['id'] for r in filtered['results']], [str(self.other_tagging.id)])
+        by_course = self.client_for(self.admin).get(f'{BASE}/review/', {'course': str(self.course.id)}).json()
+        self.assertEqual(by_course['total'], 1)
+        by_topic = self.client_for(self.admin).get(f'{BASE}/review/', {'topic': str(self.laws.id)}).json()
+        self.assertEqual(by_topic['total'], 1)
+
+    def test_accept_bulk_and_scope(self):
+        client = self.client_for(self.faculty)
+        self.assertEqual(client.post(f'{BASE}/review/{self.other_tagging.id}/accept/').status_code, 403)
+        self.assertEqual(client.post(f'{BASE}/review/{self.tagging.id}/accept/').status_code, 200)
+        self.tagging.review_status = 'needs_review'
+        self.tagging.save()
+        response = client.post(f'{BASE}/review/bulk-accept/',
+                               {'ids': [str(self.tagging.id), str(self.other_tagging.id)]}, format='json')
+        self.assertEqual(response.json(), {'accepted': 1})
+
+    def test_detail_and_edit(self):
+        client = self.client_for(self.faculty)
+        detail = client.get(f'{BASE}/review/{self.tagging.id}/').json()
+        self.assertIn('choices', detail)
+        response = client.put(f'{BASE}/review/{self.tagging.id}/', {
+            'primary': str(self.newton.id), 'thinking_level': 'conceptual', 'skills': [],
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()['source'], 'manual')
+        bad = client.put(f'{BASE}/review/{self.tagging.id}/', {'primary': 'nope'}, format='json')
+        self.assertEqual(bad.status_code, 400)
+
+    def test_retag_queues(self):
+        with patch('intelligence.syllabus_views._enqueue_retag') as queued:
+            response = self.client_for(self.admin).post(f'{BASE}/review/{self.tagging.id}/retag/')
+        self.assertEqual(response.json(), {'queued': True})
+        queued.assert_called_once_with('bank', str(self.item.id))
+
+    def test_add_to_tree(self):
+        self.tagging.primary_node = None
+        self.tagging.proposed_subtopic = 'Rolling friction'
+        self.tagging.save()
+        response = self.client_for(self.admin).post(
+            f'{BASE}/review/{self.tagging.id}/add-to-tree/', {'topic': str(self.laws_node.id)}, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()['node']['name'], 'Rolling friction')
+
+    def test_item_tags(self):
+        client = self.client_for(self.faculty)
+        data = client.get(f'{BASE}/items/bank/{self.item.id}/tags/').json()
+        self.assertEqual(data['tagging']['id'], str(self.tagging.id))
+        untagged = self.question('Untagged?')
+        self.assertIsNone(client.get(f'{BASE}/items/bank/{untagged.id}/tags/').json()['tagging'])

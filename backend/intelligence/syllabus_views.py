@@ -332,3 +332,186 @@ class JobDetailView(APIView):
         if not can_manage_course(request.user, job.course):
             return _forbidden()
         return Response(job.payload())
+
+
+REVIEW_PAGE = 25
+
+
+def _scope_q(user):
+    """ItemTaggings whose item belongs to one of the user's courses."""
+    from django.db.models import Q
+
+    ids = teachable_course_ids(user)
+    return Q(question__subject__course_id__in=ids) | Q(mock_item__subject__course_id__in=ids)
+
+
+def _tagging(request, tagging_id):
+    from .services.tag_review import course_of
+
+    tagging = (ItemTagging.objects.filter(id=tagging_id, tenant=request.tenant)
+               .select_related('question__subject__course', 'question__topic',
+                               'mock_item__subject__course', 'mock_item__topic', 'primary_node__parent')
+               .first())
+    if tagging is None:
+        return None, _not_found('Tagging')
+    course = course_of(tagging)
+    if course is None or not can_manage_course(request.user, course):
+        return None, _forbidden()
+    return tagging, None
+
+
+def _enqueue_retag(kind, item_id):
+    from .api import enqueue
+    from .tasks import retag_item
+
+    enqueue(retag_item, kind, item_id)
+
+
+class ReviewListView(APIView):
+    permission_classes = SYLLABUS
+
+    def get(self, request):
+        from django.db.models import Q
+
+        from .services.tag_review import REVIEW_REASONS, row_payload
+
+        rows = (ItemTagging.objects.filter(tenant=request.tenant, review_status='needs_review')
+                .filter(_scope_q(request.user)))
+        params = request.query_params
+        course_id, topic_id = as_uuid(params.get('course')), as_uuid(params.get('topic'))
+        if (params.get('course') and not course_id) or (params.get('topic') and not topic_id):
+            return _error('Unknown course or topic.')
+        if course_id:
+            rows = rows.filter(Q(question__subject__course_id=course_id)
+                               | Q(mock_item__subject__course_id=course_id))
+        if topic_id:
+            rows = rows.filter(Q(question__topic_id=topic_id) | Q(mock_item__topic_id=topic_id))
+        if params.get('reason') in REVIEW_REASONS:
+            rows = rows.filter(review_reasons__icontains=f'"{params["reason"]}"')
+        rows = rows.distinct().order_by('confidence', 'created_at')
+        total = rows.count()
+        pages = max(1, -(-total // REVIEW_PAGE))
+        try:
+            page = min(pages, max(1, int(params.get('page', 1))))
+        except (TypeError, ValueError):
+            page = 1
+        chunk = rows.select_related(
+            'question__topic', 'mock_item__topic', 'primary_node__parent',
+        )[(page - 1) * REVIEW_PAGE:page * REVIEW_PAGE]
+        return Response({'page': page, 'pages': pages, 'total': total,
+                         'results': [row_payload(tagging) for tagging in chunk]})
+
+
+class ReviewAcceptView(APIView):
+    permission_classes = SYLLABUS
+
+    def post(self, request, tagging_id):
+        from .services.tag_review import accept, row_payload
+
+        tagging, error = _tagging(request, tagging_id)
+        if error:
+            return error
+        return Response(row_payload(accept(tagging)))
+
+
+class ReviewBulkAcceptView(APIView):
+    permission_classes = SYLLABUS
+
+    def post(self, request):
+        from .services.tag_review import bulk_accept
+
+        ids = request.data.get('ids') if isinstance(request.data, dict) else None
+        if not isinstance(ids, list) or not ids:
+            return _error('Pick at least one row.')
+        clean = [value for value in (as_uuid(raw) for raw in ids) if value][:REVIEW_PAGE * 4]
+        rows = ItemTagging.objects.filter(tenant=request.tenant, id__in=clean).filter(_scope_q(request.user))
+        return Response({'accepted': bulk_accept(rows)})
+
+
+class ReviewDetailView(APIView):
+    permission_classes = SYLLABUS
+
+    def get(self, request, tagging_id):
+        from .services.tag_review import edit_choices, row_payload, subject_of
+
+        tagging, error = _tagging(request, tagging_id)
+        if error:
+            return error
+        subject = subject_of(tagging)
+        return Response({'row': row_payload(tagging),
+                         'choices': edit_choices(subject) if subject else None})
+
+    def put(self, request, tagging_id):
+        from .services.tag_review import ReviewError, row_payload, save_manual
+
+        tagging, error = _tagging(request, tagging_id)
+        if error:
+            return error
+        try:
+            save_manual(tagging, request.data)
+        except ReviewError as exc:
+            return _error(str(exc))
+        tagging.refresh_from_db()
+        return Response(row_payload(tagging))
+
+
+class ReviewRetagView(APIView):
+    permission_classes = SYLLABUS
+
+    def post(self, request, tagging_id):
+        from .services.tag_review import mark_for_retag
+
+        tagging, error = _tagging(request, tagging_id)
+        if error:
+            return error
+        if budget_status(request.tenant)['exhausted']:
+            return _error('This academy has used its monthly AI token budget.')
+        item = mark_for_retag(tagging)
+        try:
+            _enqueue_retag('bank' if tagging.question_id else 'item', str(item.id))
+        except Exception:  # noqa: BLE001 — still stale: the weekly sweep picks it up
+            return Response({'queued': False, 'reason': 'queue_unavailable'})
+        return Response({'queued': True})
+
+
+class ReviewAddToTreeView(APIView):
+    permission_classes = SYLLABUS
+
+    def post(self, request, tagging_id):
+        from .services.tag_review import ReviewError, add_to_tree, row_payload
+
+        tagging, error = _tagging(request, tagging_id)
+        if error:
+            return error
+        topic = None
+        topic_id = as_uuid(request.data.get('topic')) if isinstance(request.data, dict) else None
+        if topic_id:
+            topic = SyllabusNode.objects.filter(id=topic_id, tenant=request.tenant, level='topic').first()
+            if topic is None:
+                return _error('That topic is not in the tree.')
+        try:
+            node = add_to_tree(tagging, topic)
+        except ReviewError as exc:
+            return _error(str(exc))
+        tagging.refresh_from_db()
+        return Response({'node': _node_out(node), 'row': row_payload(tagging)})
+
+
+class ItemTagsView(APIView):
+    permission_classes = SYLLABUS
+
+    def get(self, request, kind, item_id):
+        from quiz.models import MockTestItem, Question
+
+        from .services.tag_review import row_payload
+        from .services.tagging_sweep import _mock_item_subject
+
+        model = {'bank': Question, 'item': MockTestItem}.get(kind)
+        item = model.objects.filter(id=item_id, tenant=request.tenant).first() if model else None
+        if item is None:
+            return _not_found('Question')
+        subject = item.subject if kind == 'bank' else _mock_item_subject(item)
+        if subject is None or not can_manage_course(request.user, subject.course):
+            return _forbidden()
+        tagging = getattr(item, 'tagging', None)
+        return Response({'tagging': row_payload(tagging) if tagging else None})

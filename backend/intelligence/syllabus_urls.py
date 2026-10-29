@@ -18,4 +18,12 @@ urlpatterns = [
     path('courses/<uuid:course_id>/tagging/run/', v.TaggingRunStartView.as_view(),
          name='syllabus-tagging-run'),
     path('jobs/<uuid:job_id>/', v.JobDetailView.as_view(), name='syllabus-job'),
+    path('review/', v.ReviewListView.as_view(), name='syllabus-review'),
+    path('review/bulk-accept/', v.ReviewBulkAcceptView.as_view(), name='syllabus-review-bulk-accept'),
+    path('review/<uuid:tagging_id>/', v.ReviewDetailView.as_view(), name='syllabus-review-detail'),
+    path('review/<uuid:tagging_id>/accept/', v.ReviewAcceptView.as_view(), name='syllabus-review-accept'),
+    path('review/<uuid:tagging_id>/retag/', v.ReviewRetagView.as_view(), name='syllabus-review-retag'),
+    path('review/<uuid:tagging_id>/add-to-tree/', v.ReviewAddToTreeView.as_view(),
+         name='syllabus-review-add-to-tree'),
+    path('items/<str:kind>/<uuid:item_id>/tags/', v.ItemTagsView.as_view(), name='syllabus-item-tags'),
 ]
