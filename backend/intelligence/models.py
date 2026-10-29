@@ -23,7 +23,8 @@ from core.models import TimeStampedModel
 from exams.models import Course, Subject, Topic
 
 from .versions import (
-    CLASSIFIER_VERSION, EVENT_SCHEMA_VERSION, ONTOLOGY_VERSION, STATE_MODEL_VERSION,
+    CLASSIFIER_VERSION, EVENT_SCHEMA_VERSION, FACET_MODEL_VERSION, ONTOLOGY_VERSION,
+    STATE_MODEL_VERSION,
 )
 
 
@@ -331,6 +332,49 @@ class LearnerConceptState(TimeStampedModel):
 
     def __str__(self):
         return f'{self.student_id} × {self.concept_id}: {self.mastery:.2f}'
+
+
+class LearnerFacetState(TimeStampedModel):
+    """Inferred state of one student on one skill or thinking level, per
+    subject (spec 2B §6.3).
+
+    Fully recomputed from LearningEvents by ``services.facets`` with the same
+    rules as LearnerConceptState; never incremented in place.
+    """
+
+    KIND_SKILL = 'skill'
+    KIND_THINKING = 'thinking_level'
+    KIND_CHOICES = [(KIND_SKILL, 'Skill'), (KIND_THINKING, 'Thinking level')]
+
+    student = models.ForeignKey(
+        'users.StudentProfile', on_delete=models.CASCADE, related_name='facet_states',
+    )
+    subject = models.ForeignKey(Subject, on_delete=models.CASCADE, related_name='learner_facet_states')
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES)
+    key = models.CharField(max_length=60)
+
+    mastery = models.FloatField(default=0.0)
+    evidence_count = models.PositiveIntegerField(default=0)
+    effective_evidence = models.FloatField(default=0.0)
+    confidence = models.CharField(
+        max_length=10, choices=LearnerConceptState.CONFIDENCE_CHOICES, default='low',
+    )
+
+    model_version = models.CharField(max_length=10, default=FACET_MODEL_VERSION)
+    computed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'Learner Facet State'
+        verbose_name_plural = 'Learner Facet States'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['student', 'subject', 'kind', 'key'], name='uniq_learner_facet_state',
+            ),
+        ]
+        indexes = [models.Index(fields=['tenant', 'subject'])]
+
+    def __str__(self):
+        return f'{self.student_id} × {self.kind}:{self.key}: {self.mastery:.2f}'
 
 
 class ItemStats(TimeStampedModel):
