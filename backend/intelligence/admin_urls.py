@@ -4,6 +4,7 @@ from django.urls import include, path
 from .admin_views import (
     AssessmentBehaviourView, AssessmentReportView, CourseBehaviourView, StudentAnswersView, CoursePracticeConfigView, GeneratedItemsView,
     DiagnosisCalibrationView, GenerationJobsView, OverviewView, StudentDiagnosisView, TaggingRunView,
+    CourseHeatmapView, StudentProgressView,
 )
 
 urlpatterns = [
@@ -25,5 +26,9 @@ urlpatterns = [
          name='intelligence-course-behaviour'),
     path('diagnosis/calibration/', DiagnosisCalibrationView.as_view(),
          name='intelligence-diagnosis-calibration'),
+    path('students/<uuid:student_id>/progress/', StudentProgressView.as_view(),
+         name='intelligence-student-progress'),
+    path('courses/<uuid:course_id>/heatmap/', CourseHeatmapView.as_view(),
+         name='intelligence-course-heatmap'),
     path('syllabus/', include('intelligence.syllabus_urls')),
 ]

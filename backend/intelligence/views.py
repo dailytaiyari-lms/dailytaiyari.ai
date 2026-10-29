@@ -154,6 +154,72 @@ class MasteryView(APIView):
         return Response(MasteryRowSerializer(queryset[:300], many=True).data)
 
 
+class ProgressFeaturePermission(permissions.BasePermission):
+    """The tenant must have My Progress on."""
+
+    message = 'My Progress is not enabled for this academy.'
+
+    def has_permission(self, request, view):
+        tenant = getattr(request, 'tenant', None)
+        return bool(tenant and tenant.get_features().get('my_progress'))
+
+
+def progress_course(request, allowed):
+    """Resolve ``?course=`` against the courses this viewer may pick.
+
+    Returns ``(course, None)`` or ``(None, error response)``. Without the
+    parameter the first allowed course is used, or ``(None, None)`` when
+    there is none.
+    """
+    import uuid
+
+    from exams.models import Course
+
+    raw = request.query_params.get('course')
+    if not raw:
+        return (allowed[0] if allowed else None), None
+    try:
+        course_id = uuid.UUID(str(raw))
+    except ValueError:
+        return None, Response({'error': 'Course not found.'}, status=status.HTTP_404_NOT_FOUND)
+    for course in allowed:
+        if course.id == course_id:
+            return course, None
+    if Course.objects.filter(id=course_id, tenant=request.tenant).exists():
+        return None, Response({'error': 'Not one of your courses.'},
+                              status=status.HTTP_403_FORBIDDEN)
+    return None, Response({'error': 'Course not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class MyProgressView(APIView):
+    """The student's own My Progress page (spec 2B §6.4)."""
+
+    permission_classes = [permissions.IsAuthenticated, ProgressFeaturePermission]
+
+    def get(self, request):
+        from exams.models import Course
+
+        from .services import progress
+
+        student = _student_or_none(request)
+        if student is None or getattr(request.user, 'role', '') != 'student':
+            return Response({'error': 'Only students have a progress page.'},
+                            status=status.HTTP_403_FORBIDDEN)
+        allowed = list(
+            Course.objects.filter(
+                tenant=request.tenant, enrollments__student=student,
+                enrollments__status='approved',
+            ).distinct().order_by('name')
+        )
+        course, error = progress_course(request, allowed)
+        if error is not None:
+            return error
+        if course is None:
+            return Response(progress.empty_payload())
+        recent = bool(request.tenant.get_features().get('diagnosis_student_view'))
+        return Response(progress.progress_payload(student, course, allowed, recent=recent))
+
+
 class TimelineThrottle(UserRateThrottle):
     scope = 'timeline'  # own cache history, not shared with the default 'user' scope
     rate = '20/min'

@@ -27,6 +27,7 @@ from .models import (
 from .recommendation import practice_config_for
 from .serializers import MasteryRowSerializer, PracticeSetSerializer
 from .services import visibility
+from .views import ProgressFeaturePermission, progress_course
 
 
 class IsTenantAdminOrInstructor(permissions.BasePermission):
@@ -784,3 +785,62 @@ class DiagnosisCalibrationView(APIView):
             'thresholds': THRESHOLDS,
             'classifier_version': CLASSIFIER_VERSION,
         })
+
+
+TEACHER_PROGRESS = [
+    permissions.IsAuthenticated, IsTenantAdminOrInstructor, ProgressFeaturePermission,
+]
+
+
+class StudentProgressView(APIView):
+    """One student's My Progress data for a teacher (spec 2B §6.5)."""
+
+    permission_classes = TEACHER_PROGRESS
+
+    def get(self, request, student_id):
+        from users.models import StudentProfile
+
+        from .services import progress
+
+        student = StudentProfile.objects.filter(
+            id=student_id, user__tenant=request.tenant,
+        ).select_related('user').first()
+        if student is None:
+            return Response({'error': 'Student not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not can_view_student(request.user, student):
+            return _forbidden()
+        allowed = Course.objects.filter(
+            tenant=request.tenant, enrollments__student=student, enrollments__status='approved',
+        )
+        if request.user.role != 'admin':
+            allowed = allowed.filter(id__in=teachable_course_ids(request.user))
+        allowed = list(allowed.distinct().order_by('name'))
+        course, error = progress_course(request, allowed)
+        if error is not None:
+            return error
+        if course is None:
+            payload = progress.empty_payload()
+        else:
+            recent = bool(request.tenant.get_features().get('diagnosis_teacher_view'))
+            payload = progress.progress_payload(student, course, allowed, recent=recent)
+        payload['student'] = {
+            'id': str(student.id),
+            'name': getattr(student.user, 'full_name', '') or student.user.email,
+        }
+        return Response(payload)
+
+
+class CourseHeatmapView(APIView):
+    """Class topic heatmap for one course (spec 2B §6.5)."""
+
+    permission_classes = TEACHER_PROGRESS
+
+    def get(self, request, course_id):
+        from .services import progress
+
+        course = _course_or_404(request, course_id)
+        if course is None:
+            return Response({'error': 'Course not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not can_manage_course(request.user, course):
+            return _forbidden()
+        return Response(progress.heatmap(course))

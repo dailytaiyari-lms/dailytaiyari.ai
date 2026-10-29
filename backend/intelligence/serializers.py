@@ -38,13 +38,14 @@ class PracticeItemSerializer(serializers.ModelSerializer):
 class PracticeSetSerializer(serializers.ModelSerializer):
     reason_text = serializers.SerializerMethodField()
     concepts = serializers.SerializerMethodField()
+    concept_ids = serializers.SerializerMethodField()
     course_name = serializers.CharField(source='course.name', read_only=True, default='')
     ladder = serializers.SerializerMethodField()
 
     class Meta:
         model = PracticeSet
         fields = [
-            'id', 'status', 'deficit_kind', 'reason_text', 'concepts',
+            'id', 'status', 'deficit_kind', 'reason_text', 'concepts', 'concept_ids',
             'course', 'course_name', 'item_count', 'score_correct',
             'score_total', 'xp_awarded', 'ladder', 'created_at',
             'started_at', 'completed_at', 'expires_at',
@@ -56,6 +57,9 @@ class PracticeSetSerializer(serializers.ModelSerializer):
 
     def get_concepts(self, practice_set):
         return [concept.name for concept in practice_set.target_concepts.all()]
+
+    def get_concept_ids(self, practice_set):
+        return [str(concept.id) for concept in practice_set.target_concepts.all()]
 
     def get_ladder(self, practice_set):
         counts = {}
