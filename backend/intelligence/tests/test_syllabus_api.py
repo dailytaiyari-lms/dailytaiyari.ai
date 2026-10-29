@@ -1,9 +1,12 @@
 """Syllabus tools API: switch, scope, and each operation end to end."""
+import uuid
 from unittest.mock import patch
 
 from intelligence.models import ItemTagging, SyllabusNode, TaggingRun, TreeBuildJob
+from intelligence.tasks import recompute_concept_states, run_tagging_run
 from intelligence.tests.syllabus_fixtures import SyllabusTestCase
 from intelligence.tests.test_course_tree import FakeCall as BuildCall
+from intelligence.tests.test_tagging_sweep import FRICTION, patched_tree
 
 BASE = '/api/v1/tenant-admin/intelligence/syllabus'
 
@@ -178,3 +181,69 @@ class ReviewEndpointTests(SyllabusTestCase):
         self.assertEqual(data['tagging']['id'], str(self.tagging.id))
         untagged = self.question('Untagged?')
         self.assertIsNone(client.get(f'{BASE}/items/bank/{untagged.id}/tags/').json()['tagging'])
+
+
+class SyllabusApiGapTests(SyllabusTestCase):
+    def test_merge_enqueues_concept_state_recompute(self):
+        client = self.client_for(self.faculty)
+        created = client.post(f'{BASE}/courses/{self.course.id}/nodes/', {
+            'subject': str(self.physics.id), 'level': 'subtopic', 'name': 'Static friction',
+            'parent': str(self.laws_node.id)}, format='json')
+        self.assertEqual(created.status_code, 201, created.content)
+        with patch('intelligence.api.enqueue') as enqueue:
+            merged = client.post(f'{BASE}/nodes/{created.json()["id"]}/merge/',
+                                 {'into': str(self.friction.id)}, format='json')
+        self.assertEqual(merged.status_code, 200, merged.content)
+        enqueue.assert_called_once()
+        task, concept_id = enqueue.call_args.args
+        self.assertEqual(task, recompute_concept_states)
+        self.assertEqual(str(concept_id), str(merged.json()['concept_id']))
+
+    def test_exam_mapping_on_a_fresh_course(self):
+        client = self.client_for(self.admin)
+        url = f'{BASE}/courses/{self.custom.id}/tree/exam/'
+        with patched_tree():
+            response = client.post(url, {'exam': 'mini', 'subjects': {str(self.arrays.id): 'physics'}},
+                                   format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        data = response.json()
+        self.assertGreater(data['summary']['created'], 0)
+        self.assertTrue(SyllabusNode.objects.filter(subject=self.arrays, key=FRICTION).exists())
+        self.assertEqual(data['tree']['kind'], 'exam')
+
+    def test_exam_mapping_refuses_a_foreign_subject(self):
+        with patched_tree():
+            response = self.client_for(self.admin).post(
+                f'{BASE}/courses/{self.custom.id}/tree/exam/',
+                {'exam': 'mini', 'subjects': {str(self.physics.id): 'physics'}}, format='json')
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertFalse(SyllabusNode.objects.filter(subject=self.arrays).exists())
+
+    def test_missing_objects_are_404(self):
+        client = self.client_for(self.admin)
+        missing = uuid.uuid4()
+        self.assertEqual(client.get(f'{BASE}/courses/{missing}/tree/').status_code, 404)
+        self.assertEqual(client.patch(f'{BASE}/nodes/{missing}/', {'weightage': 0.5}, format='json')
+                         .status_code, 404)
+        self.assertEqual(client.get(f'{BASE}/jobs/{missing}/').status_code, 404)
+
+    def test_job_out_of_scope_is_403(self):
+        job = TreeBuildJob.objects.create(tenant=self.tenant, course=self.custom)
+        url = f'{BASE}/jobs/{job.id}/'
+        self.assertEqual(self.client_for(self.faculty).get(url).status_code, 403)
+        self.assertEqual(self.client_for(self.other_faculty).get(url).status_code, 200)
+
+    def test_tagging_run_is_accepted_then_conflicts(self):
+        SyllabusNode.objects.create(tenant=self.tenant, subject=self.arrays, level='topic',
+                                    key='hashing', name='Hashing', source='course')
+        url = f'{BASE}/courses/{self.custom.id}/tagging/run/'
+        client = self.client_for(self.admin)
+        with patch('intelligence.api.enqueue') as enqueue:
+            first = client.post(url, {}, format='json')
+            second = client.post(url, {}, format='json')
+        self.assertEqual(first.status_code, 202, first.content)
+        self.assertEqual(first.json()['status'], 'queued')
+        enqueue.assert_called_once_with(run_tagging_run, first.json()['id'])
+        self.assertEqual(second.status_code, 409, second.content)
+        self.assertEqual(second.json()['job']['id'], first.json()['id'])
+        self.assertEqual(TaggingRun.objects.count(), 1)
