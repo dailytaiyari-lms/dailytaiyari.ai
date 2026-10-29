@@ -8,6 +8,7 @@ import { useTenantStore } from '../context/tenantStore'
 import { useAuthStore } from '../context/authStore'
 import { Link } from 'react-router-dom'
 import AnswerBehaviourTile from '../components/insights/AnswerBehaviourTile'
+import ClassHeatmap from '../components/insights/ClassHeatmap'
 import { Brain, Flag, Archive, RefreshCw, Sparkles, Gauge, ClipboardCheck } from 'lucide-react'
 
 const DEFICIT_LABELS = {
@@ -54,6 +55,7 @@ const InsightsHome = () => {
   const [tab, setTab] = useState('class') // class | generated
   const practiceOn = useTenantStore((s) => s.tenant?.features?.practice === true)
   const teacherView = useTenantStore((s) => s.tenant?.features?.diagnosis_teacher_view === true)
+  const progressOn = useTenantStore((s) => s.tenant?.features?.my_progress === true)
   const syllabusOn = useTenantStore((s) => s.tenant?.features?.syllabus_tools === true)
   const { user, profile } = useAuthStore()
   const isAdmin = (user?.role || profile?.user?.role) === 'admin'
@@ -170,7 +172,7 @@ const InsightsHome = () => {
       ) : tab === 'class' ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Concept mastery */}
-          <div className="lg:col-span-2">
+          <div className="lg:col-span-2 space-y-4">
             <Tile title="Class concept mastery (weakest first)">
               {overview?.concepts?.length ? (
                 <div className="space-y-3 max-h-[28rem] overflow-y-auto pr-1">
@@ -196,6 +198,7 @@ const InsightsHome = () => {
                 </p>
               )}
             </Tile>
+            {progressOn && <ClassHeatmap courseId={activeCourse} />}
           </div>
 
           <div className="space-y-4">

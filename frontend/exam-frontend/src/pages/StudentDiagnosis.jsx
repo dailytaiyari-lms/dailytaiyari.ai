@@ -5,6 +5,7 @@ import { insightsService } from '../services/insightsService'
 import { useTenantStore } from '../context/tenantStore'
 import Loading from '../components/common/Loading'
 import StudentAnswersTab from '../components/insights/StudentAnswersTab'
+import StudentProgressTab from '../components/insights/StudentProgressTab'
 import { DeficitChip, MasteryBar } from './Practice'
 import { User, CheckCircle2, XCircle, Hourglass } from 'lucide-react'
 
@@ -21,7 +22,13 @@ const STATUS_ICONS = {
 const StudentDiagnosis = () => {
   const { studentId } = useParams()
   const teacherView = useTenantStore((s) => s.tenant?.features?.diagnosis_teacher_view === true)
-  const [tab, setTab] = useState('concepts') // concepts | answers
+  const progressOn = useTenantStore((s) => s.tenant?.features?.my_progress === true)
+  const tabs = [
+    ['concepts', 'Concepts'],
+    ...(teacherView ? [['answers', 'Answers']] : []),
+    ...(progressOn ? [['progress', 'Progress']] : []),
+  ]
+  const [tab, setTab] = useState('concepts') // concepts | answers | progress
   const { data, isLoading } = useQuery({
     queryKey: ['studentDiagnosis', studentId],
     queryFn: () => insightsService.getStudentDiagnosis(studentId),
@@ -45,9 +52,9 @@ const StudentDiagnosis = () => {
         </div>
       </div>
 
-      {teacherView && (
+      {tabs.length > 1 && (
         <div className="flex gap-2">
-          {[['concepts', 'Concepts'], ['answers', 'Answers']].map(([key, label]) => (
+          {tabs.map(([key, label]) => (
             <button
               key={key}
               type="button"
@@ -65,6 +72,7 @@ const StudentDiagnosis = () => {
       )}
 
       {teacherView && tab === 'answers' && <StudentAnswersTab key={studentId} studentId={studentId} />}
+      {progressOn && tab === 'progress' && <StudentProgressTab key={studentId} studentId={studentId} />}
 
       {tab === 'concepts' && (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

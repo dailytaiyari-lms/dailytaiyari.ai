@@ -37,7 +37,7 @@ export const ADMIN_NAV_ITEMS = [
   { tab: 'ai-studio', label: 'AI Course Studio', icon: Wand2 },
   { tab: 'landing', label: 'Landing Page', icon: LayoutTemplate },
   { path: '/admin/mock-tests', label: 'Mock Tests', icon: ClipboardList },
-  { path: '/admin/insights', label: 'Learning Insights', icon: Brain, features: ['practice', 'diagnosis_teacher_view', 'syllabus_tools'] },
+  { path: '/admin/insights', label: 'Learning Insights', icon: Brain, features: ['practice', 'diagnosis_teacher_view', 'syllabus_tools', 'my_progress'] },
   { path: '/admin/jobs', label: 'Jobs', icon: Briefcase },
   { path: '/admin/hackathons', label: 'Hackathons', icon: Trophy },
   { tab: 'ai', label: 'AI Features', icon: Sparkles },
