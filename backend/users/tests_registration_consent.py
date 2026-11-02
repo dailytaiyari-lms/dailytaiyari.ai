@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from django.core import mail
 from django.test import TestCase, override_settings
 from django.utils import timezone
+from rest_framework.test import APIRequestFactory
 
 from core.models import Tenant
 from notifications.emails import tenant_link
@@ -12,6 +13,7 @@ from users.serializers import UserRegistrationSerializer
 from users.views import (
     _existing_student_compliance,
     _issue_guardian_consent,
+    RegisterView,
 )
 
 
@@ -140,13 +142,30 @@ class ExistingStudentComplianceTests(TestCase):
 
 class GuardianApprovalEmailTests(TestCase):
     def test_first_party_request_origin_builds_absolute_link(self):
-        tenant = Tenant.objects.create(name='Example Academy')
+        tenant = Tenant.objects.create(
+            name='Example Academy',
+            subdomain='academy',
+        )
         request = SimpleNamespace(
             headers={'Origin': 'https://academy.dailytaiyari.in'}
         )
         self.assertEqual(
             tenant_link(tenant, '/guardian-consent/token', request=request),
             'https://academy.dailytaiyari.in/guardian-consent/token',
+        )
+
+    def test_other_tenant_first_party_origin_is_not_trusted(self):
+        tenant = Tenant.objects.create(
+            name='Example Academy',
+            subdomain='academy',
+            allowed_origins=['https://academy.example.com'],
+        )
+        request = SimpleNamespace(
+            headers={'Origin': 'https://other-tenant.dailytaiyari.in'}
+        )
+        self.assertEqual(
+            tenant_link(tenant, '/guardian-consent/token', request=request),
+            'https://academy.example.com/guardian-consent/token',
         )
 
     def test_configured_external_origin_builds_absolute_link(self):
@@ -188,6 +207,33 @@ class GuardianApprovalEmailTests(TestCase):
                 'guardian_relationship': 'parent',
             })
         self.assertFalse(GuardianConsent.objects.filter(user=user).exists())
+
+    def test_registration_without_absolute_origin_does_not_create_user(self):
+        tenant = Tenant.objects.create(
+            name='Example Academy',
+            registration_settings={'guardian_consent': {'enabled': True}},
+        )
+        today = timezone.localdate()
+        request = APIRequestFactory().post('/auth/register/', {
+            'first_name': 'Aarav',
+            'last_name': 'Student',
+            'email': 'aarav@example.com',
+            'password': 'secure-pass-123',
+            'password_confirm': 'secure-pass-123',
+            'date_of_birth': date(today.year - 12, 1, 1),
+            'guardian_name': 'Parent',
+            'guardian_email': 'parent@example.com',
+            'guardian_relationship': 'parent',
+        }, format='json')
+        request.tenant = tenant
+
+        response = RegisterView.as_view()(request)
+
+        self.assertEqual(response.status_code, 503)
+        self.assertFalse(User.objects.filter(
+            tenant=tenant,
+            email='aarav@example.com',
+        ).exists())
 
     @override_settings(
         EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',

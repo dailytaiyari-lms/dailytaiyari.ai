@@ -58,33 +58,56 @@ def tenant_logo_url(tenant):
     return ''
 
 
+def _normalize_frontend_origin(value):
+    origin = str(value or '').strip().rstrip('/')
+    if not origin:
+        return ''
+    parsed = urlparse(origin)
+    if (
+        parsed.scheme not in {'http', 'https'}
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+        or parsed.path not in {'', '/'}
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+    ):
+        return ''
+    return origin
+
+
 def _request_frontend_origin(request, tenant):
     """Return a safe browser origin for tenant-facing email links."""
     if request is None:
         return ''
-    origin = (request.headers.get('Origin') or '').strip().rstrip('/')
+    origin = _normalize_frontend_origin(request.headers.get('Origin'))
     if not origin:
         return ''
     parsed = urlparse(origin)
-    if parsed.scheme not in {'http', 'https'} or not parsed.netloc:
-        return ''
 
     configured = {
-        str(value).strip().rstrip('/')
+        normalized
         for value in (getattr(tenant, 'allowed_origins', None) or [])
-        if value
+        if (normalized := _normalize_frontend_origin(value))
     }
     if origin in configured:
         return origin
 
-    # First-party tenant apps under the platform domains are already trusted by
-    # CORS regexes and do not need an individual allowed_origins entry.
+    # A first-party host is safe only when its subdomain belongs to this tenant.
+    # Anonymous endpoints select the tenant from X-Tenant-ID, so trusting every
+    # platform subdomain would let one tenant inject its origin into another
+    # tenant's guardian email.
     host = (parsed.hostname or '').lower()
+    subdomain = (getattr(tenant, 'subdomain', '') or '').strip().lower()
+    tenant_hosts = {
+        f'{subdomain}.dailytaiyari.in',
+        f'{subdomain}.dailytaiyari.ai',
+    } if subdomain else set()
     if (
-        host == 'dailytaiyari.in'
-        or host.endswith('.dailytaiyari.in')
-        or host == 'dailytaiyari.ai'
-        or host.endswith('.dailytaiyari.ai')
+        host in tenant_hosts
+        and parsed.scheme == 'https'
+        and parsed.port in {None, 443}
     ):
         return origin
     return ''
@@ -100,9 +123,12 @@ def tenant_frontend_origin(tenant, request=None):
     if request_origin:
         return request_origin
     origins = getattr(tenant, 'allowed_origins', None) or []
-    if isinstance(origins, (list, tuple)) and origins:
-        return str(origins[0]).rstrip('/')
-    return (getattr(settings, 'FRONTEND_URL', '') or '').rstrip('/')
+    if isinstance(origins, (list, tuple)):
+        for origin in origins:
+            normalized = _normalize_frontend_origin(origin)
+            if normalized:
+                return normalized
+    return _normalize_frontend_origin(getattr(settings, 'FRONTEND_URL', ''))
 
 
 def tenant_link(tenant, path, request=None):

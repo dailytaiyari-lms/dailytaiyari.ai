@@ -66,20 +66,26 @@ def _guardian_email_brand(tenant):
     return name or 'Your institution', False
 
 
-def _issue_guardian_consent(user, guardian_data, request=None):
-    """Create a single-use guardian approval link and send a tenant-branded email."""
-    from django.utils.html import escape
-    from notifications.emails import send_branded_email, tenant_link
+def _guardian_frontend_origin(tenant, request=None):
+    from notifications.emails import tenant_frontend_origin
 
-    raw_token = secrets.token_urlsafe(32)
-    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
-    approval_url = tenant_link(
-        user.tenant, f'/guardian-consent/{raw_token}', request=request
-    )
-    if not approval_url.startswith(('http://', 'https://')):
+    origin = tenant_frontend_origin(tenant, request=request)
+    if not origin.startswith(('http://', 'https://')):
         raise ValueError(
             'No absolute tenant frontend origin is configured for guardian approval.'
         )
+    return origin
+
+
+def _issue_guardian_consent(user, guardian_data, request=None):
+    """Create a single-use guardian approval link and send a tenant-branded email."""
+    from django.utils.html import escape
+    from notifications.emails import send_branded_email
+
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    frontend_origin = _guardian_frontend_origin(user.tenant, request=request)
+    approval_url = f'{frontend_origin}/guardian-consent/{raw_token}'
     consent, _ = GuardianConsent.objects.update_or_create(
         user=user,
         defaults={
@@ -209,6 +215,15 @@ class RegisterView(generics.CreateAPIView):
                 'guardian_relationship',
             )
         }
+        if serializer.validated_data.get('_guardian_required'):
+            try:
+                _guardian_frontend_origin(request.tenant, request=request)
+            except ValueError:
+                logger.exception('Guardian approval frontend origin is not configured')
+                return Response(
+                    {'error': 'Guardian approval email is not configured for this institution.'},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
         user = serializer.save(tenant=request.tenant)
 
         # Kick off email verification.
