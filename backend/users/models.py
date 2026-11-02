@@ -286,6 +286,12 @@ class GuardianConsent(TimeStampedModel):
         (STATUS_WITHDRAWN, 'Withdrawn'),
     ]
 
+    # Declared explicitly (rather than relying on TimeStampedModel's abstract
+    # field) because consent lookup and token validation are tenant-scoped.
+    tenant = models.ForeignKey(
+        'core.Tenant', on_delete=models.CASCADE, null=True, blank=True,
+        related_name='+',
+    )
     user = models.OneToOneField(
         User, on_delete=models.CASCADE, related_name='guardian_consent'
     )
@@ -306,6 +312,9 @@ class GuardianConsent(TimeStampedModel):
     verification_method = models.CharField(
         max_length=50, default='verified_email_declaration'
     )
+
+    class Meta:
+        ordering = ['-created_at']
 
     def is_expired(self):
         from django.utils import timezone
