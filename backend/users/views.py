@@ -44,20 +44,42 @@ logger = logging.getLogger(__name__)
 
 
 def _guardian_consent_text(tenant, student):
+    brand_name, _hide_logo = _guardian_email_brand(tenant)
+    privacy_owner = (
+        f"{brand_name}'s"
+        if brand_name != 'Your institution'
+        else "your institution's"
+    )
     return (
         f"I confirm that I am at least 18 years old and am the parent or lawful "
         f"guardian of {student.first_name or 'the student'}. I have read "
-        f"{tenant.name}'s Privacy Notice and consent to the processing described."
+        f"{privacy_owner} Privacy Notice and consent to the processing described."
     )
 
 
-def _issue_guardian_consent(user, guardian_data):
+def _guardian_email_brand(tenant):
+    """Use tenant branding without exposing the platform brand as the tenant."""
+    name = (getattr(tenant, 'name', '') or '').strip()
+    normalized = ''.join(name.lower().split())
+    if 'dailytaiyari' in normalized:
+        return 'Your institution', True
+    return name or 'Your institution', False
+
+
+def _issue_guardian_consent(user, guardian_data, request=None):
     """Create a single-use guardian approval link and send a tenant-branded email."""
     from django.utils.html import escape
     from notifications.emails import send_branded_email, tenant_link
 
     raw_token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    approval_url = tenant_link(
+        user.tenant, f'/guardian-consent/{raw_token}', request=request
+    )
+    if not approval_url.startswith(('http://', 'https://')):
+        raise ValueError(
+            'No absolute tenant frontend origin is configured for guardian approval.'
+        )
     consent, _ = GuardianConsent.objects.update_or_create(
         user=user,
         defaults={
@@ -75,23 +97,33 @@ def _issue_guardian_consent(user, guardian_data):
             'consent_text_hash': '',
         },
     )
-    approval_url = tenant_link(user.tenant, f'/guardian-consent/{raw_token}')
     student_name = user.first_name or 'the student'
+    brand_name, hide_logo = _guardian_email_brand(user.tenant)
+    account_label = (
+        f"{brand_name} account"
+        if brand_name != 'Your institution'
+        else 'student account'
+    )
+    institution_label = (
+        brand_name if brand_name != 'Your institution' else 'your institution'
+    )
     body_html = (
         f'<p style="margin:0 0 16px;">Hi {escape(consent.guardian_name)},</p>'
         f'<p style="margin:0 0 16px;">{escape(student_name)} has requested to '
-        f'create a learning account with {escape(user.tenant.name)}.</p>'
+        f'create a learning account with {escape(institution_label)}.</p>'
         '<p style="margin:0;">Please review the privacy notice and approve the '
         'account. This link expires in 24 hours.</p>'
     )
     return send_branded_email(
         user.tenant,
         consent.guardian_email,
-        subject=f'Approve {student_name}’s {user.tenant.name} account',
+        subject=f'Approve {student_name}’s {account_label}',
         heading='Parent or guardian approval',
         body_html=body_html,
         cta_text='Review and approve',
         cta_url=approval_url,
+        tenant_name_override=brand_name,
+        hide_tenant_logo=hide_logo,
     )
 
 
@@ -190,7 +222,9 @@ class RegisterView(generics.CreateAPIView):
         guardian_email_sent = None
         if user.guardian_consent_required:
             try:
-                guardian_email_sent = _issue_guardian_consent(user, guardian_data)
+                guardian_email_sent = _issue_guardian_consent(
+                    user, guardian_data, request=request
+                )
             except Exception:
                 logger.exception('Failed to issue guardian consent for %s', user.email)
                 guardian_email_sent = False
@@ -230,7 +264,7 @@ class GuardianConsentView(APIView):
             local, domain = masked_email.split('@', 1)
             masked_email = f"{local[:1]}***@{domain}"
         return Response({
-            'tenant_name': consent.tenant.name,
+            'tenant_name': _guardian_email_brand(consent.tenant)[0],
             'student_name': user.first_name or 'Student',
             'student_email': masked_email,
             'guardian_name': consent.guardian_name,
@@ -300,12 +334,19 @@ class ResendGuardianConsentView(APIView):
                 {'error': 'Please wait a moment before sending another approval email.'},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
-        sent = _issue_guardian_consent(user, {
-            'guardian_name': consent.guardian_name,
-            'guardian_email': consent.guardian_email,
-            'guardian_phone': consent.guardian_phone,
-            'guardian_relationship': consent.relationship,
-        })
+        try:
+            sent = _issue_guardian_consent(user, {
+                'guardian_name': consent.guardian_name,
+                'guardian_email': consent.guardian_email,
+                'guardian_phone': consent.guardian_phone,
+                'guardian_relationship': consent.relationship,
+            }, request=request)
+        except ValueError:
+            logger.exception('Guardian approval frontend origin is not configured')
+            return Response(
+                {'error': 'Guardian approval email is not configured for this institution.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         if not sent:
             return Response({'error': 'Could not send the approval email. Please try again.'},
                             status=status.HTTP_502_BAD_GATEWAY)
@@ -365,7 +406,14 @@ class ExistingStudentComplianceView(APIView):
                 errors['guardian_email'] = exc.detail
             if errors:
                 return Response(errors, status=status.HTTP_400_BAD_REQUEST)
-            sent = _issue_guardian_consent(user, guardian_data)
+            try:
+                sent = _issue_guardian_consent(user, guardian_data, request=request)
+            except ValueError:
+                logger.exception('Guardian approval frontend origin is not configured')
+                return Response(
+                    {'error': 'Guardian approval email is not configured for this institution.'},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
             if not sent:
                 return Response(
                     {'error': 'Could not send the approval email. Please try again.'},

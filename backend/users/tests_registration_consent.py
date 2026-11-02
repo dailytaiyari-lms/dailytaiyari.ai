@@ -1,13 +1,18 @@
 from datetime import date, timedelta
 from types import SimpleNamespace
 
-from django.test import TestCase
+from django.core import mail
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from core.models import Tenant
+from notifications.emails import tenant_link
 from users.models import GuardianConsent, User
 from users.serializers import UserRegistrationSerializer
-from users.views import _existing_student_compliance
+from users.views import (
+    _existing_student_compliance,
+    _issue_guardian_consent,
+)
 
 
 class RegistrationSettingsTests(TestCase):
@@ -131,3 +136,95 @@ class ExistingStudentComplianceTests(TestCase):
             'guardian_details_required',
         )
         self.assertFalse(self.user.guardian_consent_required)
+
+
+class GuardianApprovalEmailTests(TestCase):
+    def test_first_party_request_origin_builds_absolute_link(self):
+        tenant = Tenant.objects.create(name='Example Academy')
+        request = SimpleNamespace(
+            headers={'Origin': 'https://academy.dailytaiyari.in'}
+        )
+        self.assertEqual(
+            tenant_link(tenant, '/guardian-consent/token', request=request),
+            'https://academy.dailytaiyari.in/guardian-consent/token',
+        )
+
+    def test_configured_external_origin_builds_absolute_link(self):
+        tenant = Tenant.objects.create(
+            name='Example Academy',
+            allowed_origins=['https://academy.example.com'],
+        )
+        request = SimpleNamespace(
+            headers={'Origin': 'https://academy.example.com'}
+        )
+        self.assertEqual(
+            tenant_link(tenant, '/guardian-consent/token', request=request),
+            'https://academy.example.com/guardian-consent/token',
+        )
+
+    def test_untrusted_request_origin_falls_back_to_configured_origin(self):
+        tenant = Tenant.objects.create(
+            name='Example Academy',
+            allowed_origins=['https://academy.example.com'],
+        )
+        request = SimpleNamespace(headers={'Origin': 'https://attacker.example'})
+        self.assertEqual(
+            tenant_link(tenant, '/guardian-consent/token', request=request),
+            'https://academy.example.com/guardian-consent/token',
+        )
+
+    def test_missing_absolute_origin_does_not_create_consent_request(self):
+        tenant = Tenant.objects.create(name='Example Academy')
+        user = User.objects.create_user(
+            email='student@example.com',
+            tenant=tenant,
+            password='secure-pass-123',
+        )
+        with self.assertRaises(ValueError):
+            _issue_guardian_consent(user, {
+                'guardian_name': 'Parent',
+                'guardian_email': 'parent@example.com',
+                'guardian_phone': '',
+                'guardian_relationship': 'parent',
+            })
+        self.assertFalse(GuardianConsent.objects.filter(user=user).exists())
+
+    @override_settings(
+        EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
+        DEFAULT_FROM_EMAIL='DoNotReply@dailytaiyari.in',
+    )
+    def test_platform_named_tenant_uses_neutral_guardian_email_brand(self):
+        tenant = Tenant.objects.create(
+            name='DailyTaiyari',
+            allowed_origins=['https://academy.example.com'],
+        )
+        user = User.objects.create_user(
+            email='student@example.com',
+            tenant=tenant,
+            password='secure-pass-123',
+            first_name='Aarav',
+        )
+        request = SimpleNamespace(
+            headers={'Origin': 'https://academy.example.com'}
+        )
+        sent = _issue_guardian_consent(user, {
+            'guardian_name': 'Parent',
+            'guardian_email': 'parent@example.com',
+            'guardian_phone': '',
+            'guardian_relationship': 'parent',
+        }, request=request)
+        self.assertTrue(sent)
+        self.assertEqual(len(mail.outbox), 1)
+        message = mail.outbox[0]
+        html_body = message.alternatives[0][0]
+        self.assertNotIn('DailyTaiyari', message.subject)
+        self.assertNotIn('DailyTaiyari', message.body)
+        self.assertNotIn('DailyTaiyari', html_body)
+        self.assertIn(
+            'https://academy.example.com/guardian-consent/',
+            message.body,
+        )
+        self.assertIn(
+            'https://academy.example.com/guardian-consent/',
+            html_body,
+        )
