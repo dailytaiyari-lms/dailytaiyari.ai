@@ -56,6 +56,8 @@ class User(AbstractUser):
     is_suspended = models.BooleanField(default=False)
     is_email_verified = models.BooleanField(default=False)
     email_verified_at = models.DateTimeField(null=True, blank=True)
+    guardian_consent_required = models.BooleanField(default=False)
+    guardian_consent_granted_at = models.DateTimeField(null=True, blank=True)
     username = None  # Remove username field
     email = models.EmailField()
 
@@ -174,10 +176,19 @@ class StudentProfile(TimeStampedModel):
         ('other', 'Other'),
     ]
 
+    GENDER_CHOICES = [
+        ('female', 'Female'),
+        ('male', 'Male'),
+        ('non_binary', 'Non-binary'),
+        ('prefer_not_to_say', 'Prefer not to say'),
+        ('other', 'Other'),
+    ]
+
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
     
     # Personal info
     date_of_birth = models.DateField(null=True, blank=True)
+    gender = models.CharField(max_length=32, choices=GENDER_CHOICES, blank=True)
     bio = models.TextField(max_length=500, blank=True)
     instagram_handle = models.CharField(max_length=100, blank=True)
     parent_phone = models.CharField(max_length=15, blank=True)
@@ -186,6 +197,7 @@ class StudentProfile(TimeStampedModel):
     grade = models.CharField(max_length=20, choices=GRADE_CHOICES, blank=True)
     school = models.CharField(max_length=200, blank=True)
     coaching = models.CharField(max_length=200, blank=True)
+    stream = models.CharField(max_length=100, blank=True)
     board = models.CharField(max_length=20, choices=BOARD_CHOICES, blank=True)
     medium = models.CharField(max_length=20, choices=MEDIUM_CHOICES, default='english')
     target_year = models.PositiveIntegerField(null=True, blank=True)
@@ -193,6 +205,8 @@ class StudentProfile(TimeStampedModel):
     # Location
     city = models.CharField(max_length=100, blank=True)
     state = models.CharField(max_length=100, blank=True)
+    admission_number = models.CharField(max_length=100, blank=True)
+    batch_section = models.CharField(max_length=100, blank=True)
     
     # Study preferences
     daily_study_goal_minutes = models.PositiveIntegerField(default=60)
@@ -260,6 +274,56 @@ class StudentProfile(TimeStampedModel):
         return total_required - self.total_xp
 
 
+class GuardianConsent(TimeStampedModel):
+    """Tenant-branded parental approval for an underage student account."""
+
+    STATUS_PENDING = 'pending'
+    STATUS_GRANTED = 'granted'
+    STATUS_WITHDRAWN = 'withdrawn'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_GRANTED, 'Granted'),
+        (STATUS_WITHDRAWN, 'Withdrawn'),
+    ]
+
+    # Declared explicitly (rather than relying on TimeStampedModel's abstract
+    # field) because consent lookup and token validation are tenant-scoped.
+    tenant = models.ForeignKey(
+        'core.Tenant', on_delete=models.CASCADE, null=True, blank=True,
+        related_name='+',
+    )
+    user = models.OneToOneField(
+        User, on_delete=models.CASCADE, related_name='guardian_consent'
+    )
+    guardian_name = models.CharField(max_length=200)
+    guardian_email = models.EmailField()
+    guardian_phone = models.CharField(max_length=15, blank=True)
+    relationship = models.CharField(max_length=50)
+    status = models.CharField(
+        max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING
+    )
+    token_hash = models.CharField(max_length=64, unique=True)
+    expires_at = models.DateTimeField()
+    email_verified_at = models.DateTimeField(null=True, blank=True)
+    granted_at = models.DateTimeField(null=True, blank=True)
+    withdrawn_at = models.DateTimeField(null=True, blank=True)
+    consent_version = models.CharField(max_length=50, default='1.0')
+    consent_text_hash = models.CharField(max_length=64, blank=True)
+    verification_method = models.CharField(
+        max_length=50, default='verified_email_declaration'
+    )
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def is_expired(self):
+        from django.utils import timezone
+        return timezone.now() >= self.expires_at
+
+    def __str__(self):
+        return f'Guardian consent for {self.user.email}: {self.status}'
+
+
 class CourseEnrollment(TimeStampedModel):
     """
     Tracks which courses a student is preparing for.
@@ -302,4 +366,3 @@ class CourseEnrollment(TimeStampedModel):
 
     def __str__(self):
         return f"{self.student.user.email} - {self.course.name}"
-

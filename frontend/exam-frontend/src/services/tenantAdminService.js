@@ -91,6 +91,11 @@ export const tenantAdminService = {
         return response.data
     },
 
+    updateRegistrationSettings: async (registrationSettings) => {
+        const response = await api.patch('/tenant-admin/settings/', { registration_settings: registrationSettings })
+        return response.data
+    },
+
     // Custom display names for features: { feature_key: 'Custom Name' }.
     // An empty string resets that feature back to the platform default name.
     updateFeatureLabels: async (featureLabels) => {

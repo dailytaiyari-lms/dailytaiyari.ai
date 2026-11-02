@@ -70,6 +70,26 @@ class Tenant(models.Model):
         },
     }
 
+    # Fixed catalogue of profile fields a tenant may collect during public
+    # registration. Tenants may only enable a known key and make it required;
+    # labels, types and options remain platform-controlled.
+    REGISTRATION_FIELD_CHOICES = {
+        'phone': {'label': 'Phone number', 'type': 'phone', 'default_enabled': True},
+        'date_of_birth': {'label': 'Date of birth', 'type': 'date'},
+        'gender': {'label': 'Gender', 'type': 'select'},
+        'preferred_language': {'label': 'Preferred language', 'type': 'select'},
+        'grade': {'label': 'Grade / Class', 'type': 'select'},
+        'board': {'label': 'Board / University', 'type': 'select'},
+        'school': {'label': 'School / College / Institute', 'type': 'text'},
+        'coaching': {'label': 'Coaching institute', 'type': 'text'},
+        'medium': {'label': 'Study medium', 'type': 'select'},
+        'stream': {'label': 'Stream / Department', 'type': 'text'},
+        'city': {'label': 'City', 'type': 'text'},
+        'state': {'label': 'State', 'type': 'text'},
+        'admission_number': {'label': 'Admission / Roll number', 'type': 'text'},
+        'batch_section': {'label': 'Batch / Section', 'type': 'text'},
+    }
+
     # Canonical list of selectable colour themes. Keys are stable identifiers the
     # frontend maps to a full colour palette; values are the human-readable
     # labels shown in the tenant-admin settings UI. Keep in sync with the
@@ -177,6 +197,7 @@ class Tenant(models.Model):
     # fall back to the declared default in ``ADVANCED_SETTING_CHOICES``, so a new
     # switch rolls out without touching existing rows.
     advanced_settings = models.JSONField(default=dict, blank=True)
+    registration_settings = models.JSONField(default=dict, blank=True)
 
     # ── Suspension (super-admin freeze) ────────────────────────────────────
     # A suspended tenant stays ``is_active`` (so its public config, and thus the
@@ -333,6 +354,45 @@ class Tenant(models.Model):
     def advanced_setting(self, key):
         """Effective value of one advanced switch (False for unknown keys)."""
         return self.get_advanced_settings().get(key, False)
+
+    # ── Registration fields ────────────────────────────────────────────────
+    def get_registration_settings(self):
+        """Return the effective, sanitized registration field configuration."""
+        stored = self.registration_settings or {}
+        fields = {}
+        for key, spec in self.REGISTRATION_FIELD_CHOICES.items():
+            value = stored.get(key) if isinstance(stored.get(key), dict) else {}
+            enabled = bool(value.get('enabled', spec.get('default_enabled', False)))
+            fields[key] = {
+                'enabled': enabled,
+                'required': bool(value.get('required', False)) if enabled else False,
+            }
+        guardian = stored.get('guardian_consent')
+        guardian = guardian if isinstance(guardian, dict) else {}
+        guardian_enabled = bool(guardian.get('enabled', False))
+        if guardian_enabled:
+            fields['date_of_birth'] = {'enabled': True, 'required': True}
+        return {
+            'fields': fields,
+            'guardian_consent': {'enabled': guardian_enabled},
+        }
+
+    def public_registration_schema(self):
+        """Registration schema safe to expose to anonymous tenant visitors."""
+        settings = self.get_registration_settings()
+        return {
+            'fields': [
+                {
+                    'key': key,
+                    'label': spec['label'],
+                    'type': spec['type'],
+                    **settings['fields'][key],
+                }
+                for key, spec in self.REGISTRATION_FIELD_CHOICES.items()
+                if settings['fields'][key]['enabled']
+            ],
+            'guardian_consent': settings['guardian_consent'],
+        }
 
     # ── Quotas & billing helpers (Phase 2) ─────────────────────────────────
     def usage_counts(self):

@@ -8,6 +8,7 @@ import AuthLayout from './components/layout/AuthLayout'
 import AdminLayout from './components/layout/AdminLayout'
 import SuspensionOverlay from './components/layout/SuspensionOverlay'
 import VerificationGate from './components/layout/VerificationGate'
+import ExistingStudentConsentNotice from './components/layout/ExistingStudentConsentNotice'
 import LoginGate from './components/auth/LoginGate'
 
 // Auth Pages
@@ -17,6 +18,8 @@ import VerifyEmail from './pages/auth/VerifyEmail'
 import ForgotPassword from './pages/auth/ForgotPassword'
 import ResetPassword from './pages/auth/ResetPassword'
 import Onboarding from './pages/auth/Onboarding'
+import GuardianConsent from './pages/auth/GuardianConsent'
+import RegistrationPending from './pages/auth/RegistrationPending'
 
 // Main Pages
 import Dashboard from './pages/Dashboard'
@@ -85,10 +88,14 @@ import LegalPage from './pages/LegalPage'
 
 // Protected Route Component
 const ProtectedRoute = ({ children }) => {
-  const { isAuthenticated, isOnboarded } = useAuthStore()
+  const { user, isAuthenticated, isOnboarded } = useAuthStore()
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />
+  }
+
+  if (user?.guardian_consent_required && !user?.guardian_consent_granted_at) {
+    return <Navigate to="/registration-pending" replace />
   }
 
   if (!isOnboarded) {
@@ -103,8 +110,11 @@ const ProtectedRoute = ({ children }) => {
 // are still routed to onboarding. Pages that require login gate themselves via
 // <LoginGate>, which shows a blurred screen + login prompt to anonymous users.
 const AppShell = () => {
-  const { isAuthenticated, isOnboarded } = useAuthStore()
+  const { user, isAuthenticated, isOnboarded } = useAuthStore()
 
+  if (isAuthenticated && user?.guardian_consent_required && !user?.guardian_consent_granted_at) {
+    return <Navigate to="/registration-pending" replace />
+  }
   if (isAuthenticated && !isOnboarded) {
     return <Navigate to="/onboarding" replace />
   }
@@ -116,11 +126,14 @@ const AppShell = () => {
 // authenticated (onboarded) users are sent to their dashboard. Admins can
 // still preview the live landing via `/?preview=1`.
 const RootRoute = () => {
-  const { isAuthenticated, isOnboarded } = useAuthStore()
+  const { user, isAuthenticated, isOnboarded } = useAuthStore()
   const [searchParams] = useSearchParams()
   const preview = searchParams.get('preview') === '1'
   if (preview) {
     return <LandingPage />
+  }
+  if (isAuthenticated && user?.guardian_consent_required && !user?.guardian_consent_granted_at) {
+    return <Navigate to="/registration-pending" replace />
   }
   // Authenticated users who haven't finished onboarding still need to complete
   // it first; everyone else (anonymous or fully logged-in) sees the public
@@ -161,7 +174,11 @@ const EditorRoute = ({ children }) => {
 
 // Public Route (redirect if authenticated)
 const PublicRoute = ({ children }) => {
-  const { isAuthenticated, isOnboarded } = useAuthStore()
+  const { user, isAuthenticated, isOnboarded } = useAuthStore()
+
+  if (isAuthenticated && user?.guardian_consent_required && !user?.guardian_consent_granted_at) {
+    return <Navigate to="/registration-pending" replace />
+  }
 
   if (isAuthenticated && isOnboarded) {
     return <Navigate to="/dashboard" replace />
@@ -199,6 +216,7 @@ function App() {
     <>
       <SuspensionOverlay />
       <VerificationGate />
+      <ExistingStudentConsentNotice />
       <Routes>
         {/* Auth Routes */}
         <Route element={<AuthLayout />}>
@@ -243,7 +261,9 @@ function App() {
             }
           />
           <Route path="/onboarding" element={<Onboarding />} />
+          <Route path="/guardian-consent/:token" element={<GuardianConsent />} />
         </Route>
+        <Route path="/registration-pending" element={<RegistrationPending />} />
 
         {/* Main App Routes */}
         <Route element={<AppShell />}>
@@ -357,4 +377,3 @@ function App() {
 }
 
 export default App
-

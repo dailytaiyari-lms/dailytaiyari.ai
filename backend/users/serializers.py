@@ -68,10 +68,32 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     """Serializer for user registration."""
     password = serializers.CharField(write_only=True, min_length=8)
     password_confirm = serializers.CharField(write_only=True)
+    date_of_birth = serializers.DateField(write_only=True, required=False, allow_null=True)
+    gender = serializers.ChoiceField(write_only=True, required=False, allow_blank=True, choices=StudentProfile.GENDER_CHOICES)
+    grade = serializers.ChoiceField(write_only=True, required=False, allow_blank=True, choices=StudentProfile.GRADE_CHOICES)
+    board = serializers.ChoiceField(write_only=True, required=False, allow_blank=True, choices=StudentProfile.BOARD_CHOICES)
+    medium = serializers.ChoiceField(write_only=True, required=False, allow_blank=True, choices=StudentProfile.MEDIUM_CHOICES)
+    school = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=200)
+    coaching = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=200)
+    stream = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=100)
+    city = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=100)
+    state = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=100)
+    admission_number = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=100)
+    batch_section = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=100)
+    guardian_name = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=200)
+    guardian_email = serializers.EmailField(write_only=True, required=False, allow_blank=True)
+    guardian_phone = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=15)
+    guardian_relationship = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=50)
 
     class Meta:
         model = User
-        fields = ['email', 'first_name', 'last_name', 'phone', 'password', 'password_confirm']
+        fields = [
+            'email', 'first_name', 'last_name', 'phone', 'preferred_language',
+            'password', 'password_confirm', 'date_of_birth', 'gender', 'grade',
+            'board', 'school', 'coaching', 'medium', 'stream', 'city', 'state',
+            'admission_number', 'batch_section', 'guardian_name', 'guardian_email',
+            'guardian_phone', 'guardian_relationship',
+        ]
 
     def validate_email(self, value):
         """Reject duplicate emails within the tenant with a clean 400 instead of
@@ -90,6 +112,35 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         if attrs['password'] != attrs['password_confirm']:
             raise serializers.ValidationError({'password_confirm': 'Passwords do not match'})
+        request = self.context.get('request')
+        tenant = getattr(request, 'tenant', None)
+        settings = tenant.get_registration_settings() if tenant else {
+            'fields': {}, 'guardian_consent': {'enabled': False},
+        }
+        errors = {}
+        for key, config in settings['fields'].items():
+            if not config['enabled']:
+                attrs.pop(key, None)
+            elif config['required'] and attrs.get(key) in (None, ''):
+                errors[key] = 'This field is required by your institution.'
+
+        guardian_required = False
+        dob = attrs.get('date_of_birth')
+        if settings['guardian_consent']['enabled'] and dob:
+            from django.utils import timezone
+            today = timezone.localdate()
+            age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+            guardian_required = age < 18
+        if guardian_required:
+            for key in ('guardian_name', 'guardian_email', 'guardian_relationship'):
+                if not attrs.get(key):
+                    errors[key] = 'Required for students under 18.'
+        else:
+            for key in ('guardian_name', 'guardian_email', 'guardian_phone', 'guardian_relationship'):
+                attrs.pop(key, None)
+        if errors:
+            raise serializers.ValidationError(errors)
+        attrs['_guardian_required'] = guardian_required
         return attrs
 
     def create(self, validated_data):
@@ -97,6 +148,18 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         password = validated_data.pop('password')
         validated_data.pop('password_confirm')
         tenant = validated_data.pop('tenant')
+        guardian_required = validated_data.pop('_guardian_required', False)
+        profile_fields = {
+            key: validated_data.pop(key)
+            for key in (
+                'date_of_birth', 'gender', 'grade', 'board', 'school', 'coaching',
+                'medium', 'stream', 'city', 'state', 'admission_number', 'batch_section',
+            )
+            if key in validated_data
+        }
+        for key in ('guardian_name', 'guardian_email', 'guardian_phone', 'guardian_relationship'):
+            validated_data.pop(key, None)
+        validated_data['guardian_consent_required'] = guardian_required
         try:
             user = User.objects.create_user(password=password, tenant=tenant, **validated_data)
         except IntegrityError:
@@ -104,6 +167,11 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {'email': ['An account with this email already exists. Please sign in instead.']}
             )
+        if profile_fields:
+            profile = user.profile
+            for key, value in profile_fields.items():
+                setattr(profile, key, value)
+            profile.save(update_fields=[*profile_fields.keys(), 'updated_at'])
         return user
 
 
@@ -153,12 +221,15 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             'id', 'email', 'first_name', 'last_name', 'full_name', 'role', 'is_active', 'is_suspended',
-            'is_email_verified',
+            'is_email_verified', 'guardian_consent_required', 'guardian_consent_granted_at',
             'phone', 'avatar', 'is_onboarded', 'preferred_language',
             'notification_enabled', 'dark_mode', 'created_at', 'last_active'
         ]
 
-        read_only_fields = ['id', 'email', 'created_at', 'last_active', 'is_email_verified']
+        read_only_fields = [
+            'id', 'email', 'created_at', 'last_active', 'is_email_verified',
+            'guardian_consent_required', 'guardian_consent_granted_at',
+        ]
 
 
 class StudentProfileSerializer(serializers.ModelSerializer):
@@ -202,11 +273,11 @@ class StudentProfileSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'user', 
             # Personal info
-            'date_of_birth', 'bio', 'instagram_handle', 'parent_phone',
+            'date_of_birth', 'gender', 'bio', 'instagram_handle', 'parent_phone',
             # Academic info
-            'grade', 'school', 'coaching', 'board', 'medium', 'target_year',
+            'grade', 'school', 'coaching', 'stream', 'board', 'medium', 'target_year',
             # Location
-            'city', 'state',
+            'city', 'state', 'admission_number', 'batch_section',
             # Course info
             'enrolled_course_ids', 'enrolled_courses',
             # Study preferences
@@ -293,11 +364,10 @@ class AdminStudentCreateSerializer(serializers.Serializer):
     city = serializers.CharField(max_length=100, required=False, allow_blank=True, default='')
     state = serializers.CharField(max_length=100, required=False, allow_blank=True, default='')
     parent_phone = serializers.CharField(max_length=15, required=False, allow_blank=True, default='')
-    target_year = serializers.IntegerField(required=False, allow_null=True, default=None)
 
     PROFILE_FIELDS = [
         'grade', 'school', 'coaching', 'board', 'medium', 'city', 'state',
-        'parent_phone', 'target_year',
+        'parent_phone',
     ]
 
     def validate_email(self, value):
@@ -375,10 +445,8 @@ class AdminEnrollmentRequestSerializer(serializers.ModelSerializer):
 
 class OnboardingSerializer(serializers.Serializer):
     """Serializer for student onboarding — goals only (no course selection)."""
-    target_year = serializers.IntegerField(required=False)
     daily_study_goal_minutes = serializers.IntegerField(default=60)
     preferred_study_time = serializers.ChoiceField(
         choices=['morning', 'afternoon', 'evening', 'night'],
         default='evening'
     )
-

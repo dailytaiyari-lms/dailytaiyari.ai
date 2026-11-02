@@ -1,9 +1,12 @@
 """
 Views for user authentication and profile management.
 """
+import hashlib
 import logging
+import secrets
+from datetime import timedelta
 
-from rest_framework import status, generics, permissions, filters
+from rest_framework import status, generics, permissions, filters, serializers
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.decorators import action
@@ -13,7 +16,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.db import transaction
 
-from .models import StudentProfile, CourseEnrollment
+from .models import StudentProfile, CourseEnrollment, GuardianConsent
 from .serializers import (
     CustomTokenObtainPairSerializer,
     UserRegistrationSerializer,
@@ -38,6 +41,92 @@ from core.views import TenantAwareViewSet, TenantAwareReadOnlyViewSet
 User = get_user_model()
 
 logger = logging.getLogger(__name__)
+
+
+def _guardian_consent_text(tenant, student):
+    return (
+        f"I confirm that I am at least 18 years old and am the parent or lawful "
+        f"guardian of {student.first_name or 'the student'}. I have read "
+        f"{tenant.name}'s Privacy Notice and consent to the processing described."
+    )
+
+
+def _issue_guardian_consent(user, guardian_data):
+    """Create a single-use guardian approval link and send a tenant-branded email."""
+    from django.utils.html import escape
+    from notifications.emails import send_branded_email, tenant_link
+
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    consent, _ = GuardianConsent.objects.update_or_create(
+        user=user,
+        defaults={
+            'tenant': user.tenant,
+            'guardian_name': guardian_data['guardian_name'],
+            'guardian_email': guardian_data['guardian_email'],
+            'guardian_phone': guardian_data.get('guardian_phone', ''),
+            'relationship': guardian_data['guardian_relationship'],
+            'status': GuardianConsent.STATUS_PENDING,
+            'token_hash': token_hash,
+            'expires_at': timezone.now() + timedelta(hours=24),
+            'email_verified_at': None,
+            'granted_at': None,
+            'withdrawn_at': None,
+            'consent_text_hash': '',
+        },
+    )
+    approval_url = tenant_link(user.tenant, f'/guardian-consent/{raw_token}')
+    student_name = user.first_name or 'the student'
+    body_html = (
+        f'<p style="margin:0 0 16px;">Hi {escape(consent.guardian_name)},</p>'
+        f'<p style="margin:0 0 16px;">{escape(student_name)} has requested to '
+        f'create a learning account with {escape(user.tenant.name)}.</p>'
+        '<p style="margin:0;">Please review the privacy notice and approve the '
+        'account. This link expires in 24 hours.</p>'
+    )
+    return send_branded_email(
+        user.tenant,
+        consent.guardian_email,
+        subject=f'Approve {student_name}’s {user.tenant.name} account',
+        heading='Parent or guardian approval',
+        body_html=body_html,
+        cta_text='Review and approve',
+        cta_url=approval_url,
+    )
+
+
+def _existing_student_compliance(user):
+    """Derive reminder-only compliance for students created before enforcement."""
+    tenant = user.tenant
+    if not tenant or not tenant.get_registration_settings()['guardian_consent']['enabled']:
+        return {'status': 'not_required'}
+    if user.role != 'student':
+        return {'status': 'not_required'}
+
+    profile = getattr(user, 'profile', None)
+    if not profile or not profile.date_of_birth:
+        return {'status': 'date_of_birth_required'}
+
+    today = timezone.localdate()
+    dob = profile.date_of_birth
+    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+    if age >= 18:
+        return {'status': 'not_required'}
+
+    consent = getattr(user, 'guardian_consent', None)
+    if not consent:
+        return {'status': 'guardian_details_required'}
+    if consent.status == GuardianConsent.STATUS_GRANTED:
+        return {'status': 'compliant'}
+
+    guardian_email = consent.guardian_email
+    if '@' in guardian_email:
+        local, domain = guardian_email.split('@', 1)
+        guardian_email = f"{local[:1]}***@{domain}"
+    return {
+        'status': 'guardian_approval_pending',
+        'guardian_email': guardian_email,
+    }
 
 
 class StudentRecordsPagination(PageNumberPagination):
@@ -74,13 +163,20 @@ class RegisterView(generics.CreateAPIView):
         if not request.tenant.can_add('students'):
             return Response(
                 {'error': 'This academy has reached its student capacity. '
-                          'Please contact the DailyTaiyari team.',
+                          'Please contact your institution administrator.',
                  'code': 'quota_exceeded'},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        guardian_data = {
+            key: serializer.validated_data.get(key, '')
+            for key in (
+                'guardian_name', 'guardian_email', 'guardian_phone',
+                'guardian_relationship',
+            )
+        }
         user = serializer.save(tenant=request.tenant)
 
         # Kick off email verification.
@@ -91,11 +187,193 @@ class RegisterView(generics.CreateAPIView):
             # user can request a fresh code via the resend endpoint.
             pass
 
+        guardian_email_sent = None
+        if user.guardian_consent_required:
+            try:
+                guardian_email_sent = _issue_guardian_consent(user, guardian_data)
+            except Exception:
+                logger.exception('Failed to issue guardian consent for %s', user.email)
+                guardian_email_sent = False
+
         return Response({
             'message': 'Registration successful. Please check your email for a verification code.',
             'requires_email_verification': True,
+            'requires_guardian_consent': user.guardian_consent_required,
+            'guardian_email_sent': guardian_email_sent,
             'user': UserSerializer(user).data
         }, status=status.HTTP_201_CREATED)
+
+
+class GuardianConsentView(APIView):
+    """Public, token-authenticated guardian approval page."""
+    permission_classes = [permissions.AllowAny]
+
+    def _get_consent(self, request, token):
+        tenant = getattr(request, 'tenant', None)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        return GuardianConsent.objects.select_related('user', 'tenant').filter(
+            token_hash=token_hash,
+            tenant=tenant,
+        ).first()
+
+    def get(self, request, token):
+        consent = self._get_consent(request, token)
+        if not consent or consent.status != GuardianConsent.STATUS_PENDING:
+            return Response({'error': 'This approval link is invalid or has already been used.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if consent.is_expired():
+            return Response({'error': 'This approval link has expired.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        user = consent.user
+        masked_email = user.email
+        if '@' in masked_email:
+            local, domain = masked_email.split('@', 1)
+            masked_email = f"{local[:1]}***@{domain}"
+        return Response({
+            'tenant_name': consent.tenant.name,
+            'student_name': user.first_name or 'Student',
+            'student_email': masked_email,
+            'guardian_name': consent.guardian_name,
+            'consent_text': _guardian_consent_text(consent.tenant, user),
+        })
+
+    def post(self, request, token):
+        consent = self._get_consent(request, token)
+        if not consent or consent.status != GuardianConsent.STATUS_PENDING:
+            return Response({'error': 'This approval link is invalid or has already been used.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if consent.is_expired():
+            return Response({'error': 'This approval link has expired.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        required = ('adult_confirmed', 'guardian_confirmed', 'privacy_accepted')
+        if not all(request.data.get(key) is True for key in required):
+            return Response({'error': 'All confirmations are required.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        now = timezone.now()
+        text = _guardian_consent_text(consent.tenant, consent.user)
+        consent.status = GuardianConsent.STATUS_GRANTED
+        consent.email_verified_at = now
+        consent.granted_at = now
+        consent.consent_text_hash = hashlib.sha256(text.encode()).hexdigest()
+        consent.save(update_fields=[
+            'status', 'email_verified_at', 'granted_at', 'consent_text_hash', 'updated_at',
+        ])
+        consent.user.guardian_consent_granted_at = now
+        consent.user.save(update_fields=['guardian_consent_granted_at'])
+        return Response({'message': 'The student account has been approved.'})
+
+
+class GuardianConsentStatusView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        consent = getattr(user, 'guardian_consent', None)
+        if not user.guardian_consent_required:
+            return Response({'required': False, 'status': 'not_required'})
+        guardian_email = consent.guardian_email if consent else ''
+        if '@' in guardian_email:
+            local, domain = guardian_email.split('@', 1)
+            guardian_email = f"{local[:1]}***@{domain}"
+        return Response({
+            'required': True,
+            'status': consent.status if consent else 'pending',
+            'guardian_email': guardian_email,
+            'granted': bool(user.guardian_consent_granted_at),
+        })
+
+
+class ResendGuardianConsentView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        consent = getattr(user, 'guardian_consent', None)
+        if not consent:
+            return Response({'error': 'Guardian approval is not required.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if consent.status == GuardianConsent.STATUS_GRANTED:
+            return Response({'message': 'Guardian approval is already complete.'})
+        if timezone.now() < consent.updated_at + timedelta(seconds=60):
+            return Response(
+                {'error': 'Please wait a moment before sending another approval email.'},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        sent = _issue_guardian_consent(user, {
+            'guardian_name': consent.guardian_name,
+            'guardian_email': consent.guardian_email,
+            'guardian_phone': consent.guardian_phone,
+            'guardian_relationship': consent.relationship,
+        })
+        if not sent:
+            return Response({'error': 'Could not send the approval email. Please try again.'},
+                            status=status.HTTP_502_BAD_GATEWAY)
+        return Response({'message': 'A new guardian approval email has been sent.'})
+
+
+class ExistingStudentComplianceView(APIView):
+    """Reminder-only DOB and guardian-consent flow for existing students."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        return Response(_existing_student_compliance(request.user))
+
+    def post(self, request):
+        user = request.user
+        action_name = request.data.get('action')
+
+        if action_name == 'save_date_of_birth':
+            field = serializers.DateField()
+            try:
+                dob = field.run_validation(request.data.get('date_of_birth'))
+            except serializers.ValidationError as exc:
+                return Response({'date_of_birth': exc.detail},
+                                status=status.HTTP_400_BAD_REQUEST)
+            if dob > timezone.localdate():
+                return Response({'date_of_birth': ['Date of birth cannot be in the future.']},
+                                status=status.HTTP_400_BAD_REQUEST)
+            profile = user.profile
+            profile.date_of_birth = dob
+            profile.save(update_fields=['date_of_birth', 'updated_at'])
+            return Response(_existing_student_compliance(user))
+
+        if action_name == 'request_guardian_approval':
+            current = _existing_student_compliance(user)
+            if current['status'] not in {
+                'guardian_details_required', 'guardian_approval_pending'
+            }:
+                return Response({'error': 'Guardian approval is not required.'},
+                                status=status.HTTP_400_BAD_REQUEST)
+            guardian_data = {
+                'guardian_name': str(request.data.get('guardian_name') or '').strip(),
+                'guardian_email': str(request.data.get('guardian_email') or '').strip(),
+                'guardian_phone': str(request.data.get('guardian_phone') or '').strip(),
+                'guardian_relationship': str(
+                    request.data.get('guardian_relationship') or ''
+                ).strip(),
+            }
+            errors = {}
+            for key in ('guardian_name', 'guardian_email', 'guardian_relationship'):
+                if not guardian_data[key]:
+                    errors[key] = ['This field is required.']
+            try:
+                guardian_data['guardian_email'] = serializers.EmailField().run_validation(
+                    guardian_data['guardian_email']
+                )
+            except serializers.ValidationError as exc:
+                errors['guardian_email'] = exc.detail
+            if errors:
+                return Response(errors, status=status.HTTP_400_BAD_REQUEST)
+            sent = _issue_guardian_consent(user, guardian_data)
+            if not sent:
+                return Response(
+                    {'error': 'Could not send the approval email. Please try again.'},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+            return Response(_existing_student_compliance(user))
+
+        return Response({'error': 'Unknown action.'}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class VerifyEmailView(APIView):
@@ -311,7 +589,6 @@ class OnboardingView(APIView):
         profile = user.profile
 
         # Update profile goals
-        profile.target_year = data.get('target_year')
         profile.daily_study_goal_minutes = data['daily_study_goal_minutes']
         profile.preferred_study_time = data['preferred_study_time']
         profile.save()
