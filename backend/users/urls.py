@@ -9,6 +9,10 @@ from .views import (
     RegisterView,
     VerifyEmailView,
     ResendOTPView,
+    GuardianConsentView,
+    GuardianConsentStatusView,
+    ResendGuardianConsentView,
+    ExistingStudentComplianceView,
     PasswordResetRequestView,
     PasswordResetConfirmView,
     PasswordChangeView,
@@ -34,6 +38,10 @@ urlpatterns = [
     path('register/', RegisterView.as_view(), name='register'),
     path('verify-email/', VerifyEmailView.as_view(), name='verify-email'),
     path('resend-otp/', ResendOTPView.as_view(), name='resend-otp'),
+    path('guardian-consent/status/', GuardianConsentStatusView.as_view(), name='guardian-consent-status'),
+    path('guardian-consent/resend/', ResendGuardianConsentView.as_view(), name='guardian-consent-resend'),
+    path('guardian-consent/<str:token>/', GuardianConsentView.as_view(), name='guardian-consent'),
+    path('compliance-status/', ExistingStudentComplianceView.as_view(), name='compliance-status'),
     path('password/forgot/', PasswordResetRequestView.as_view(), name='password-forgot'),
     path('password/reset/', PasswordResetConfirmView.as_view(), name='password-reset'),
     path('password/change/', PasswordChangeView.as_view(), name='password-change'),
@@ -50,5 +58,3 @@ urlpatterns = [
     # Tenant Management
     path('', include(router.urls)),
 ]
-
-

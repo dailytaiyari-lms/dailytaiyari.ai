@@ -5,12 +5,53 @@ import { useAuthStore } from '../../context/authStore'
 import { useTenantStore } from '../../context/tenantStore'
 import toast from 'react-hot-toast'
 
+const FIELD_OPTIONS = {
+  gender: [
+    ['female', 'Female'],
+    ['male', 'Male'],
+    ['non_binary', 'Non-binary'],
+    ['prefer_not_to_say', 'Prefer not to say'],
+    ['other', 'Other'],
+  ],
+  preferred_language: [['en', 'English'], ['hi', 'Hindi']],
+  grade: [
+    ['6', 'Class 6'], ['7', 'Class 7'], ['8', 'Class 8'], ['9', 'Class 9'],
+    ['10', 'Class 10'], ['11', 'Class 11'], ['12', 'Class 12'],
+    ['graduate', 'Graduate'], ['other', 'Other'],
+  ],
+  board: [
+    ['cbse', 'CBSE'], ['icse', 'ICSE'], ['state', 'State Board'],
+    ['ib', 'IB'], ['igcse', 'IGCSE'], ['other', 'Other'],
+  ],
+  medium: [
+    ['english', 'English'], ['hindi', 'Hindi'],
+    ['bilingual', 'Bilingual'], ['other', 'Other'],
+  ],
+}
+
 const Register = () => {
   const [formData, setFormData] = useState({
     first_name: '',
     last_name: '',
     email: '',
     phone: '',
+    date_of_birth: '',
+    gender: '',
+    preferred_language: 'en',
+    grade: '',
+    board: '',
+    school: '',
+    coaching: '',
+    medium: '',
+    stream: '',
+    city: '',
+    state: '',
+    admission_number: '',
+    batch_section: '',
+    guardian_name: '',
+    guardian_email: '',
+    guardian_phone: '',
+    guardian_relationship: '',
     password: '',
     password_confirm: '',
   })
@@ -18,6 +59,15 @@ const Register = () => {
   const { register, isLoading, error, clearError } = useAuthStore()
   const { tenant } = useTenantStore()
   const navigate = useNavigate()
+  const registrationFields = tenant?.registration_schema?.fields || []
+  const guardianConsentEnabled = Boolean(tenant?.registration_schema?.guardian_consent?.enabled)
+  const birthDate = formData.date_of_birth ? new Date(`${formData.date_of_birth}T00:00:00`) : null
+  const today = new Date()
+  const age = birthDate
+    ? today.getFullYear() - birthDate.getFullYear() -
+      (today < new Date(today.getFullYear(), birthDate.getMonth(), birthDate.getDate()) ? 1 : 0)
+    : null
+  const needsGuardian = guardianConsentEnabled && age !== null && age < 18
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value })
@@ -37,7 +87,25 @@ const Register = () => {
       return
     }
 
-    const result = await register(formData)
+    const payload = {
+      first_name: formData.first_name,
+      last_name: formData.last_name,
+      email: formData.email,
+      password: formData.password,
+      password_confirm: formData.password_confirm,
+    }
+    registrationFields.forEach((field) => {
+      const value = formData[field.key]
+      if (value !== '' && value !== null && value !== undefined) payload[field.key] = value
+    })
+    if (needsGuardian) {
+      payload.guardian_name = formData.guardian_name
+      payload.guardian_email = formData.guardian_email
+      payload.guardian_phone = formData.guardian_phone
+      payload.guardian_relationship = formData.guardian_relationship
+    }
+
+    const result = await register(payload)
     if (result.success) {
       toast.success('Account created! Check your email for a verification code ✉️')
       navigate('/verify-email', {
@@ -141,18 +209,76 @@ const Register = () => {
           />
         </div>
 
-        {/* Phone */}
-        <div>
-          <label className="block text-sm font-medium mb-2">Phone Number</label>
-          <input
-            type="tel"
-            name="phone"
-            value={formData.phone}
-            onChange={handleChange}
-            placeholder="+91 9876543210"
-            className="input"
-          />
-        </div>
+        {registrationFields.length > 0 && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {registrationFields.map((field) => {
+              const options = FIELD_OPTIONS[field.key]
+              const type = field.type === 'phone' ? 'tel' : field.type === 'date' ? 'date' : 'text'
+              return (
+                <div key={field.key} className={['school', 'coaching'].includes(field.key) ? 'sm:col-span-2' : ''}>
+                  <label className="block text-sm font-medium mb-2">
+                    {field.label}{field.required ? ' *' : ''}
+                  </label>
+                  {options ? (
+                    <select
+                      name={field.key}
+                      value={formData[field.key] || ''}
+                      onChange={handleChange}
+                      className="input"
+                      required={field.required}
+                    >
+                      <option value="">Select</option>
+                      {options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    </select>
+                  ) : (
+                    <input
+                      type={type}
+                      name={field.key}
+                      value={formData[field.key] || ''}
+                      onChange={handleChange}
+                      className="input"
+                      required={field.required}
+                    />
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {needsGuardian && (
+          <div className="rounded-2xl border border-primary-200 dark:border-primary-900/50 bg-primary-50/50 dark:bg-primary-900/10 p-4 space-y-4">
+            <div>
+              <h3 className="font-semibold">Parent or guardian approval</h3>
+              <p className="text-sm text-surface-500 mt-1">
+                Because the student is under 18, we’ll email a short approval request to a parent or lawful guardian.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">Guardian Name *</label>
+                <input name="guardian_name" value={formData.guardian_name} onChange={handleChange} className="input" required />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Relationship *</label>
+                <select name="guardian_relationship" value={formData.guardian_relationship} onChange={handleChange} className="input" required>
+                  <option value="">Select</option>
+                  <option value="parent">Parent</option>
+                  <option value="legal_guardian">Legal guardian</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Guardian Email *</label>
+                <input type="email" name="guardian_email" value={formData.guardian_email} onChange={handleChange} className="input" required />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Guardian Phone</label>
+                <input type="tel" name="guardian_phone" value={formData.guardian_phone} onChange={handleChange} className="input" />
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Password */}
         <div>
@@ -221,9 +347,9 @@ const Register = () => {
         {/* Terms */}
         <p className="text-xs text-center text-surface-500">
           By creating an account, you agree to our{' '}
-          <a href="#" className="text-primary-600 hover:underline">Terms of Service</a>
+          <Link to="/terms" target="_blank" className="text-primary-600 hover:underline">Terms of Service</Link>
           {' '}and{' '}
-          <a href="#" className="text-primary-600 hover:underline">Privacy Policy</a>
+          <Link to="/privacy-policy" target="_blank" className="text-primary-600 hover:underline">Privacy Policy</Link>
         </p>
       </form>
 
@@ -239,4 +365,3 @@ const Register = () => {
 }
 
 export default Register
-

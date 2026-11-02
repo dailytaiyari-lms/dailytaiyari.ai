@@ -77,6 +77,7 @@ class TenantDetailView(APIView):
                 "auth_panel": tenant.auth_panel or {},
                 "features": tenant.get_features(),
                 "feature_labels": tenant.get_feature_labels(),
+                "registration_schema": tenant.public_registration_schema(),
                 "is_suspended": tenant.is_suspended,
                 "suspension_message": tenant.suspension_message,
                 "is_frozen": _frozen,

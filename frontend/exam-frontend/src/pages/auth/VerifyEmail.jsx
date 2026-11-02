@@ -50,8 +50,9 @@ const VerifyEmail = () => {
     if (password) {
       const loginResult = await login(email, password)
       if (loginResult.success) {
-        const { isOnboarded } = useAuthStore.getState()
-        navigate(isOnboarded ? '/dashboard' : '/onboarding', { replace: true })
+        const { user, isOnboarded } = useAuthStore.getState()
+        const pendingGuardian = user?.guardian_consent_required && !user?.guardian_consent_granted_at
+        navigate(pendingGuardian ? '/registration-pending' : isOnboarded ? '/dashboard' : '/onboarding', { replace: true })
         return
       }
     }

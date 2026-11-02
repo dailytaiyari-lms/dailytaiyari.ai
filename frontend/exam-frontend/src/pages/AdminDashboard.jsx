@@ -16,6 +16,7 @@ import MarketingPromotions from '../components/admin/MarketingPromotions'
 import Announcements from '../components/admin/Announcements'
 import EmailSettings from '../components/admin/EmailSettings'
 import AdvancedSettings from '../components/admin/AdvancedSettings'
+import RegistrationSettings from '../components/admin/RegistrationSettings'
 import AIFeatures from '../components/admin/AIFeatures'
 import {
     Users,
@@ -654,7 +655,7 @@ const CreateStudentModal = ({ courses, onClose }) => {
     const [form, setForm] = useState({
         first_name: '', last_name: '', email: '', phone: '', role: 'student',
         grade: '', board: '', medium: 'english', school: '', coaching: '',
-        city: '', state: '', parent_phone: '', target_year: '',
+        city: '', state: '', parent_phone: '',
     })
     const [courseIds, setCourseIds] = useState([])
     const [sendEmail, setSendEmail] = useState(true)
@@ -709,7 +710,6 @@ const CreateStudentModal = ({ courses, onClose }) => {
             city: form.city.trim(),
             state: form.state.trim(),
             parent_phone: form.parent_phone.trim(),
-            target_year: form.target_year === '' ? null : Number(form.target_year),
         })
     }
 
@@ -777,7 +777,6 @@ const CreateStudentModal = ({ courses, onClose }) => {
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <Field label="Grade / Class"><SelectInput options={GRADE_OPTIONS} value={form.grade} onChange={set('grade')} /></Field>
                             <Field label="Board / University"><SelectInput options={BOARD_OPTIONS} value={form.board} onChange={set('board')} /></Field>
-                            <Field label="Target Year"><TextInput type="number" value={form.target_year} onChange={set('target_year')} placeholder="e.g. 2026" /></Field>
                             <Field label="Study Medium"><SelectInput options={MEDIUM_OPTIONS} value={form.medium} onChange={set('medium')} /></Field>
                             <Field label="School / Institute"><TextInput value={form.school} onChange={set('school')} placeholder="School name" /></Field>
                             <Field label="Coaching Center"><TextInput value={form.coaching} onChange={set('coaching')} placeholder="Coaching name" /></Field>
@@ -2772,6 +2771,7 @@ const TenantSettings = () => {
                     { id: 'integrations', label: 'Integrations', icon: Video },
                     { id: 'email', label: 'Email & Notifications', icon: Mail },
                     { id: 'advanced', label: 'Advanced', icon: Sparkles },
+                    { id: 'registration', label: 'Registration', icon: UserPlus },
                 ].map((st) => {
                     const active = subTab === st.id
                     return (
@@ -2796,6 +2796,8 @@ const TenantSettings = () => {
                 <EmailSettings settings={settings} />
             ) : subTab === 'advanced' ? (
                 <AdvancedSettings settings={settings} />
+            ) : subTab === 'registration' ? (
+                <RegistrationSettings settings={settings} />
             ) : (
             <div className="space-y-6">
             {/* Identity — name + tagline */}

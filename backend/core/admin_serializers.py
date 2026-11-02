@@ -17,6 +17,7 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
     features = serializers.JSONField(required=False)
     feature_labels = serializers.JSONField(required=False)
     advanced_settings = serializers.JSONField(required=False)
+    registration_settings = serializers.JSONField(required=False)
     auth_panel = serializers.JSONField(required=False)
     logo = serializers.ImageField(required=False, allow_null=True)
     favicon = serializers.ImageField(required=False, allow_null=True)
@@ -26,7 +27,7 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'tagline', 'subdomain', 'logo', 'favicon', 'theme',
             'show_name', 'features', 'feature_labels', 'advanced_settings',
-            'auth_panel',
+            'registration_settings', 'auth_panel',
             'request_enrollment_free', 'request_enrollment_paid',
             'notification_email',
         ]
@@ -128,6 +129,26 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
             if key in Tenant.ADVANCED_SETTING_CHOICES
         }
 
+    def validate_registration_settings(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError('registration_settings must be an object.')
+        cleaned = {}
+        for key, config in value.items():
+            if key == 'guardian_consent':
+                if isinstance(config, dict):
+                    cleaned[key] = {'enabled': bool(config.get('enabled', False))}
+                continue
+            if key not in Tenant.REGISTRATION_FIELD_CHOICES or not isinstance(config, dict):
+                continue
+            enabled = bool(config.get('enabled', False))
+            cleaned[key] = {
+                'enabled': enabled,
+                'required': bool(config.get('required', False)) if enabled else False,
+            }
+        if cleaned.get('guardian_consent', {}).get('enabled'):
+            cleaned['date_of_birth'] = {'enabled': True, 'required': True}
+        return cleaned
+
     def validate_auth_panel(self, value):
         """Sanitise the login/register branding panel content.
 
@@ -223,6 +244,15 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
             }
             for key, spec in Tenant.ADVANCED_SETTING_CHOICES.items()
         ]
+        data['registration_settings'] = instance.get_registration_settings()
+        data['available_registration_fields'] = [
+            {
+                'key': key,
+                'label': spec['label'],
+                'type': spec['type'],
+            }
+            for key, spec in Tenant.REGISTRATION_FIELD_CHOICES.items()
+        ]
         data['has_active_payment_gateway'] = instance.has_active_payment_gateway
         # Read-only plan + quota snapshot so the tenant admin can see their
         # plan, usage against caps, and any billing freeze (all managed by the
@@ -256,6 +286,11 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
         if advanced_settings is not None:
             instance.advanced_settings = {
                 **(instance.advanced_settings or {}), **advanced_settings,
+            }
+        registration_settings = validated_data.pop('registration_settings', None)
+        if registration_settings is not None:
+            instance.registration_settings = {
+                **(instance.registration_settings or {}), **registration_settings,
             }
         auth_panel = validated_data.pop('auth_panel', None)
         if auth_panel is not None:

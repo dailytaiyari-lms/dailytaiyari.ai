@@ -63,11 +63,43 @@ export const useAuthStore = create(
           set({ isLoading: false })
           return { success: true, needsVerification: true, email: data.email }
         } catch (error) {
-          const message = error.response?.data?.email?.[0] ||
-            error.response?.data?.detail ||
+          const data = error.response?.data || {}
+          const firstValue = Object.values(data)[0]
+          const message = data.email?.[0] ||
+            data.detail ||
+            (Array.isArray(firstValue) ? firstValue[0] : firstValue) ||
             'Registration failed'
           set({ error: message, isLoading: false })
           return { success: false, error: message }
+        }
+      },
+
+      fetchGuardianConsentStatus: async () => {
+        try {
+          const response = await api.get('/auth/guardian-consent/status/')
+          if (response.data?.granted) {
+            const current = get().user
+            set({
+              user: current
+                ? { ...current, guardian_consent_granted_at: new Date().toISOString() }
+                : current,
+            })
+          }
+          return response.data
+        } catch {
+          return null
+        }
+      },
+
+      resendGuardianConsent: async () => {
+        try {
+          await api.post('/auth/guardian-consent/resend/')
+          return { success: true }
+        } catch (error) {
+          return {
+            success: false,
+            error: error.response?.data?.error || 'Could not resend the approval email',
+          }
         }
       },
 
@@ -257,4 +289,3 @@ export const useAuthStore = create(
     }
   )
 )
-
