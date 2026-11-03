@@ -11,6 +11,7 @@ fragment (``body_html``) plus an optional CTA button.
 import logging
 import re
 from email.utils import formataddr, parseaddr
+from urllib.parse import urlparse
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
@@ -57,21 +58,82 @@ def tenant_logo_url(tenant):
     return ''
 
 
-def tenant_frontend_origin(tenant):
+def _normalize_frontend_origin(value):
+    origin = str(value or '').strip().rstrip('/')
+    if not origin:
+        return ''
+    parsed = urlparse(origin)
+    if (
+        parsed.scheme not in {'http', 'https'}
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+        or parsed.path not in {'', '/'}
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+    ):
+        return ''
+    return origin
+
+
+def _request_frontend_origin(request, tenant):
+    """Return a safe browser origin for tenant-facing email links."""
+    if request is None:
+        return ''
+    origin = _normalize_frontend_origin(request.headers.get('Origin'))
+    if not origin:
+        return ''
+    parsed = urlparse(origin)
+
+    configured = {
+        normalized
+        for value in (getattr(tenant, 'allowed_origins', None) or [])
+        if (normalized := _normalize_frontend_origin(value))
+    }
+    if origin in configured:
+        return origin
+
+    # A first-party host is safe only when its subdomain belongs to this tenant.
+    # Anonymous endpoints select the tenant from X-Tenant-ID, so trusting every
+    # platform subdomain would let one tenant inject its origin into another
+    # tenant's guardian email.
+    host = (parsed.hostname or '').lower()
+    subdomain = (getattr(tenant, 'subdomain', '') or '').strip().lower()
+    tenant_hosts = {
+        f'{subdomain}.dailytaiyari.in',
+        f'{subdomain}.dailytaiyari.ai',
+    } if subdomain else set()
+    if (
+        host in tenant_hosts
+        and parsed.scheme == 'https'
+        and parsed.port in {None, 443}
+    ):
+        return origin
+    return ''
+
+
+def tenant_frontend_origin(tenant, request=None):
     """Best-effort base URL of the tenant's student/admin frontend.
 
     Used to build clickable deep links in emails. Prefers the first configured
     ``allowed_origins`` entry, then a global ``FRONTEND_URL`` setting.
     """
+    request_origin = _request_frontend_origin(request, tenant)
+    if request_origin:
+        return request_origin
     origins = getattr(tenant, 'allowed_origins', None) or []
-    if isinstance(origins, (list, tuple)) and origins:
-        return str(origins[0]).rstrip('/')
-    return (getattr(settings, 'FRONTEND_URL', '') or '').rstrip('/')
+    if isinstance(origins, (list, tuple)):
+        for origin in origins:
+            normalized = _normalize_frontend_origin(origin)
+            if normalized:
+                return normalized
+    return _normalize_frontend_origin(getattr(settings, 'FRONTEND_URL', ''))
 
 
-def tenant_link(tenant, path):
+def tenant_link(tenant, path, request=None):
     """Join the tenant frontend origin with a relative path."""
-    origin = tenant_frontend_origin(tenant)
+    origin = tenant_frontend_origin(tenant, request=request)
     if not path:
         return origin
     if path.startswith('http://') or path.startswith('https://'):
@@ -79,7 +141,7 @@ def tenant_link(tenant, path):
     return f"{origin}/{path.lstrip('/')}" if origin else path
 
 
-def from_address(tenant):
+def from_address(tenant, display_name=None):
     """Sender address showing the tenant's name as the display name.
 
     The mailbox itself must stay on the platform's verified sending domain
@@ -91,7 +153,11 @@ def from_address(tenant):
     default_name, addr = parseaddr(configured)
     if not addr:
         return configured or None
-    display = (getattr(tenant, 'name', '') or '').strip() or default_name
+    display = (
+        str(display_name).strip()
+        if display_name is not None
+        else (getattr(tenant, 'name', '') or '').strip()
+    ) or default_name
     return formataddr((display, addr)) if display else addr
 
 
@@ -129,7 +195,8 @@ def celebration_body_html(tenant, body_html, *, badge='🎂', banner_text=''):
 
 
 def send_branded_email(tenant, to, subject, heading, body_html,
-                       cta_text=None, cta_url=None, preheader=None):
+                       cta_text=None, cta_url=None, preheader=None,
+                       tenant_name_override=None, hide_tenant_logo=False):
     """Render and send one branded HTML email.
 
     Returns True on success, False on failure (never raises to the caller so a
@@ -139,7 +206,10 @@ def send_branded_email(tenant, to, subject, heading, body_html,
     if not recipients:
         return False
 
-    tenant_name = getattr(tenant, 'name', '') or 'DailyTaiyari'
+    if tenant_name_override is not None:
+        tenant_name = str(tenant_name_override).strip() or 'Your institution'
+    else:
+        tenant_name = (getattr(tenant, 'name', '') or '').strip() or 'DailyTaiyari'
     context = {
         'subject': subject,
         'title': heading or subject,
@@ -149,7 +219,7 @@ def send_branded_email(tenant, to, subject, heading, body_html,
         'cta_text': cta_text,
         'cta_url': cta_url,
         'tenant_name': tenant_name,
-        'logo_url': tenant_logo_url(tenant),
+        'logo_url': '' if hide_tenant_logo else tenant_logo_url(tenant),
         'accent': _accent_for(tenant),
     }
 
@@ -169,7 +239,7 @@ def send_branded_email(tenant, to, subject, heading, body_html,
         text_parts += ['', f'{cta_text or "Open"}: {cta_url}']
     text_body = '\n'.join(p for p in text_parts if p is not None).strip()
 
-    from_email = from_address(tenant)
+    from_email = from_address(tenant, display_name=tenant_name)
     try:
         msg = EmailMultiAlternatives(
             subject=subject,

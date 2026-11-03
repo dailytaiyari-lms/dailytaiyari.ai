@@ -24,7 +24,6 @@ const Onboarding = () => {
   const { isAuthenticated, isOnboarded, completeOnboarding, isLoading } = useAuthStore()
 
   const [formData, setFormData] = useState({
-    target_year: new Date().getFullYear() + 1,
     daily_study_goal_minutes: 60,
     preferred_study_time: 'evening',
   })
@@ -119,26 +118,6 @@ const Onboarding = () => {
               </div>
             </div>
 
-            {/* Target Year */}
-            <div>
-              <label className="block text-sm font-medium mb-2">Target Year</label>
-              <select
-                value={formData.target_year}
-                onChange={(e) =>
-                  setFormData({ ...formData, target_year: parseInt(e.target.value) })
-                }
-                className="input"
-              >
-                {[0, 1, 2, 3].map((offset) => {
-                  const year = new Date().getFullYear() + offset
-                  return (
-                    <option key={year} value={year}>
-                      {year}
-                    </option>
-                  )
-                })}
-              </select>
-            </div>
           </div>
 
           <div className="flex justify-end mt-8">

@@ -19,6 +19,7 @@ export const tenantApi = axios.create({
   baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
+    ...(TENANT_ID ? { 'X-Tenant-ID': TENANT_ID } : {})
   },
 })
 
@@ -96,4 +97,3 @@ api.interceptors.response.use(
 )
 
 export default api
-

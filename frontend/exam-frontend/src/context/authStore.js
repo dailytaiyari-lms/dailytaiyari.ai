@@ -63,8 +63,11 @@ export const useAuthStore = create(
           set({ isLoading: false })
           return { success: true, needsVerification: true, email: data.email }
         } catch (error) {
-          const message = error.response?.data?.email?.[0] ||
-            error.response?.data?.detail ||
+          const data = error.response?.data || {}
+          const firstValue = Object.values(data)[0]
+          const message = data.email?.[0] ||
+            data.detail ||
+            (Array.isArray(firstValue) ? firstValue[0] : firstValue) ||
             'Registration failed'
           set({ error: message, isLoading: false })
           return { success: false, error: message }
@@ -257,4 +260,3 @@ export const useAuthStore = create(
     }
   )
 )
-

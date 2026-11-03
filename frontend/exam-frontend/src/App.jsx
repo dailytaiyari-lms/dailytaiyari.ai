@@ -8,6 +8,7 @@ import AuthLayout from './components/layout/AuthLayout'
 import AdminLayout from './components/layout/AdminLayout'
 import SuspensionOverlay from './components/layout/SuspensionOverlay'
 import VerificationGate from './components/layout/VerificationGate'
+import ExistingStudentConsentNotice from './components/layout/ExistingStudentConsentNotice'
 import LoginGate from './components/auth/LoginGate'
 
 // Auth Pages
@@ -17,6 +18,7 @@ import VerifyEmail from './pages/auth/VerifyEmail'
 import ForgotPassword from './pages/auth/ForgotPassword'
 import ResetPassword from './pages/auth/ResetPassword'
 import Onboarding from './pages/auth/Onboarding'
+import GuardianConsent from './pages/auth/GuardianConsent'
 
 // Main Pages
 import Dashboard from './pages/Dashboard'
@@ -199,6 +201,7 @@ function App() {
     <>
       <SuspensionOverlay />
       <VerificationGate />
+      <ExistingStudentConsentNotice />
       <Routes>
         {/* Auth Routes */}
         <Route element={<AuthLayout />}>
@@ -243,8 +246,8 @@ function App() {
             }
           />
           <Route path="/onboarding" element={<Onboarding />} />
+          <Route path="/guardian-consent/:token" element={<GuardianConsent />} />
         </Route>
-
         {/* Main App Routes */}
         <Route element={<AppShell />}>
           <Route path="/dashboard" element={<LoginGate><Dashboard /></LoginGate>} />
@@ -357,4 +360,3 @@ function App() {
 }
 
 export default App
-
