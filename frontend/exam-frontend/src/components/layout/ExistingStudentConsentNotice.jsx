@@ -11,6 +11,7 @@ const ExistingStudentConsentNotice = () => {
   const { tenant } = useTenantStore()
   const [status, setStatus] = useState(null)
   const [dismissed, setDismissed] = useState(false)
+  const [editingGuardian, setEditingGuardian] = useState(false)
   const [saving, setSaving] = useState(false)
   const [dateOfBirth, setDateOfBirth] = useState('')
   const [guardian, setGuardian] = useState({
@@ -21,12 +22,18 @@ const ExistingStudentConsentNotice = () => {
   })
 
   const load = async () => {
-    if (!isAuthenticated || !user || user.guardian_consent_required) return
+    if (!isAuthenticated || !user) return
+    setDismissed(false)
+    setEditingGuardian(false)
     try {
       const response = await api.get('/auth/compliance-status/')
       setStatus(response.data)
-      const key = `consent-reminder:${user.id}:${response.data.status}`
-      setDismissed(sessionStorage.getItem(key) === 'dismissed')
+      setGuardian({
+        guardian_name: response.data.guardian_name || '',
+        guardian_email: response.data.guardian_email || '',
+        guardian_phone: response.data.guardian_phone || '',
+        guardian_relationship: response.data.guardian_relationship || '',
+      })
     } catch {
       setStatus(null)
     }
@@ -37,12 +44,7 @@ const ExistingStudentConsentNotice = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated, user?.id, tenant?.registration_schema?.guardian_consent?.enabled])
 
-  const dismiss = () => {
-    if (user?.id && status?.status) {
-      sessionStorage.setItem(`consent-reminder:${user.id}:${status.status}`, 'dismissed')
-    }
-    setDismissed(true)
-  }
+  const dismiss = () => setDismissed(true)
 
   const saveDateOfBirth = async () => {
     if (!dateOfBirth) return toast.error('Enter your date of birth')
@@ -53,6 +55,7 @@ const ExistingStudentConsentNotice = () => {
         date_of_birth: dateOfBirth,
       })
       setStatus(response.data)
+      setEditingGuardian(false)
       setDismissed(false)
       if (response.data.status === 'not_required') toast.success('Date of birth saved')
     } catch (error) {
@@ -70,6 +73,7 @@ const ExistingStudentConsentNotice = () => {
         ...guardian,
       })
       setStatus(response.data)
+      setEditingGuardian(false)
       setDismissed(false)
       toast.success('Approval email sent')
     } catch (error) {
@@ -96,7 +100,6 @@ const ExistingStudentConsentNotice = () => {
   const current = status?.status
   if (
     !isAuthenticated ||
-    user?.guardian_consent_required ||
     dismissed ||
     !current ||
     ['not_required', 'compliant'].includes(current)
@@ -127,11 +130,13 @@ const ExistingStudentConsentNotice = () => {
           </>
         )}
 
-        {current === 'guardian_details_required' && (
+        {(current === 'guardian_details_required' || editingGuardian) && (
           <>
-            <h2 className="text-xl font-bold">Parent or guardian approval</h2>
+            <h2 className="text-xl font-bold">
+              {current === 'guardian_approval_pending' ? 'Change guardian details' : 'Parent or guardian approval'}
+            </h2>
             <p className="text-sm text-surface-500 mt-2">
-              Add a parent or lawful guardian’s email. They’ll receive a short approval request from {tenant?.name || 'your institution'}.
+              Add a parent or lawful guardian’s email. Sending this request replaces any earlier approval link.
             </p>
             <div className="grid sm:grid-cols-2 gap-3 mt-5">
               <input className="input" placeholder="Guardian name" value={guardian.guardian_name} onChange={(e) => setGuardian({ ...guardian, guardian_name: e.target.value })} />
@@ -145,12 +150,12 @@ const ExistingStudentConsentNotice = () => {
               <input type="tel" className="input sm:col-span-2" placeholder="Guardian phone (optional)" value={guardian.guardian_phone} onChange={(e) => setGuardian({ ...guardian, guardian_phone: e.target.value })} />
             </div>
             <button onClick={requestApproval} disabled={saving} className="btn-primary w-full py-3 mt-4">
-              {saving ? 'Sending…' : 'Send approval request'}
+              {saving ? 'Sending…' : editingGuardian ? 'Update and send approval' : 'Send approval request'}
             </button>
           </>
         )}
 
-        {current === 'guardian_approval_pending' && (
+        {current === 'guardian_approval_pending' && !editingGuardian && (
           <>
             <h2 className="text-xl font-bold">Waiting for parent approval</h2>
             <p className="text-sm text-surface-500 mt-2">
@@ -159,6 +164,9 @@ const ExistingStudentConsentNotice = () => {
             </p>
             <button onClick={resend} disabled={saving} className="btn-primary w-full py-3 mt-5">
               {saving ? 'Sending…' : 'Resend approval email'}
+            </button>
+            <button type="button" onClick={() => setEditingGuardian(true)} className="btn-secondary w-full py-3 mt-3">
+              Change guardian email or details
             </button>
           </>
         )}
