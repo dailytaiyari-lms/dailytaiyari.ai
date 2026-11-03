@@ -17,6 +17,7 @@ from django.utils import timezone
 from django.db import transaction
 
 from .models import StudentProfile, CourseEnrollment, GuardianConsent
+from .guardian_consent import guardian_consent_state
 from .serializers import (
     CustomTokenObtainPairSerializer,
     UserRegistrationSerializer,
@@ -134,37 +135,8 @@ def _issue_guardian_consent(user, guardian_data, request=None):
 
 
 def _existing_student_compliance(user):
-    """Derive reminder-only compliance for students created before enforcement."""
-    tenant = user.tenant
-    if not tenant or not tenant.get_registration_settings()['guardian_consent']['enabled']:
-        return {'status': 'not_required'}
-    if user.role != 'student':
-        return {'status': 'not_required'}
-
-    profile = getattr(user, 'profile', None)
-    if not profile or not profile.date_of_birth:
-        return {'status': 'date_of_birth_required'}
-
-    today = timezone.localdate()
-    dob = profile.date_of_birth
-    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
-    if age >= 18:
-        return {'status': 'not_required'}
-
-    consent = getattr(user, 'guardian_consent', None)
-    if not consent:
-        return {'status': 'guardian_details_required'}
-    if consent.status == GuardianConsent.STATUS_GRANTED:
-        return {'status': 'compliant'}
-
-    guardian_email = consent.guardian_email
-    if '@' in guardian_email:
-        local, domain = guardian_email.split('@', 1)
-        guardian_email = f"{local[:1]}***@{domain}"
-    return {
-        'status': 'guardian_approval_pending',
-        'guardian_email': guardian_email,
-    }
+    """Backward-compatible wrapper for the reminder-only compliance state."""
+    return guardian_consent_state(user)
 
 
 class StudentRecordsPagination(PageNumberPagination):
@@ -317,19 +289,11 @@ class GuardianConsentStatusView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        user = request.user
-        consent = getattr(user, 'guardian_consent', None)
-        if not user.guardian_consent_required:
-            return Response({'required': False, 'status': 'not_required'})
-        guardian_email = consent.guardian_email if consent else ''
-        if '@' in guardian_email:
-            local, domain = guardian_email.split('@', 1)
-            guardian_email = f"{local[:1]}***@{domain}"
+        state = guardian_consent_state(request.user, mask_email=True)
         return Response({
-            'required': True,
-            'status': consent.status if consent else 'pending',
-            'guardian_email': guardian_email,
-            'granted': bool(user.guardian_consent_granted_at),
+            **state,
+            'required': state.get('eligible') is True,
+            'granted': state['status'] == 'compliant',
         })
 
 
@@ -369,7 +333,7 @@ class ResendGuardianConsentView(APIView):
 
 
 class ExistingStudentComplianceView(APIView):
-    """Reminder-only DOB and guardian-consent flow for existing students."""
+    """Non-blocking DOB and guardian-consent reminder flow for students."""
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
@@ -772,7 +736,9 @@ class TenantStudentViewSet(TenantAwareViewSet):
 
     def get_queryset(self):
         tenant = self.request.tenant
-        qs = StudentProfile.objects.filter(user__tenant=tenant).select_related('user').prefetch_related('enrollments__course')
+        qs = StudentProfile.objects.filter(user__tenant=tenant).select_related(
+            'user', 'user__guardian_consent'
+        ).prefetch_related('enrollments__course')
 
         # Optional explicit filters (used by the admin dashboard).
         role = self.request.query_params.get('role')

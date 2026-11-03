@@ -21,7 +21,7 @@ const studyTimes = [
 
 const Onboarding = () => {
   const navigate = useNavigate()
-  const { user, isAuthenticated, isOnboarded, completeOnboarding, isLoading } = useAuthStore()
+  const { isAuthenticated, isOnboarded, completeOnboarding, isLoading } = useAuthStore()
 
   const [formData, setFormData] = useState({
     daily_study_goal_minutes: 60,
@@ -31,12 +31,10 @@ const Onboarding = () => {
   useEffect(() => {
     if (!isAuthenticated) {
       navigate('/login')
-    } else if (user?.guardian_consent_required && !user?.guardian_consent_granted_at) {
-      navigate('/registration-pending')
     } else if (isOnboarded) {
       navigate('/dashboard')
     }
-  }, [user, isAuthenticated, isOnboarded, navigate])
+  }, [isAuthenticated, isOnboarded, navigate])
 
   const handleSubmit = async () => {
     const result = await completeOnboarding(formData)

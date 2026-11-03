@@ -5,6 +5,7 @@ from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import get_user_model
 from .models import StudentProfile, CourseEnrollment
+from .guardian_consent import guardian_consent_state
 
 User = get_user_model()
 
@@ -240,6 +241,7 @@ class StudentProfileSerializer(serializers.ModelSerializer):
     xp_for_next_level = serializers.ReadOnlyField()
     enrolled_course_ids = serializers.SerializerMethodField()
     enrolled_courses = serializers.SerializerMethodField()
+    guardian_consent = serializers.SerializerMethodField()
 
     def get_enrolled_course_ids(self, obj):
         """All courses the student is enrolled in (excluding rejected requests).
@@ -264,6 +266,9 @@ class StudentProfileSerializer(serializers.ModelSerializer):
             if e.status != 'rejected'
         ]
 
+    def get_guardian_consent(self, obj):
+        return guardian_consent_state(obj.user)
+
     # Handle nullable fields that may receive empty strings from frontend
     date_of_birth = serializers.DateField(required=False, allow_null=True)
     target_year = serializers.IntegerField(required=False, allow_null=True)
@@ -279,7 +284,7 @@ class StudentProfileSerializer(serializers.ModelSerializer):
             # Location
             'city', 'state', 'admission_number', 'batch_section',
             # Course info
-            'enrolled_course_ids', 'enrolled_courses',
+            'enrolled_course_ids', 'enrolled_courses', 'guardian_consent',
             # Study preferences
             'daily_study_goal_minutes', 'preferred_study_time', 
             # Stats

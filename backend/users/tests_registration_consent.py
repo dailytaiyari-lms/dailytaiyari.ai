@@ -4,15 +4,19 @@ from types import SimpleNamespace
 from django.core import mail
 from django.test import TestCase, override_settings
 from django.utils import timezone
-from rest_framework.test import APIRequestFactory
+from rest_framework.test import APIRequestFactory, force_authenticate
+from rest_framework_simplejwt.tokens import AccessToken
 
 from core.models import Tenant
 from notifications.emails import tenant_link
+from users.authentication import RegistrationAwareJWTAuthentication
+from users.guardian_consent import guardian_consent_state
 from users.models import GuardianConsent, User
-from users.serializers import UserRegistrationSerializer
+from users.serializers import StudentProfileSerializer, UserRegistrationSerializer
 from users.views import (
     _existing_student_compliance,
     _issue_guardian_consent,
+    ExistingStudentComplianceView,
     RegisterView,
 )
 
@@ -138,6 +142,97 @@ class ExistingStudentComplianceTests(TestCase):
             'guardian_details_required',
         )
         self.assertFalse(self.user.guardian_consent_required)
+
+    def test_pending_consent_returns_editable_guardian_details(self):
+        today = timezone.localdate()
+        self.user.profile.date_of_birth = date(today.year - 12, 1, 1)
+        self.user.profile.save(update_fields=['date_of_birth', 'updated_at'])
+        GuardianConsent.objects.create(
+            tenant=self.tenant,
+            user=self.user,
+            guardian_name='Parent Name',
+            guardian_email='parent@example.com',
+            guardian_phone='9999999999',
+            relationship='parent',
+            token_hash='b' * 64,
+            expires_at=timezone.now() + timedelta(hours=24),
+        )
+
+        state = guardian_consent_state(self.user)
+
+        self.assertEqual(state['status'], 'guardian_approval_pending')
+        self.assertEqual(state['guardian_email'], 'parent@example.com')
+        self.assertEqual(state['guardian_name'], 'Parent Name')
+
+    def test_admin_student_payload_includes_consent_status(self):
+        today = timezone.localdate()
+        self.user.profile.date_of_birth = date(today.year - 12, 1, 1)
+        self.user.profile.save(update_fields=['date_of_birth', 'updated_at'])
+
+        payload = StudentProfileSerializer(self.user.profile).data
+
+        self.assertEqual(
+            payload['guardian_consent']['status'],
+            'guardian_details_required',
+        )
+
+    def test_pending_consent_does_not_block_jwt_authentication(self):
+        self.user.guardian_consent_required = True
+        self.user.save(update_fields=['guardian_consent_required'])
+        token = AccessToken.for_user(self.user)
+        request = APIRequestFactory().get(
+            '/api/v1/courses/',
+            HTTP_AUTHORIZATION=f'Bearer {token}',
+        )
+
+        authenticated_user, _token = RegistrationAwareJWTAuthentication().authenticate(
+            request
+        )
+
+        self.assertEqual(authenticated_user, self.user)
+
+    @override_settings(
+        EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
+        DEFAULT_FROM_EMAIL='DoNotReply@dailytaiyari.in',
+    )
+    def test_pending_student_can_change_guardian_email(self):
+        self.tenant.allowed_origins = ['https://academy.example.com']
+        self.tenant.save(update_fields=['allowed_origins'])
+        today = timezone.localdate()
+        self.user.profile.date_of_birth = date(today.year - 12, 1, 1)
+        self.user.profile.save(update_fields=['date_of_birth', 'updated_at'])
+        GuardianConsent.objects.create(
+            tenant=self.tenant,
+            user=self.user,
+            guardian_name='Old Parent',
+            guardian_email='old-parent@example.com',
+            relationship='parent',
+            token_hash='c' * 64,
+            expires_at=timezone.now() + timedelta(hours=24),
+        )
+        request = APIRequestFactory().post(
+            '/auth/compliance-status/',
+            {
+                'action': 'request_guardian_approval',
+                'guardian_name': 'New Parent',
+                'guardian_email': 'new-parent@example.com',
+                'guardian_relationship': 'legal_guardian',
+            },
+            format='json',
+            HTTP_ORIGIN='https://academy.example.com',
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.user)
+
+        response = ExistingStudentComplianceView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.user.guardian_consent.refresh_from_db()
+        self.assertEqual(
+            self.user.guardian_consent.guardian_email,
+            'new-parent@example.com',
+        )
+        self.assertEqual(response.data['guardian_email'], 'new-parent@example.com')
 
 
 class GuardianApprovalEmailTests(TestCase):

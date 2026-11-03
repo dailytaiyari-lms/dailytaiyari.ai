@@ -74,35 +74,6 @@ export const useAuthStore = create(
         }
       },
 
-      fetchGuardianConsentStatus: async () => {
-        try {
-          const response = await api.get('/auth/guardian-consent/status/')
-          if (response.data?.granted) {
-            const current = get().user
-            set({
-              user: current
-                ? { ...current, guardian_consent_granted_at: new Date().toISOString() }
-                : current,
-            })
-          }
-          return response.data
-        } catch {
-          return null
-        }
-      },
-
-      resendGuardianConsent: async () => {
-        try {
-          await api.post('/auth/guardian-consent/resend/')
-          return { success: true }
-        } catch (error) {
-          return {
-            success: false,
-            error: error.response?.data?.error || 'Could not resend the approval email',
-          }
-        }
-      },
-
       // Verify email with the OTP sent on registration
       verifyEmail: async (email, code) => {
         set({ isLoading: true, error: null })
