@@ -58,6 +58,11 @@ services:
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
       - CODE_JUDGE_ASYNC=${CODE_JUDGE_ASYNC:-False}
       - CODE_JUDGE_PARALLELISM=${CODE_JUDGE_PARALLELISM:-1}
+      # Optional paraphrasing of generated course prose. Empty keeps it off; see
+      # ../humanizer/README.md.
+      - HUMANIZER_URL=${HUMANIZER_URL:-}
+      - HUMANIZER_TIME_BUDGET_S=${HUMANIZER_TIME_BUDGET_S:-600}
+      - HUMANIZER_READ_TIMEOUT_S=${HUMANIZER_READ_TIMEOUT_S:-120}
       # Python notebooks. Interactive execution happens in the browser
       # (Pyodide); NOTEBOOKS_SERVER_GRADING turns on the authoritative
       # server-side re-grade in the sandboxed nbrunner container below.
@@ -270,6 +275,16 @@ services:
     entrypoint: ["sh", "/provision.sh"]
     restart: on-failure:3
 
+  # Paraphrases generated course prose, used by the aigen worker over HTTP. Only
+  # starts with `--profile humanizer`, because the model image and download are large.
+  # SECURITY: never publish ports (internal docker network only); the API has no auth.
+  humanizer:
+    build: ../humanizer
+    profiles: ["humanizer"]
+    restart: unless-stopped
+    volumes:
+      - humanizer_models:/models
+
   nginx:
     image: nginx:1.25-alpine
     restart: unless-stopped
@@ -289,3 +304,4 @@ volumes:
   static_volume:
   media_volume:
   piston_data:
+  humanizer_models:

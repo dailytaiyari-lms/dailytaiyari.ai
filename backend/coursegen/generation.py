@@ -28,6 +28,7 @@ from chatbot.models import AIProviderConfig, AIUsageRecord
 from chatbot.providers import AIProviderError, ResolvedProvider, Usage, complete
 
 from . import prompts, schema
+from .humanize import humanize_draft
 from .material import existing_material_text
 from .models import CourseGenerationJob
 
@@ -595,6 +596,7 @@ def _draft_for_prompt(job):
         (topic.get('note') or {}).pop('html', None)
     (draft.get('course') or {}).pop('description_html', None)
     draft.pop('stats', None)
+    draft.pop('humanizer', None)
     return draft
 
 
@@ -602,7 +604,17 @@ def _draft_for_prompt(job):
 # Job orchestration
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_job(job, *, topics=None):
+# Leaves room inside the task's 1500-second soft limit for everything else.
+HUMANIZE_DEADLINE_S = 1400
+
+
+def _humanized(job, draft, meter, *, previous=None):
+    """Run the optional humanizer within whatever time the job has left."""
+    budget = min(settings.HUMANIZER_TIME_BUDGET_S, HUMANIZE_DEADLINE_S - meter.elapsed_ms / 1000)
+    return humanize_draft(job.kind, draft, previous=previous, time_budget_s=budget)
+
+
+def run_job(job, *, topics=None, humanize=False):
     """Execute ``job``, storing the draft (or the failure) on the row.
 
     Always leaves the job in a terminal-for-now state: ``preview`` when a draft
@@ -632,13 +644,15 @@ def run_job(job, *, topics=None):
         job.save(update_fields=['status', 'error', 'updated_at'])
         return job
 
+    if humanize:
+        draft = _humanized(job, draft, meter)
     _store_result(job, draft, meter, resolved)
     job.record_revision('generated', job.prompt)
     job.save()
     return job
 
 
-def apply_refinement(job, instruction):
+def apply_refinement(job, instruction, *, humanize=False):
     """Refine an existing draft in place.
 
     A :class:`GenerationError` propagates untouched and the job is restored to
@@ -663,6 +677,8 @@ def apply_refinement(job, instruction):
         job.save(update_fields=['status', 'error', 'updated_at'])
         raise GenerationError(job.error)
 
+    if humanize:
+        draft = _humanized(job, draft, meter, previous=job.draft)
     _store_result(job, draft, meter, resolved, accumulate=True)
     job.record_revision('refined', instruction)
     job.save()

@@ -5,8 +5,10 @@ import requests
 from django.test import SimpleTestCase, override_settings
 
 from coursegen.humanize import humanize_draft
+from coursegen.models import CourseGenerationJob
+from coursegen.tests import OUTLINE_RESPONSE, _StudioTestCase
 
-URL = 'http://humanizer:8100'
+URL ='http://humanizer:8100'
 
 
 def service_response(text):
@@ -248,3 +250,84 @@ class HumanizeDisabledTests(SimpleTestCase):
 
         post.assert_not_called()
         self.assertEqual(result, {'a': 1})
+
+
+@override_settings(HUMANIZER_URL=URL, HUMANIZER_READ_TIMEOUT_S=120, HUMANIZER_TIME_BUDGET_S=600)
+class HumanizePipelineTests(_StudioTestCase):
+    def worker_job(self):
+        return CourseGenerationJob.objects.create(
+            tenant=self.tenant, created_by=self.admin, kind='outline', prompt='A course',
+        )
+
+    def test_worker_generate_humanizes_the_draft(self):
+        from coursegen.tasks import run_generation_job
+
+        job = self.worker_job()
+        with self.stub_provider(), self.stub_llm(OUTLINE_RESPONSE), \
+                patch('coursegen.humanize.requests.post', side_effect=fake_post):
+            run_generation_job(str(job.id))
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, 'preview')
+        self.assertEqual(job.draft['course']['description'], 'H: Learn Python.')
+        self.assertEqual(job.draft['humanizer']['status'], 'complete')
+
+    def test_service_outage_still_leaves_a_reviewable_draft(self):
+        from coursegen.tasks import run_generation_job
+
+        job = self.worker_job()
+        with self.stub_provider(), self.stub_llm(OUTLINE_RESPONSE), patch(
+            'coursegen.humanize.requests.post', side_effect=requests.ConnectionError('down'),
+        ):
+            run_generation_job(str(job.id))
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, 'preview')
+        self.assertEqual(job.draft['course']['description'], 'Learn Python.')
+        self.assertEqual(job.draft['humanizer']['status'], 'failed')
+
+    def test_worker_refine_sends_only_changed_text(self):
+        from coursegen.tasks import run_generation_job
+
+        job = self.worker_job()
+        with self.stub_provider(), self.stub_llm(OUTLINE_RESPONSE), \
+                patch('coursegen.humanize.requests.post', side_effect=fake_post):
+            run_generation_job(str(job.id))
+
+        refined = OUTLINE_RESPONSE.replace('"Learn Python."', '"H: Learn Python."').replace(
+            '"weightage": 100,', '"weightage": 100, "description": "A new subject text.",'
+        )
+        with self.stub_provider(), self.stub_llm(refined) as llm, \
+                patch('coursegen.humanize.requests.post', side_effect=fake_post) as post:
+            run_generation_job(str(job.id), 'refine', 'Add a subject description')
+
+        job.refresh_from_db()
+        # The report is bookkeeping, so it must not reach the model's prompt.
+        self.assertNotIn('"humanizer"', llm.call_args.args[1][1]['content'])
+        self.assertEqual(post.call_count, 1)
+        self.assertEqual(job.draft['subjects'][0]['description'], 'H: A new subject text.')
+        self.assertEqual(job.draft['course']['description'], 'H: Learn Python.')
+
+    def test_inline_generation_does_not_humanize(self):
+        with self.stub_provider(), self.stub_llm(OUTLINE_RESPONSE), \
+                patch('coursegen.humanize.requests.post') as post:
+            response = self.post(self.admin, '/jobs/', {
+                'kind': 'outline', 'prompt': 'A beginner Python course',
+            })
+
+        self.assertEqual(response.status_code, 201)
+        post.assert_not_called()
+        job = CourseGenerationJob.objects.get(id=response.data['id'])
+        self.assertEqual(job.draft['course']['description'], 'Learn Python.')
+        self.assertNotIn('humanizer', job.draft)
+
+    def test_budget_is_reduced_by_llm_time(self):
+        from coursegen.generation import _humanized, _Meter
+
+        job = self.worker_job()
+        meter = _Meter()
+        meter.elapsed_ms = 1_000_000
+        with patch('coursegen.generation.humanize_draft', side_effect=lambda k, d, **kw: kw) as hook:
+            _humanized(job, {}, meter)
+
+        self.assertEqual(hook.call_args.kwargs['time_budget_s'], 400)
