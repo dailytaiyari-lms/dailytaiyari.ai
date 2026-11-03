@@ -4,11 +4,9 @@ import { CheckCircle2, ShieldCheck } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 import { tenantApi } from '../../services/api'
-import { useTenantStore } from '../../context/tenantStore'
 
 const GuardianConsent = () => {
   const { token } = useParams()
-  const { tenant } = useTenantStore()
   const [details, setDetails] = useState(null)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -53,7 +51,7 @@ const GuardianConsent = () => {
         <CheckCircle2 className="w-14 h-14 text-success-500 mx-auto mb-4" />
         <h2 className="text-2xl font-bold">Account approved</h2>
         <p className="text-surface-500 mt-2">
-          {details.student_name} can now continue with their {tenant?.name || details.tenant_name} account.
+          {details.student_name} can now continue with their student account.
         </p>
       </div>
     )
