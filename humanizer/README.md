@@ -38,3 +38,26 @@ docker compose --profile humanizer up -d --build
 
 Course outline, content and meta drafts generated on the Celery worker are then
 humanized before an admin reviews them.
+
+## Measured speed
+
+Default parameters, 5-beam search, 8 sentences of sample course prose, with
+`transformers` 4.46.3 and the model already loaded:
+
+| Hardware | Seconds per sentence |
+|---|---|
+| RTX 3050 Laptop (4 GB) | 0.83 |
+| Laptop CPU | 1.32 |
+
+## Known quality problems
+
+With the default parameters, the guards don't catch rewrites that keep the numbers
+but change the meaning. These came from the same sample runs:
+
+| Original | Rewrite |
+|---|---|
+| Removing items while looping over a list can skip elements. | To skip elements, loop over a list and remove items. |
+| A loop repeats a block of code until a condition is met. | A condition is met and then a loop repeats the code until it completes its block. |
+| ...most programs treat them as numbers from 1 to 12. | ...the majority of shows depict them as quantities from 1 to 12. |
+
+An admin needs to read every humanized draft before applying it.
