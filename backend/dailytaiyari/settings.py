@@ -433,6 +433,11 @@ NOTEBOOKS_GEN_ASYNC = config('NOTEBOOKS_GEN_ASYNC', default=True, cast=bool)
 # studio polls the job. Falls back to inline generation if the broker is down.
 COURSEGEN_ASYNC = config('COURSEGEN_ASYNC', default=True, cast=bool)
 
+# Optional paraphrasing service for generated course prose. Empty means off.
+HUMANIZER_URL = config('HUMANIZER_URL', default='')
+HUMANIZER_TIME_BUDGET_S = config('HUMANIZER_TIME_BUDGET_S', default=600, cast=int)
+HUMANIZER_READ_TIMEOUT_S = config('HUMANIZER_READ_TIMEOUT_S', default=120, cast=int)
+
 # And the AI Mock Test Builder, which writes a full-length paper in several
 # batched LLM calls. Same contract: queue it, poll the job, fall back to inline.
 MOCKGEN_ASYNC = config('MOCKGEN_ASYNC', default=True, cast=bool)
