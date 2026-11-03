@@ -24,11 +24,7 @@ const Login = () => {
     if (result.success) {
       toast.success('Welcome back! 🎉')
       // Get updated state after login
-      const { user, isOnboarded } = useAuthStore.getState()
-      if (user?.guardian_consent_required && !user?.guardian_consent_granted_at) {
-        navigate('/registration-pending', { replace: true })
-        return
-      }
+      const { isOnboarded } = useAuthStore.getState()
       // Navigate based on onboarding status
       if (isOnboarded) {
         navigate(from || '/dashboard', { replace: true })

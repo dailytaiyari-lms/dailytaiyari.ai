@@ -135,6 +135,35 @@ const roleBadgeClass = (role) =>
             ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
             : 'bg-surface-100 text-surface-600 dark:bg-surface-800 dark:text-surface-300'
 
+const guardianConsentMeta = (consent = {}) => {
+    switch (consent.status) {
+        case 'compliant':
+            return { label: 'Verified', className: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400' }
+        case 'guardian_approval_pending':
+            return { label: 'Pending', className: 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400' }
+        case 'guardian_details_required':
+            return { label: 'Details needed', className: 'bg-rose-50 text-rose-700 dark:bg-rose-900/20 dark:text-rose-400' }
+        case 'date_of_birth_required':
+            return { label: 'DOB needed', className: 'bg-rose-50 text-rose-700 dark:bg-rose-900/20 dark:text-rose-400' }
+        default:
+            return { label: 'Not required', className: 'bg-surface-100 text-surface-500 dark:bg-surface-800 dark:text-surface-400' }
+    }
+}
+
+const GuardianConsentBadge = ({ consent }) => {
+    const meta = guardianConsentMeta(consent)
+    return (
+        <div>
+            <span className={`inline-flex px-2.5 py-1 rounded-lg text-xs font-semibold ${meta.className}`}>
+                {meta.label}
+            </span>
+            {consent?.guardian_email && (
+                <p className="text-[10px] text-surface-400 mt-1 break-all">{consent.guardian_email}</p>
+            )}
+        </div>
+    )
+}
+
 /* ---------------------------------------------------------------------------
  * Modal chrome
  *
@@ -497,6 +526,21 @@ const StudentDetailModal = ({ student, onClose, onEdit, courseProgress = [] }) =
                 { label: 'Preferred Study Time', value: student.preferred_study_time, className: 'capitalize' },
                 { label: 'Instagram', value: student.instagram_handle ? `@${student.instagram_handle}` : 'Not provided' },
                 { label: 'Parent Contact', value: student.parent_phone || 'Not provided' },
+            ],
+        },
+        {
+            title: 'Guardian Consent',
+            icon: ShieldCheck,
+            fields: [
+                { label: 'Status', value: guardianConsentMeta(student.guardian_consent).label },
+                { label: 'Guardian Email', value: student.guardian_consent?.guardian_email || 'Not provided' },
+                { label: 'Guardian Name', value: student.guardian_consent?.guardian_name || 'Not provided' },
+                {
+                    label: 'Verified On',
+                    value: student.guardian_consent?.granted_at
+                        ? new Date(student.guardian_consent.granted_at).toLocaleString()
+                        : 'Not verified',
+                },
             ],
         },
         {
@@ -1040,6 +1084,7 @@ const StudentManagement = () => {
     const [searchTerm, setSearchTerm] = useState('')
     const [filterRole, setFilterRole] = useState('all')
     const [filterStatus, setFilterStatus] = useState('all')
+    const [filterConsent, setFilterConsent] = useState('all')
     const [filterExam, setFilterExam] = useState('all')
     const [sortBy, setSortBy] = useState('name')
     const [selectedStudent, setSelectedStudent] = useState(null)
@@ -1135,7 +1180,12 @@ const StudentManagement = () => {
                 (filterStatus === 'active' && !s.user.is_suspended) ||
                 (filterStatus === 'suspended' && s.user.is_suspended)
             const matchesExam = filterExam === 'all' || (s.enrolled_course_ids || []).some((cid) => String(cid) === String(filterExam))
-            return matchesSearch && matchesRole && matchesStatus && matchesExam
+            const consentStatus = s.guardian_consent?.status || 'not_required'
+            const matchesConsent =
+                filterConsent === 'all' ||
+                (filterConsent === 'action_required' && ['date_of_birth_required', 'guardian_details_required'].includes(consentStatus)) ||
+                consentStatus === filterConsent
+            return matchesSearch && matchesRole && matchesStatus && matchesExam && matchesConsent
         })
 
         const sorted = [...result].sort((a, b) => {
@@ -1153,7 +1203,7 @@ const StudentManagement = () => {
             }
         })
         return sorted
-    }, [studentList, searchTerm, filterRole, filterStatus, filterExam, sortBy, progressByStudent])
+    }, [studentList, searchTerm, filterRole, filterStatus, filterExam, filterConsent, sortBy, progressByStudent])
 
     const handleReset = (student) => {
         if (window.confirm(`Reset ALL progress for ${student.user.full_name}? This cannot be undone.`)) {
@@ -1170,7 +1220,7 @@ const StudentManagement = () => {
             'Full Name', 'Email', 'Phone', 'Role', 'Status', 'Enrolled Courses', 'Target Year',
             'Grade', 'School', 'Coaching', 'Board', 'Medium', 'City', 'State',
             'Level', 'Total XP', 'Accuracy %', 'Questions Attempted', 'Correct Answers', 'Study Minutes',
-            'Course Completion',
+            'Guardian Consent', 'Guardian Email', 'Consent Verified At', 'Course Completion',
         ]
         const escape = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
         const rows = filteredStudents.map((s) => [
@@ -1180,6 +1230,9 @@ const StudentManagement = () => {
             s.target_year, s.grade, s.school, s.coaching, s.board, s.medium,
             s.city, s.state, s.current_level, s.total_xp, s.overall_accuracy,
             s.total_questions_attempted, s.total_correct_answers, s.total_study_time_minutes,
+            guardianConsentMeta(s.guardian_consent).label,
+            s.guardian_consent?.guardian_email,
+            s.guardian_consent?.granted_at,
             (progressByStudent.get(String(s.id)) || [])
                 .map((r) => `${r.course_name}: ${r.total ? `${r.percent}%` : 'no content'}`).join('; '),
         ].map(escape).join(','))
@@ -1195,10 +1248,10 @@ const StudentManagement = () => {
     }
 
     const resetFilters = () => {
-        setSearchTerm(''); setFilterRole('all'); setFilterStatus('all'); setFilterExam('all'); setSortBy('name')
+        setSearchTerm(''); setFilterRole('all'); setFilterStatus('all'); setFilterConsent('all'); setFilterExam('all'); setSortBy('name')
     }
 
-    const hasActiveFilters = searchTerm || filterRole !== 'all' || filterStatus !== 'all' || filterExam !== 'all' || sortBy !== 'name'
+    const hasActiveFilters = searchTerm || filterRole !== 'all' || filterStatus !== 'all' || filterConsent !== 'all' || filterExam !== 'all' || sortBy !== 'name'
 
     if (isLoading) return <div className="py-12 text-center text-surface-500">Loading students…</div>
 
@@ -1230,7 +1283,17 @@ const StudentManagement = () => {
                     </button>
                 </div>
 
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                    <div className="space-y-1">
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-surface-400 flex items-center gap-1"><ShieldCheck className="w-3 h-3" /> Consent</label>
+                        <select className="input py-2.5" value={filterConsent} onChange={(e) => setFilterConsent(e.target.value)}>
+                            <option value="all">All Consent</option>
+                            <option value="compliant">Verified</option>
+                            <option value="guardian_approval_pending">Pending</option>
+                            <option value="action_required">Action Required</option>
+                            <option value="not_required">Not Required</option>
+                        </select>
+                    </div>
                     <div className="space-y-1">
                         <label className="text-[10px] font-bold uppercase tracking-wider text-surface-400 flex items-center gap-1"><UserCog className="w-3 h-3" /> Role</label>
                         <select className="input py-2.5" value={filterRole} onChange={(e) => setFilterRole(e.target.value)}>
@@ -1287,6 +1350,7 @@ const StudentManagement = () => {
                                 <th className="px-6 py-4">Student</th>
                                 <th className="px-6 py-4">Courses</th>
                                 <th className="px-6 py-4">Status</th>
+                                <th className="px-6 py-4">Consent</th>
                                 <th className="px-6 py-4">Course Completion</th>
                                 <th className="px-6 py-4 text-right">Actions</th>
                             </tr>
@@ -1335,6 +1399,9 @@ const StudentManagement = () => {
                                         </button>
                                     </td>
                                     <td className="px-6 py-4">
+                                        <GuardianConsentBadge consent={student.guardian_consent} />
+                                    </td>
+                                    <td className="px-6 py-4">
                                         <CourseCompletionCell
                                             rows={progressByStudent.get(String(student.id))}
                                             loading={progressLoading}
@@ -1350,7 +1417,7 @@ const StudentManagement = () => {
                             ))}
                             {filteredStudents.length === 0 && (
                                 <tr>
-                                    <td colSpan="5" className="px-6 py-12 text-center text-surface-500 italic">No students match your filters.</td>
+                                    <td colSpan="6" className="px-6 py-12 text-center text-surface-500 italic">No students match your filters.</td>
                                 </tr>
                             )}
                         </tbody>
@@ -1380,6 +1447,10 @@ const StudentManagement = () => {
                                 loading={progressLoading}
                                 onExpand={() => setSelectedStudent(student)}
                             />
+                        </div>
+                        <div className="bg-surface-50 dark:bg-surface-800/50 rounded-xl p-3">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-surface-400 mb-2">Guardian Consent</div>
+                            <GuardianConsentBadge consent={student.guardian_consent} />
                         </div>
                         <div className="flex items-center justify-between">
                             <button
