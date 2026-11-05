@@ -135,6 +135,36 @@ export const tenantAdminService = {
         return response.data
     },
 
+    getEmailDomain: async () => {
+        const response = await api.get('/tenant-admin/email-domain/')
+        return response.data
+    },
+
+    saveEmailDomain: async (payload) => {
+        const response = await api.put('/tenant-admin/email-domain/', payload)
+        return response.data
+    },
+
+    verifyEmailDomain: async () => {
+        const response = await api.post('/tenant-admin/email-domain/', { action: 'verify' })
+        return response.data
+    },
+
+    refreshEmailDomain: async () => {
+        const response = await api.post('/tenant-admin/email-domain/', { action: 'refresh' })
+        return response.data
+    },
+
+    testEmailDomain: async () => {
+        const response = await api.post('/tenant-admin/email-domain/', { action: 'test' })
+        return response.data
+    },
+
+    deleteEmailDomain: async () => {
+        const response = await api.delete('/tenant-admin/email-domain/')
+        return response.data
+    },
+
     // Enrollment mode flags — request/approve vs. self-enrol (+ paid-via-payment).
     updateEnrollmentSettings: async ({ request_enrollment_free, request_enrollment_paid }) => {
         const payload = {}

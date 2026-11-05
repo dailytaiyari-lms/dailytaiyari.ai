@@ -10,9 +10,10 @@ from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
 
 from core.permissions import IsTenantAdmin
-from .models import PaymentGateway, ZoomIntegration
+from .models import PaymentGateway, TenantEmailDomain, ZoomIntegration
 from .admin_serializers import (
-    TenantSettingsSerializer, PaymentGatewaySerializer, ZoomIntegrationSerializer,
+    TenantSettingsSerializer, PaymentGatewaySerializer,
+    TenantEmailDomainSerializer, ZoomIntegrationSerializer,
 )
 
 
@@ -99,6 +100,211 @@ class PaymentGatewayView(generics.GenericAPIView):
         if gateway is not None:
             gateway.delete()
         return self._list_response()
+
+
+class TenantEmailDomainView(generics.GenericAPIView):
+    """Provision, verify, enable and test a tenant-owned Azure email domain."""
+
+    serializer_class = TenantEmailDomainSerializer
+    permission_classes = [permissions.IsAuthenticated, IsTenantAdmin]
+
+    def _tenant(self):
+        tenant = getattr(self.request, 'tenant', None)
+        if tenant is None:
+            raise NotFound('No tenant is associated with this request.')
+        return tenant
+
+    def _domain(self):
+        return TenantEmailDomain.objects.filter(tenant=self._tenant()).first()
+
+    def _payload(self, domain=None):
+        domain = domain or self._domain()
+        return {'email_domain': self.get_serializer(domain).data if domain else None}
+
+    @staticmethod
+    def _apply_azure_state(domain, payload):
+        properties = payload.get('properties') or {}
+        domain.azure_resource_id = payload.get('id') or domain.azure_resource_id
+        domain.provisioning_state = properties.get('provisioningState') or ''
+        domain.verification_records = properties.get('verificationRecords') or {}
+        domain.verification_states = properties.get('verificationStates') or {}
+        domain.last_synced_at = timezone.now()
+        domain.last_error = ''
+        domain.save(update_fields=[
+            'azure_resource_id', 'provisioning_state', 'verification_records',
+            'verification_states', 'last_synced_at', 'last_error', 'updated_at',
+        ])
+        return domain
+
+    def _sync(self, domain, client):
+        return self._apply_azure_state(
+            domain, client.get_domain(domain.domain)
+        )
+
+    def _finish_setup_if_verified(self, domain, client):
+        if not domain.is_verified:
+            return domain
+        client.create_sender(
+            domain.domain,
+            domain.sender_username,
+            domain.sender_name or domain.tenant.name,
+        )
+        client.link_domain(domain.azure_resource_id)
+        if not domain.sender_provisioned or not domain.is_linked:
+            domain.sender_provisioned = True
+            domain.is_linked = True
+            domain.save(update_fields=[
+                'sender_provisioned', 'is_linked', 'updated_at',
+            ])
+        return domain
+
+    def get(self, request, *args, **kwargs):
+        return Response(self._payload())
+
+    def put(self, request, *args, **kwargs):
+        from .azure_email_domains import (
+            AzureEmailDomainClient, AzureEmailDomainError,
+        )
+
+        domain = self._domain()
+        serializer = self.get_serializer(
+            domain, data=request.data, partial=domain is not None
+        )
+        serializer.is_valid(raise_exception=True)
+        try:
+            client = AzureEmailDomainClient()
+            if domain is None:
+                azure_state = client.create_domain(
+                    serializer.validated_data['domain']
+                )
+                domain = serializer.save(tenant=self._tenant())
+                self._apply_azure_state(domain, azure_state)
+            else:
+                sender_changed = any(
+                    field in serializer.validated_data
+                    and serializer.validated_data[field] != getattr(domain, field)
+                    for field in ('sender_username', 'sender_name')
+                )
+                domain = serializer.save()
+                if sender_changed:
+                    domain.sender_provisioned = False
+                    domain.is_active = False
+                    domain.save(update_fields=[
+                        'sender_provisioned', 'is_active', 'updated_at',
+                    ])
+                self._sync(domain, client)
+                self._finish_setup_if_verified(domain, client)
+        except AzureEmailDomainError as exc:
+            if domain is not None:
+                domain.last_error = str(exc)
+                domain.save(update_fields=['last_error', 'updated_at'])
+            return Response({'detail': str(exc), **self._payload(domain)}, status=400)
+        return Response(self._payload(domain))
+
+    def post(self, request, *args, **kwargs):
+        from .azure_email_domains import (
+            AzureEmailDomainClient, AzureEmailDomainError,
+        )
+        from notifications.emails import send_branded_email
+
+        domain = self._domain()
+        if domain is None:
+            return Response({'detail': 'Configure a sender domain first.'}, status=400)
+
+        action = request.data.get('action', 'verify')
+        try:
+            client = AzureEmailDomainClient()
+            if action == 'refresh':
+                self._sync(domain, client)
+                self._finish_setup_if_verified(domain, client)
+                return Response(self._payload(domain))
+
+            if action == 'verify':
+                self._sync(domain, client)
+                domain_status = (
+                    domain.verification_states.get('Domain') or {}
+                ).get('status')
+                retryable = {None, 'NotStarted', 'VerificationFailed'}
+                if domain_status in retryable:
+                    client.initiate_verification(domain.domain, 'Domain')
+                elif domain_status == 'Verified':
+                    for verification_type in ('SPF', 'DKIM', 'DKIM2'):
+                        status = (
+                            domain.verification_states.get(verification_type) or {}
+                        ).get('status')
+                        if status in retryable:
+                            client.initiate_verification(
+                                domain.domain, verification_type
+                            )
+                self._sync(domain, client)
+                self._finish_setup_if_verified(domain, client)
+                return Response({
+                    'detail': (
+                        'Verification check started. DNS changes can take '
+                        '15–30 minutes to appear.'
+                    ),
+                    **self._payload(domain),
+                })
+
+            if action != 'test':
+                return Response({'detail': 'Unknown action.'}, status=400)
+            if not domain.is_ready:
+                return Response(
+                    {'detail': 'The domain is not fully verified and linked yet.'},
+                    status=400,
+                )
+
+            recipient = request.user.email
+            sent = send_branded_email(
+                self._tenant(),
+                recipient,
+                subject=f'Test email from {self._tenant().name}',
+                heading='Your verified sender domain is working',
+                body_html=(
+                    '<p>This test was sent from your verified institution domain. '
+                    'DailyTaiyari remains the automatic fallback for future '
+                    'delivery failures.</p>'
+                ),
+                force_tenant_domain=True,
+                fallback_to_platform=False,
+            )
+            if not sent:
+                return Response(
+                    {'detail': 'Azure did not accept the test email.'},
+                    status=400,
+                )
+            return Response({
+                'detail': f'Test email sent to {recipient}.',
+                **self._payload(domain),
+            })
+        except AzureEmailDomainError as exc:
+            domain.last_error = str(exc)
+            domain.save(update_fields=['last_error', 'updated_at'])
+            return Response(
+                {'detail': str(exc), **self._payload(domain)},
+                status=400,
+            )
+
+    def delete(self, request, *args, **kwargs):
+        from .azure_email_domains import (
+            AzureEmailDomainClient, AzureEmailDomainError,
+        )
+
+        domain = self._domain()
+        if domain is not None:
+            try:
+                client = AzureEmailDomainClient()
+                client.unlink_domain(domain.azure_resource_id)
+                client.delete_domain(domain.domain)
+            except AzureEmailDomainError as exc:
+                domain.last_error = str(exc)
+                domain.save(update_fields=['last_error', 'updated_at'])
+                return Response(
+                    {'detail': str(exc), **self._payload(domain)},
+                    status=400,
+                )
+            domain.delete()
+        return Response(self._payload(None))
 
 
 class ZoomIntegrationView(generics.GenericAPIView):

@@ -31,6 +31,35 @@ OPENAI_API_KEY=sk-...
 | `CODE_JUDGE_ASYNC` | No | `False` | Grade coding submissions off the request thread |
 | `COURSEGEN_ASYNC` | No | `True` | Run AI course generation on the `aigen` queue |
 
+### Email and tenant verified domains — `backend/.env`
+
+The normal Azure Communication Services connection string sends platform email.
+Tenant admins can also verify their own domains from **Settings → Email**. That
+self-serve flow uses an Entra service principal to create Azure Email domain
+resources, read the generated DNS records, start verification, create the
+sender alias, and link the domain to the existing Communication Services
+resource.
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `EMAIL_PROVIDER` | Yes in cloud | `azure` outside debug | Platform email backend |
+| `DEFAULT_FROM_EMAIL` | Yes | `DoNotReply@dailytaiyari.in` | Platform sender and tenant delivery fallback |
+| `AZURE_COMMUNICATION_CONNECTION_STRING` | Yes | — | Data-plane connection used to send email |
+| `AZURE_TENANT_ID` | For verified domains | — | Entra tenant containing the management app |
+| `AZURE_CLIENT_ID` | For verified domains | — | Service-principal application/client ID |
+| `AZURE_CLIENT_SECRET` | For verified domains | — | Service-principal secret; keep only in the environment secret store |
+| `AZURE_SUBSCRIPTION_ID` | For verified domains | — | Subscription containing both email resources |
+| `AZURE_EMAIL_RESOURCE_GROUP` | For verified domains | — | Resource group containing the Email Communication Service |
+| `AZURE_EMAIL_SERVICE_NAME` | For verified domains | — | Email Communication Service resource name |
+| `AZURE_COMMUNICATION_RESOURCE_GROUP` | No | `AZURE_EMAIL_RESOURCE_GROUP` | Resource group containing the Communication Services resource |
+| `AZURE_COMMUNICATION_SERVICE_NAME` | For verified domains | — | Communication Services resource used by the connection string |
+| `AZURE_COMMUNICATION_API_VERSION` | No | `2023-03-31` | Azure Resource Manager API version |
+
+The service principal must be allowed to read/update the Communication Services
+resource and create/update/delete domains and sender usernames under the Email
+Communication Service. Tenant admins never receive these Azure credentials and
+never provide mailbox passwords.
+
 ### Labs / notebooks — `backend/.env`
 
 See [notebooks-labs.md](./notebooks-labs.md) for what these control.
