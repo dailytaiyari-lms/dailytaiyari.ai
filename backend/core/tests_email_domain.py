@@ -328,6 +328,35 @@ class TenantEmailDeliveryTests(TestCase):
         self.assertFalse(serializer.is_valid())
         self.assertIn('domain', serializer.errors)
 
+    def test_serializer_expands_relative_dns_hosts_for_subdomain(self):
+        self.email_domain.domain = 'mail.academy.example'
+        self.email_domain.verification_records = {
+            'Domain': {
+                'type': 'TXT',
+                'name': 'mail.academy.example',
+                'value': 'ms-domain-verification=value',
+            },
+            'DKIM': {
+                'type': 'CNAME',
+                'name': 'selector1-azurecomm-prod-net._domainkey',
+                'value': 'selector1.example.azurecomm.net',
+            },
+        }
+
+        data = TenantEmailDomainSerializer(self.email_domain).data
+
+        self.assertEqual(
+            data['verification_records']['Domain']['name'],
+            'mail.academy.example',
+        )
+        self.assertEqual(
+            data['verification_records']['DKIM']['name'],
+            (
+                'selector1-azurecomm-prod-net._domainkey.'
+                'mail.academy.example'
+            ),
+        )
+
     def test_domain_cannot_be_enabled_before_verification(self):
         self.email_domain.verification_states = {}
         self.email_domain.is_linked = False
