@@ -57,9 +57,9 @@ def run_generation_job(self, job_id, mode='generate', instruction='', topics=Non
 
     try:
         if mode == 'refine':
-            generation.apply_refinement(job, instruction or '')
+            generation.apply_refinement(job, instruction or '', humanize=True)
         else:
-            generation.run_job(job, topics=topics or [])
+            generation.run_job(job, topics=topics or [], humanize=True)
     except generation.GenerationError as exc:
         # run_job / apply_refinement already recorded a user-facing error and
         # the right terminal status.
