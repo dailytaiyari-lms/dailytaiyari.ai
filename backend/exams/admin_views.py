@@ -124,7 +124,7 @@ class TenantAdminModelViewSet(viewsets.ModelViewSet):
 class AdminCourseViewSet(TenantAdminModelViewSet):
     queryset = Course.objects.all().order_by('name')
     serializer_class = AdminCourseSerializer
-    filterset_fields = ['course_type', 'status', 'is_featured']
+    filterset_fields = ['course_type', 'status', 'is_featured', 'is_hidden']
     tenant_lookup = 'tenant'
     course_lookup = None  # the object is itself a Course
     ordering = ['name']
@@ -152,6 +152,7 @@ class AdminCourseViewSet(TenantAdminModelViewSet):
         # Instructors may edit course details but never the instructor roster.
         if self.request.user.role != 'admin':
             serializer.validated_data.pop('instructors', None)
+            serializer.validated_data.pop('is_hidden', None)
         serializer.save()
 
     @action(detail=True, methods=['post'])

@@ -19,7 +19,7 @@ class CourseSerializer(serializers.ModelSerializer):
         model = Course
         fields = [
             'id', 'name', 'code', 'description', 'course_type',
-            'icon', 'color', 'status', 'is_featured', 'thumbnail',
+            'icon', 'color', 'status', 'is_featured', 'is_hidden', 'thumbnail',
             'duration_minutes', 'total_marks', 'negative_marking',
             'negative_marking_ratio', 'total_students', 'total_questions',
             'subjects_count', 'mock_tests_count', 'quizzes_count',
@@ -66,7 +66,7 @@ class CourseListSerializer(serializers.ModelSerializer):
         model = Course
         fields = [
             'id', 'name', 'code', 'icon', 'color', 'status', 'is_featured',
-            'thumbnail', 'subtitle', 'description', 'course_type',
+            'is_hidden', 'thumbnail', 'subtitle', 'description', 'course_type',
             'total_students', 'pricing_type', 'price', 'original_price',
             'currency', 'is_free', 'discount_percent',
         ]
@@ -260,4 +260,3 @@ class CourseContentExplorerSerializer(CourseSerializer):
     
     class Meta(CourseSerializer.Meta):
         fields = CourseSerializer.Meta.fields + ['subjects']
-

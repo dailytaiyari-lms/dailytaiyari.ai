@@ -50,6 +50,13 @@ class Course(TimeStampedModel):
     # Metadata
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
     is_featured = models.BooleanField(default=False)
+    is_hidden = models.BooleanField(
+        default=False,
+        help_text=(
+            "Hide this course from the public catalog and non-enrolled students. "
+            "Approved enrolled students can still access it."
+        ),
+    )
     
     # Course details
     duration_minutes = models.PositiveIntegerField(null=True, blank=True)
@@ -310,4 +317,3 @@ class ChapterTopic(OrderedModel):
 
     def __str__(self):
         return f"{self.chapter.name} → {self.topic.name}"
-

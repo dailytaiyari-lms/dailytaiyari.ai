@@ -194,7 +194,7 @@ class QuizViewSet(TenantAwareReadOnlyViewSet):
         
         # Get courses that have quizzes
         courses_with_quizzes = Course.objects.filter(
-            quizzes__status='published'
+            quizzes__in=quiz_qs
         ).distinct().annotate(short_name=F('code')).values('id', 'name', 'short_name')
         
         # Get quiz type counts (scoped to course)
@@ -718,7 +718,7 @@ class MockTestViewSet(TenantAwareReadOnlyViewSet):
         # Courses that have published mock tests, via the legacy `course` FK OR
         # the rich `courses` M2M, so rich mock tests surface as filter chips too.
         courses_with_tests = Course.objects.filter(
-            Q(mock_tests__status='published') | Q(linked_mock_tests__status='published')
+            Q(mock_tests__in=test_qs) | Q(linked_mock_tests__in=test_qs)
         ).distinct().annotate(short_name=F('code')).values('id', 'name', 'short_name')
         
         # Get attempted/non-attempted counts for the user (scoped to course)

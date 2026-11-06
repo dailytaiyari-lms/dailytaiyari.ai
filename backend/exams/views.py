@@ -10,6 +10,7 @@ from django.db.models import Count, Q, Avg, Sum, F, Value, DecimalField
 from django.db.models.functions import Coalesce
 
 from .models import Course, Subject, Topic, Chapter
+from .access import has_approved_course_enrollment, visible_courses_for_request
 from .serializers import (
     CourseSerializer, CourseListSerializer, CourseDetailSerializer,
     SubjectSerializer, SubjectDetailSerializer,
@@ -124,6 +125,10 @@ class CourseViewSet(TenantAwareReadOnlyViewSet):
             return CourseListSerializer
         return CourseDetailSerializer
 
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        return visible_courses_for_request(queryset, self.request)
+
     @action(detail=True, methods=['get'])
     def subjects(self, request, pk=None):
         """Get all subjects for an course."""
@@ -148,7 +153,7 @@ class SubjectViewSet(TenantAwareReadOnlyViewSet):
     queryset = Subject.objects.all()
     permission_classes = [permissions.AllowAny]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
-    filterset_fields = ['courses']
+    filterset_fields = ['course']
     search_fields = ['name', 'code']
 
     def get_serializer_class(self):
@@ -157,8 +162,15 @@ class SubjectViewSet(TenantAwareReadOnlyViewSet):
         return SubjectSerializer
 
     def get_queryset(self):
-        queryset = super().get_queryset()
-        if self.request.user.is_authenticated and not self.request.query_params.get('courses'):
+        tenant = getattr(self.request, 'tenant', None)
+        if not tenant:
+            return self.queryset.none()
+        visible_course_ids = visible_courses_for_request(
+            Course.objects.filter(tenant=tenant, status='active'),
+            self.request,
+        ).values_list('id', flat=True)
+        queryset = self.queryset.filter(course_id__in=visible_course_ids)
+        if self.request.user.is_authenticated and not self.request.query_params.get('course'):
             course_ids = _enrolled_course_ids(self.request)
             if course_ids:
                 queryset = queryset.filter(course__in=course_ids)
@@ -197,7 +209,14 @@ class TopicViewSet(TenantAwareReadOnlyViewSet):
         return TopicSerializer
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        tenant = getattr(self.request, 'tenant', None)
+        if not tenant:
+            return self.queryset.none()
+        visible_course_ids = visible_courses_for_request(
+            Course.objects.filter(tenant=tenant, status='active'),
+            self.request,
+        ).values_list('id', flat=True)
+        queryset = self.queryset.filter(subject__course_id__in=visible_course_ids)
         if self.request.user.is_authenticated and not self.request.query_params.get('subject'):
             course_ids = _enrolled_course_ids(self.request)
             if course_ids:
@@ -227,6 +246,16 @@ class ChapterViewSet(TenantAwareReadOnlyViewSet):
         if self.action == 'retrieve':
             return ChapterDetailSerializer
         return ChapterSerializer
+
+    def get_queryset(self):
+        tenant = getattr(self.request, 'tenant', None)
+        if not tenant:
+            return self.queryset.none()
+        visible_course_ids = visible_courses_for_request(
+            Course.objects.filter(tenant=tenant, status='active'),
+            self.request,
+        ).values_list('id', flat=True)
+        return self.queryset.filter(subject__course_id__in=visible_course_ids)
 
 
 class TenantContentExplorerView(APIView):
@@ -269,6 +298,7 @@ class AvailableCoursesForEnrollmentView(APIView):
         qs = Course.objects.filter(status='active').order_by('name')
         if hasattr(request, 'tenant') and request.tenant:
             qs = qs.filter(tenant=request.tenant)
+        qs = visible_courses_for_request(qs, request)
         qs = qs.prefetch_related('instructors')
         courses = list(qs)
         result = [
@@ -387,7 +417,7 @@ class StudySubjectsView(APIView):
         # Block access unless the student has an approved enrollment for this course
         from users.models import CourseEnrollment
         if not CourseEnrollment.objects.filter(
-            student=student, course=course, status='approved'
+            student=student, course=course, status='approved', is_active=True
         ).exists():
             return Response(
                 {'error': 'Enrollment pending admin approval'}, status=403
@@ -524,6 +554,8 @@ class StudyChaptersView(APIView):
             subject = Subject.objects.select_related('course').get(pk=subject_id)
         except Subject.DoesNotExist:
             return Response({'error': 'Subject not found'}, status=404)
+        if not has_approved_course_enrollment(request.user, subject.course_id):
+            return Response({'error': 'Enrollment required'}, status=403)
 
         sequential = bool(getattr(subject.course, 'sequential_chapter_unlock', False))
         chapters = subject.chapters.all().order_by('order').prefetch_related(
@@ -703,6 +735,10 @@ class StudyChapterDetailView(APIView):
             ).get(pk=chapter_id)
         except Chapter.DoesNotExist:
             return Response({'error': 'Chapter not found'}, status=404)
+        if not has_approved_course_enrollment(
+            request.user, chapter.subject.course_id
+        ):
+            return Response({'error': 'Enrollment required'}, status=403)
 
         # Sequential unlock: when a preceding chapter in the same subject is not
         # yet fully completed, this chapter is "locked". We no longer hard-block
