@@ -10,7 +10,7 @@ from django.db.models import Count, Q, Avg, Sum, F, Value, DecimalField
 from django.db.models.functions import Coalesce
 
 from .models import Course, Subject, Topic, Chapter
-from .access import has_approved_course_enrollment, visible_courses_for_request
+from .access import can_access_course, visible_courses_for_request
 from .serializers import (
     CourseSerializer, CourseListSerializer, CourseDetailSerializer,
     SubjectSerializer, SubjectDetailSerializer,
@@ -353,13 +353,15 @@ class StudyCoursesView(APIView):
 
         student = request.user.profile
         enrolled = CourseEnrollment.objects.filter(
-            student=student
+            student=student, is_active=True
         ).exclude(status='rejected').select_related('course').order_by('enrolled_at')
 
         approved = []
         pending = []
         for e in enrolled:
             if not e.course or e.course.status != 'active':
+                continue
+            if e.course.is_hidden and e.status != 'approved':
                 continue
             item = {
                 'id': str(e.course.id),
@@ -549,13 +551,13 @@ class StudyChaptersView(APIView):
         from coding.models import CodingProblem, CodingSubmission
         from notebooks.models import Notebook, NotebookCompletion
 
-        student = request.user.profile
         try:
             subject = Subject.objects.select_related('course').get(pk=subject_id)
         except Subject.DoesNotExist:
             return Response({'error': 'Subject not found'}, status=404)
-        if not has_approved_course_enrollment(request.user, subject.course_id):
+        if not can_access_course(request.user, subject.course):
             return Response({'error': 'Enrollment required'}, status=403)
+        student = getattr(request.user, 'profile', None)
 
         sequential = bool(getattr(subject.course, 'sequential_chapter_unlock', False))
         chapters = subject.chapters.all().order_by('order').prefetch_related(
@@ -728,17 +730,15 @@ class StudyChapterDetailView(APIView):
         from coding.models import CodingProblem, CodingSubmission
         from notebooks.models import Notebook, NotebookCompletion
 
-        student = request.user.profile
         try:
             chapter = Chapter.objects.select_related('subject', 'subject__course').prefetch_related(
                 'chapter_topics__topic'
             ).get(pk=chapter_id)
         except Chapter.DoesNotExist:
             return Response({'error': 'Chapter not found'}, status=404)
-        if not has_approved_course_enrollment(
-            request.user, chapter.subject.course_id
-        ):
+        if not can_access_course(request.user, chapter.subject.course):
             return Response({'error': 'Enrollment required'}, status=403)
+        student = getattr(request.user, 'profile', None)
 
         # Sequential unlock: when a preceding chapter in the same subject is not
         # yet fully completed, this chapter is "locked". We no longer hard-block

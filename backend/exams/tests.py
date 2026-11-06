@@ -4,6 +4,8 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from core.models import Tenant
 from users.models import CourseEnrollment, StudentProfile, User
+from content.models import Content
+from content.views import ContentViewSet
 
 from .models import Chapter, Course, Subject, Topic
 from .views import (
@@ -11,6 +13,7 @@ from .views import (
     ChapterViewSet,
     CourseViewSet,
     StudyChaptersView,
+    StudyCoursesView,
     SubjectViewSet,
     TopicViewSet,
 )
@@ -50,6 +53,19 @@ class HiddenCourseVisibilityTests(TestCase):
             email='outsider@example.com', tenant=self.tenant, password='password'
         )
         self.outsider_profile, _ = StudentProfile.objects.get_or_create(user=self.outsider)
+        self.admin = User.objects.create_user(
+            email='admin@example.com',
+            tenant=self.tenant,
+            password='password',
+            role='admin',
+        )
+        self.instructor = User.objects.create_user(
+            email='instructor@example.com',
+            tenant=self.tenant,
+            password='password',
+            role='instructor',
+        )
+        self.hidden_course.instructors.add(self.instructor)
         CourseEnrollment.objects.create(
             student=self.profile,
             course=self.hidden_course,
@@ -148,6 +164,76 @@ class HiddenCourseVisibilityTests(TestCase):
         )
 
         self.assertEqual(denied.status_code, 403)
+        self.assertEqual(allowed.status_code, 200)
+
+    def test_admin_and_assigned_instructor_can_open_hidden_course_chapters(self):
+        view = StudyChaptersView.as_view()
+
+        for user in (self.admin, self.instructor):
+            with self.subTest(role=user.role):
+                response = view(
+                    self.request(
+                        f'/courses/study/chapters/{self.subject.id}/',
+                        user,
+                    ),
+                    subject_id=self.subject.id,
+                )
+                self.assertEqual(response.status_code, 200)
+
+    def test_hidden_pending_and_inactive_enrollments_are_absent_from_study(self):
+        inactive_course = Course.objects.create(
+            tenant=self.tenant,
+            name='Inactive Hidden Course',
+            code='inactive-hidden-course',
+            course_type='skill',
+            is_hidden=True,
+        )
+        CourseEnrollment.objects.create(
+            student=self.outsider_profile,
+            course=self.hidden_course,
+            status='pending',
+            is_active=True,
+        )
+        CourseEnrollment.objects.create(
+            student=self.outsider_profile,
+            course=inactive_course,
+            status='approved',
+            is_active=False,
+        )
+
+        response = StudyCoursesView.as_view()(
+            self.request('/courses/study/courses/', self.outsider)
+        )
+
+        returned_ids = {
+            str(course['id'])
+            for course in response.data['courses'] + response.data['pending']
+        }
+        self.assertNotIn(str(self.hidden_course.id), returned_ids)
+        self.assertNotIn(str(inactive_course.id), returned_ids)
+
+    def test_student_with_no_enrollment_cannot_retrieve_hidden_course_content(self):
+        content = Content.objects.create(
+            title='Private Lesson',
+            slug='private-lesson',
+            content_type='notes',
+            topic=self.topic,
+            subject=self.subject,
+            status='published',
+        )
+        content.courses.add(self.hidden_course)
+        view = ContentViewSet.as_view({'get': 'retrieve'})
+
+        denied = view(
+            self.request(f'/content/{content.id}/', self.outsider),
+            pk=str(content.id),
+        )
+        allowed = view(
+            self.request(f'/content/{content.id}/', self.student),
+            pk=str(content.id),
+        )
+
+        self.assertEqual(denied.status_code, 404)
         self.assertEqual(allowed.status_code, 200)
 
     def test_non_enrolled_student_cannot_request_hidden_course(self):

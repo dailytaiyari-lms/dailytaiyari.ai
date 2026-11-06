@@ -15,6 +15,17 @@ def has_approved_course_enrollment(user, course_id):
     ).exists()
 
 
+def can_access_course(user, course):
+    """Whether a user may open enrolled-only study surfaces for a course."""
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser or getattr(user, 'role', None) == 'admin':
+        return True
+    if getattr(user, 'role', None) == 'instructor':
+        return course.instructors.filter(pk=user.pk).exists()
+    return has_approved_course_enrollment(user, course.id)
+
+
 def visible_courses_for_request(queryset, request):
     """Apply the shared public/enrolled visibility rule to a Course queryset."""
     user = getattr(request, 'user', None)
