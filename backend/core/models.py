@@ -175,6 +175,12 @@ class Tenant(models.Model):
     auth_panel = models.JSONField(default=dict, blank=True)
     is_active = models.BooleanField(default=True)
 
+    # Platform-controlled capability for provisioning tenant-owned sender
+    # domains in Azure. This is deliberately separate from ``features``:
+    # generic feature keys default to enabled and may be tenant-controlled,
+    # while Azure resource management must stay opt-in and super-admin-only.
+    custom_email_domains_enabled = models.BooleanField(default=False)
+
     # Per-tenant feature toggles: {feature_key: bool}. Missing keys default to
     # enabled so newly introduced features are on until an admin turns them off.
     features = models.JSONField(default=dict, blank=True)

@@ -338,7 +338,7 @@ const OutboundEmailDomain = () => {
         onSuccess: (result) => {
             queryClient.setQueryData(['tenantEmailDomain'], result)
             setForm(EMPTY_DOMAIN)
-            toast.success('Verified domain removed')
+            toast.success('Sender domain removed from DailyTaiyari')
         },
         onError: (err) => toast.error(mutationError(err, 'Failed to remove email domain')),
     })
@@ -475,6 +475,53 @@ const OutboundEmailDomain = () => {
                 </div>
             )}
 
+            {emailDomain && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50/70 dark:border-amber-800 dark:bg-amber-900/20 p-4 space-y-3">
+                    <div className="flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                        <div>
+                            <h4 className="font-bold text-sm text-amber-900 dark:text-amber-200">
+                                Recommended: configure DMARC
+                            </h4>
+                            <p className="text-sm text-amber-800/80 dark:text-amber-300/80 mt-1">
+                                Azure verifies SPF and DKIM but does not check DMARC. Without DMARC,
+                                authenticated messages can still be placed in Spam.
+                            </p>
+                        </div>
+                    </div>
+                    <div className="grid sm:grid-cols-[1fr_2fr_auto] gap-3 items-end">
+                        <div>
+                            <p className="text-[11px] uppercase tracking-wide text-amber-700/70 dark:text-amber-400 mb-1">
+                                TXT name / host
+                            </p>
+                            <code className="block text-xs break-all text-amber-950 dark:text-amber-100">
+                                _dmarc.{emailDomain.domain}
+                            </code>
+                        </div>
+                        <div>
+                            <p className="text-[11px] uppercase tracking-wide text-amber-700/70 dark:text-amber-400 mb-1">
+                                Starter value
+                            </p>
+                            <code className="block text-xs break-all text-amber-950 dark:text-amber-100">
+                                v=DMARC1; p=none; adkim=r; aspf=r; pct=100
+                            </code>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => copyText('v=DMARC1; p=none; adkim=r; aspf=r; pct=100')}
+                            className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-amber-300 dark:border-amber-700 text-xs font-semibold text-amber-800 dark:text-amber-300"
+                        >
+                            <Copy className="w-3.5 h-3.5" /> Copy value
+                        </button>
+                    </div>
+                    <p className="text-xs text-amber-700 dark:text-amber-400">
+                        Start with <code>p=none</code> so mail is monitored without being rejected.
+                        After DNS propagates, send a test and confirm SPF, DKIM and DMARC all pass in
+                        the recipient’s message details.
+                    </p>
+                </div>
+            )}
+
             {emailDomain?.is_ready && (
                 <label className="flex items-start gap-3 rounded-xl border border-surface-200 dark:border-surface-700 p-4 cursor-pointer">
                     <input
@@ -554,7 +601,10 @@ const OutboundEmailDomain = () => {
                     <button
                         type="button"
                         onClick={() => {
-                            if (window.confirm('Remove this verified domain from DailyTaiyari and Azure?')) {
+                            if (window.confirm(
+                                'Unlink this sender domain and remove it from DailyTaiyari? '
+                                + 'The Azure domain resource will be retained for platform-admin cleanup.',
+                            )) {
                                 deleteMutation.mutate()
                             }
                         }}
@@ -600,7 +650,7 @@ const EmailSettings = ({ settings }) => {
 
     return (
         <div className="space-y-6">
-            <OutboundEmailDomain />
+            {settings?.custom_email_domains_enabled && <OutboundEmailDomain />}
 
             {/* Recipient address */}
             <div className="card p-6 space-y-4">

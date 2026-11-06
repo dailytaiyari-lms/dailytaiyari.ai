@@ -31,7 +31,7 @@ OPENAI_API_KEY=sk-...
 | `CODE_JUDGE_ASYNC` | No | `False` | Grade coding submissions off the request thread |
 | `COURSEGEN_ASYNC` | No | `True` | Run AI course generation on the `aigen` queue |
 
-### Email and tenant verified domains — `backend/.env`
+### Email and tenant verified domains
 
 The normal Azure Communication Services connection string sends platform email.
 Tenant admins can also verify their own domains from **Settings → Email**. That
@@ -40,11 +40,22 @@ resources, read the generated DNS records, start verification, create the
 sender alias, and link the domain to the existing Communication Services
 resource.
 
+Keep the normal sending variables in `backend/.env`:
+
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `EMAIL_PROVIDER` | Yes in cloud | `azure` outside debug | Platform email backend |
 | `DEFAULT_FROM_EMAIL` | Yes | `DoNotReply@dailytaiyari.in` | Platform sender and tenant delivery fallback |
 | `AZURE_COMMUNICATION_CONNECTION_STRING` | Yes | — | Data-plane connection used to send email |
+
+Store the management-plane values in the root-owned file
+`/etc/dailytaiyari/azure-email-management.env`. Docker Compose injects this
+file into the `web` service only; Celery workers do not receive these
+credentials. Do not put these values in `backend/.env`, because that file is
+inside the repository bind mount shared by application containers.
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
 | `AZURE_TENANT_ID` | For verified domains | — | Entra tenant containing the management app |
 | `AZURE_CLIENT_ID` | For verified domains | — | Service-principal application/client ID |
 | `AZURE_CLIENT_SECRET` | For verified domains | — | Service-principal secret; keep only in the environment secret store |
@@ -55,10 +66,42 @@ resource.
 | `AZURE_COMMUNICATION_SERVICE_NAME` | For verified domains | — | Communication Services resource used by the connection string |
 | `AZURE_COMMUNICATION_API_VERSION` | No | `2023-03-31` | Azure Resource Manager API version |
 
+Example file shape:
+
+```bash
+AZURE_TENANT_ID=<environment-tenant-id>
+AZURE_CLIENT_ID=<environment-client-id>
+AZURE_CLIENT_SECRET=<environment-client-secret>
+AZURE_SUBSCRIPTION_ID=<production-subscription-id>
+AZURE_EMAIL_RESOURCE_GROUP=<environment-email-resource-group>
+AZURE_EMAIL_SERVICE_NAME=<environment-email-service-name>
+AZURE_COMMUNICATION_RESOURCE_GROUP=<environment-communication-resource-group>
+AZURE_COMMUNICATION_SERVICE_NAME=<environment-communication-service-name>
+AZURE_COMMUNICATION_API_VERSION=2023-03-31
+```
+
+Create it with owner `root:root` and mode `0600`. If a deployment uses another
+path, set `AZURE_EMAIL_MANAGEMENT_ENV_FILE` for the Compose command.
+
 The service principal must be allowed to read/update the Communication Services
 resource and create/update/delete domains and sender usernames under the Email
 Communication Service. Tenant admins never receive these Azure credentials and
 never provide mailbox passwords.
+
+Azure verifies domain ownership, SPF, DKIM and DKIM2, but it does not verify
+DMARC. Before activating a tenant sender, publish a DMARC TXT record for the
+exact sender domain and confirm DMARC passes in a received message. A safe
+monitoring-only starting policy is:
+
+```text
+Name:  _dmarc.<sender-domain>
+Type:  TXT
+Value: v=DMARC1; p=none; adkim=r; aspf=r; pct=100
+```
+
+`p=none` does not reject or quarantine mail; it lets receivers evaluate DMARC
+while the domain establishes delivery reputation. Tighten the policy only after
+reviewing real delivery results.
 
 ### Labs / notebooks — `backend/.env`
 

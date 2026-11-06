@@ -15,6 +15,9 @@ class AzureEmailDomainClient:
 
     MANAGEMENT_URL = 'https://management.azure.com'
     TOKEN_SCOPE = 'https://management.azure.com/.default'
+    LINKED_DOMAIN_UPDATE_ATTEMPTS = 3
+    MANAGED_TAG = 'dailytaiyari-managed'
+    TENANT_TAG = 'dailytaiyari-tenant-id'
     REQUIRED_SETTINGS = (
         'AZURE_TENANT_ID',
         'AZURE_CLIENT_ID',
@@ -97,13 +100,21 @@ class AzureEmailDomainClient:
             f'?api-version={self.api_version}'
         )
 
-    def _request(self, method, url, *, action, **kwargs):
+    def _send_request(self, method, url, *, action, headers=None, **kwargs):
+        request_headers = self.headers
+        if headers:
+            request_headers = {**request_headers, **headers}
         try:
-            response = requests.request(
-                method, url, headers=self.headers, timeout=30, **kwargs
+            return requests.request(
+                method, url, headers=request_headers, timeout=30, **kwargs
             )
         except requests.RequestException as exc:
             raise AzureEmailDomainError(f'Could not {action}: {exc}') from exc
+
+    def _request(self, method, url, *, action, headers=None, **kwargs):
+        response = self._send_request(
+            method, url, action=action, headers=headers, **kwargs
+        )
         self._raise_for_status(response, action)
         if response.status_code == 204 or not response.content:
             return {}
@@ -115,8 +126,15 @@ class AzureEmailDomainClient:
             return
         try:
             payload = response.json()
-            error = payload.get('error') or {}
-            detail = error.get('message') or payload.get('message')
+            error = payload.get('error')
+            if isinstance(error, dict):
+                detail = error.get('message') or payload.get('message')
+            else:
+                detail = (
+                    payload.get('error_description')
+                    or payload.get('message')
+                    or error
+                )
         except ValueError:
             detail = response.text
         detail = (detail or response.reason or 'Unknown Azure error').strip()
@@ -124,19 +142,72 @@ class AzureEmailDomainClient:
             f'Could not {action}: {detail[:1000]}'
         )
 
-    def create_domain(self, domain):
-        return self._request(
+    def _assert_domain_ownership(self, domain, tenant_id, resource):
+        tags = resource.get('tags') or {}
+        is_managed = str(tags.get(self.MANAGED_TAG, '')).lower() == 'true'
+        owner_id = str(tags.get(self.TENANT_TAG, '')).lower()
+        expected_owner = str(tenant_id).lower()
+        if not is_managed:
+            raise AzureEmailDomainError(
+                f'Email domain {domain} already exists in Azure but is not '
+                'managed by DailyTaiyari. A platform administrator must adopt '
+                'the resource before this tenant can use it.'
+            )
+        if owner_id != expected_owner:
+            raise AzureEmailDomainError(
+                f'Email domain {domain} is already assigned to another tenant.'
+            )
+        return resource
+
+    def get_domain_if_exists(self, domain):
+        action = f'load email domain {domain}'
+        response = self._send_request(
+            'GET', self._domain_url(domain), action=action
+        )
+        if response.status_code == 404:
+            return None
+        self._raise_for_status(response, action)
+        return response.json()
+
+    def create_domain(self, domain, tenant_id):
+        action = f'create email domain {domain}'
+        response = self._send_request(
             'PUT',
             self._domain_url(domain),
-            action=f'create email domain {domain}',
+            action=action,
+            headers={'If-None-Match': '*'},
             json={
                 'location': 'Global',
+                'tags': {
+                    self.MANAGED_TAG: 'true',
+                    self.TENANT_TAG: str(tenant_id),
+                },
                 'properties': {
                     'domainManagement': 'CustomerManaged',
                     'userEngagementTracking': 'Disabled',
                 },
             },
         )
+        if response.status_code == 412:
+            existing = self.get_domain_if_exists(domain)
+            if existing is None:
+                raise AzureEmailDomainError(
+                    f'Could not create email domain {domain}: Azure reported '
+                    'a concurrent resource conflict.'
+                )
+            return self._assert_domain_ownership(
+                domain, tenant_id, existing
+            )
+        self._raise_for_status(response, action)
+        return response.json()
+
+    def ensure_domain(self, domain, tenant_id):
+        existing = self.get_domain_if_exists(domain)
+        if existing is not None:
+            return self._assert_domain_ownership(
+                domain, tenant_id, existing
+            )
+        return self.create_domain(domain, tenant_id)
 
     def get_domain(self, domain):
         return self._request(
@@ -166,43 +237,71 @@ class AzureEmailDomainClient:
             },
         )
 
-    def link_domain(self, domain_resource_id):
+    def _update_linked_domain(self, domain_resource_id, *, should_link):
         if not domain_resource_id:
-            raise AzureEmailDomainError(
-                'Azure returned a verified domain without a resource ID.'
-            )
+            if should_link:
+                raise AzureEmailDomainError(
+                    'Azure returned a verified domain without a resource ID.'
+                )
+            return
+
         url = self._communication_service_url()
-        resource = self._request(
-            'GET', url, action='load the Azure Communication Service'
-        )
-        properties = resource.get('properties') or {}
-        linked = list(properties.get('linkedDomains') or [])
-        if domain_resource_id not in linked:
-            linked.append(domain_resource_id)
-            self._request(
+        verb = 'link' if should_link else 'unlink'
+        for attempt in range(self.LINKED_DOMAIN_UPDATE_ATTEMPTS):
+            load_action = 'load the Azure Communication Service'
+            response = self._send_request('GET', url, action=load_action)
+            self._raise_for_status(response, load_action)
+            resource = response.json()
+            etag = response.headers.get('ETag') or resource.get('etag')
+            if not etag:
+                raise AzureEmailDomainError(
+                    'Could not update linked email domains: Azure returned no ETag.'
+                )
+
+            properties = resource.get('properties') or {}
+            linked = list(properties.get('linkedDomains') or [])
+            is_linked = domain_resource_id in linked
+            if is_linked == should_link:
+                return
+
+            if should_link:
+                linked.append(domain_resource_id)
+            else:
+                linked.remove(domain_resource_id)
+
+            update_action = f'{verb} the email domain'
+            update_response = self._send_request(
                 'PATCH',
                 url,
-                action='link the verified email domain',
+                action=update_action,
+                headers={'If-Match': etag},
                 json={'properties': {'linkedDomains': linked}},
             )
+            if update_response.status_code == 412:
+                if attempt + 1 < self.LINKED_DOMAIN_UPDATE_ATTEMPTS:
+                    continue
+                raise AzureEmailDomainError(
+                    'Could not update linked email domains because the Azure '
+                    'Communication Service changed concurrently. Try again.'
+                )
+            self._raise_for_status(update_response, update_action)
+
+            verified = self._request('GET', url, action=load_action)
+            verified_linked = list(
+                (verified.get('properties') or {}).get('linkedDomains') or []
+            )
+            if (domain_resource_id in verified_linked) == should_link:
+                return
+
+        raise AzureEmailDomainError(
+            f'Could not {verb} the email domain: Azure did not persist the change.'
+        )
+
+    def link_domain(self, domain_resource_id):
+        self._update_linked_domain(domain_resource_id, should_link=True)
 
     def unlink_domain(self, domain_resource_id):
-        if not domain_resource_id:
-            return
-        url = self._communication_service_url()
-        resource = self._request(
-            'GET', url, action='load the Azure Communication Service'
-        )
-        properties = resource.get('properties') or {}
-        linked = list(properties.get('linkedDomains') or [])
-        if domain_resource_id in linked:
-            linked.remove(domain_resource_id)
-            self._request(
-                'PATCH',
-                url,
-                action='unlink the email domain',
-                json={'properties': {'linkedDomains': linked}},
-            )
+        self._update_linked_domain(domain_resource_id, should_link=False)
 
     def delete_domain(self, domain):
         self._request(

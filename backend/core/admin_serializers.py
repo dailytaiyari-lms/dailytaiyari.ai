@@ -29,9 +29,11 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
             'show_name', 'features', 'feature_labels', 'advanced_settings',
             'registration_settings', 'auth_panel',
             'request_enrollment_free', 'request_enrollment_paid',
-            'notification_email',
+            'notification_email', 'custom_email_domains_enabled',
         ]
-        read_only_fields = ['id', 'subdomain']
+        read_only_fields = [
+            'id', 'subdomain', 'custom_email_domains_enabled',
+        ]
 
     def validate_notification_email(self, value):
         """Accept a comma/newline/semicolon-separated list of email addresses."""

@@ -5,8 +5,8 @@ Scoped to the current tenant resolved by ``TenantMiddleware`` from the
 """
 from django.db import transaction
 from django.utils import timezone
-from rest_framework import generics, permissions, parsers
-from rest_framework.exceptions import NotFound
+from rest_framework import generics, permissions, parsers, status
+from rest_framework.exceptions import APIException, NotFound
 from rest_framework.response import Response
 
 from core.permissions import IsTenantAdmin
@@ -15,6 +15,18 @@ from .admin_serializers import (
     TenantSettingsSerializer, PaymentGatewaySerializer,
     TenantEmailDomainSerializer, ZoomIntegrationSerializer,
 )
+
+
+class CustomEmailDomainsDisabled(APIException):
+    status_code = status.HTTP_403_FORBIDDEN
+    default_detail = {
+        'detail': (
+            'Custom email domains are not enabled for this tenant. '
+            'Contact the DailyTaiyari platform administrator.'
+        ),
+        'code': 'custom_email_domains_disabled',
+    }
+    default_code = 'custom_email_domains_disabled'
 
 
 class TenantSettingsView(generics.RetrieveUpdateAPIView):
@@ -112,6 +124,8 @@ class TenantEmailDomainView(generics.GenericAPIView):
         tenant = getattr(self.request, 'tenant', None)
         if tenant is None:
             raise NotFound('No tenant is associated with this request.')
+        if not tenant.custom_email_domains_enabled:
+            raise CustomEmailDomainsDisabled()
         return tenant
 
     def _domain(self):
@@ -174,10 +188,12 @@ class TenantEmailDomainView(generics.GenericAPIView):
         try:
             client = AzureEmailDomainClient()
             if domain is None:
-                azure_state = client.create_domain(
-                    serializer.validated_data['domain']
+                tenant = self._tenant()
+                azure_state = client.ensure_domain(
+                    serializer.validated_data['domain'],
+                    tenant.id,
                 )
-                domain = serializer.save(tenant=self._tenant())
+                domain = serializer.save(tenant=tenant)
                 self._apply_azure_state(domain, azure_state)
             else:
                 sender_changed = any(
@@ -295,7 +311,6 @@ class TenantEmailDomainView(generics.GenericAPIView):
             try:
                 client = AzureEmailDomainClient()
                 client.unlink_domain(domain.azure_resource_id)
-                client.delete_domain(domain.domain)
             except AzureEmailDomainError as exc:
                 domain.last_error = str(exc)
                 domain.save(update_fields=['last_error', 'updated_at'])
@@ -304,7 +319,13 @@ class TenantEmailDomainView(generics.GenericAPIView):
                     status=400,
                 )
             domain.delete()
-        return Response(self._payload(None))
+        return Response({
+            'detail': (
+                'Sender domain removed from DailyTaiyari. The Azure domain '
+                'resource was retained for platform-admin cleanup.'
+            ),
+            **self._payload(None),
+        })
 
 
 class ZoomIntegrationView(generics.GenericAPIView):

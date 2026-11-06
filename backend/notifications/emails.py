@@ -252,7 +252,7 @@ def send_branded_email(tenant, to, subject, heading, body_html,
     text_body = '\n'.join(p for p in text_parts if p is not None).strip()
 
     email_domain = None
-    if tenant is not None:
+    if tenant is not None and tenant.custom_email_domains_enabled:
         try:
             candidate = tenant.email_domain
             if candidate.is_ready and (candidate.is_active or force_tenant_domain):
