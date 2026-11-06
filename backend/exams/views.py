@@ -551,11 +551,15 @@ class StudyChaptersView(APIView):
         from coding.models import CodingProblem, CodingSubmission
         from notebooks.models import Notebook, NotebookCompletion
 
+        tenant = getattr(request, 'tenant', None)
         try:
-            subject = Subject.objects.select_related('course').get(pk=subject_id)
+            subject = Subject.objects.select_related('course').get(
+                pk=subject_id,
+                course__tenant=tenant,
+            )
         except Subject.DoesNotExist:
             return Response({'error': 'Subject not found'}, status=404)
-        if not can_access_course(request.user, subject.course):
+        if not can_access_course(request.user, subject.course, tenant):
             return Response({'error': 'Enrollment required'}, status=403)
         student = getattr(request.user, 'profile', None)
 
@@ -730,13 +734,17 @@ class StudyChapterDetailView(APIView):
         from coding.models import CodingProblem, CodingSubmission
         from notebooks.models import Notebook, NotebookCompletion
 
+        tenant = getattr(request, 'tenant', None)
         try:
             chapter = Chapter.objects.select_related('subject', 'subject__course').prefetch_related(
                 'chapter_topics__topic'
-            ).get(pk=chapter_id)
+            ).get(
+                pk=chapter_id,
+                subject__course__tenant=tenant,
+            )
         except Chapter.DoesNotExist:
             return Response({'error': 'Chapter not found'}, status=404)
-        if not can_access_course(request.user, chapter.subject.course):
+        if not can_access_course(request.user, chapter.subject.course, tenant):
             return Response({'error': 'Enrollment required'}, status=403)
         student = getattr(request.user, 'profile', None)
 

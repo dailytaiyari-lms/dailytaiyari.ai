@@ -12,6 +12,7 @@ from .views import (
     AvailableCoursesForEnrollmentView,
     ChapterViewSet,
     CourseViewSet,
+    StudyChapterDetailView,
     StudyChaptersView,
     StudyCoursesView,
     SubjectViewSet,
@@ -179,6 +180,44 @@ class HiddenCourseVisibilityTests(TestCase):
                     subject_id=self.subject.id,
                 )
                 self.assertEqual(response.status_code, 200)
+
+    def test_admin_cannot_open_another_tenants_subject_or_chapter(self):
+        other_tenant = Tenant.objects.create(name='Other Academy', subdomain='other-academy')
+        other_course = Course.objects.create(
+            tenant=other_tenant,
+            name='Other Tenant Course',
+            code='other-tenant-course',
+            course_type='skill',
+            is_hidden=True,
+        )
+        other_subject = Subject.objects.create(
+            course=other_course,
+            name='Other Subject',
+            code='other-subject',
+        )
+        other_chapter = Chapter.objects.create(
+            subject=other_subject,
+            name='Other Chapter',
+            code='other-chapter',
+        )
+
+        subject_response = StudyChaptersView.as_view()(
+            self.request(
+                f'/courses/study/chapters/{other_subject.id}/',
+                self.admin,
+            ),
+            subject_id=other_subject.id,
+        )
+        chapter_response = StudyChapterDetailView.as_view()(
+            self.request(
+                f'/courses/study/chapter/{other_chapter.id}/',
+                self.admin,
+            ),
+            chapter_id=other_chapter.id,
+        )
+
+        self.assertEqual(subject_response.status_code, 404)
+        self.assertEqual(chapter_response.status_code, 404)
 
     def test_hidden_pending_and_inactive_enrollments_are_absent_from_study(self):
         inactive_course = Course.objects.create(

@@ -15,9 +15,11 @@ def has_approved_course_enrollment(user, course_id):
     ).exists()
 
 
-def can_access_course(user, course):
+def can_access_course(user, course, tenant):
     """Whether a user may open enrolled-only study surfaces for a course."""
     if not user or not user.is_authenticated:
+        return False
+    if tenant is None or course.tenant_id != tenant.id:
         return False
     if user.is_superuser or getattr(user, 'role', None) == 'admin':
         return True
