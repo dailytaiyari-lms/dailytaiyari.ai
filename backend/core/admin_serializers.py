@@ -390,6 +390,7 @@ class TenantEmailDomainSerializer(serializers.ModelSerializer):
     from_email = serializers.CharField(read_only=True)
     is_verified = serializers.BooleanField(read_only=True)
     is_ready = serializers.BooleanField(read_only=True)
+    verification_records = serializers.SerializerMethodField()
 
     class Meta:
         model = TenantEmailDomain
@@ -448,6 +449,21 @@ class TenantEmailDomainSerializer(serializers.ModelSerializer):
                 'Enter only the part before @ in a valid email address.'
             )
         return username
+
+    def get_verification_records(self, instance):
+        records = instance.verification_records or {}
+        domain = instance.domain.strip().lower().rstrip('.')
+        normalized = {}
+        for key, raw_record in records.items():
+            record = dict(raw_record or {})
+            name = str(record.get('name') or '').strip().rstrip('.')
+            if not name or name == '@':
+                name = domain
+            elif name != domain and not name.lower().endswith(f'.{domain}'):
+                name = f'{name}.{domain}'
+            record['name'] = name
+            normalized[key] = record
+        return normalized
 
     def validate(self, attrs):
         if self.instance and 'domain' in attrs:
