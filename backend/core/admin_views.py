@@ -172,6 +172,26 @@ class TenantEmailDomainView(generics.GenericAPIView):
             ])
         return domain
 
+    @staticmethod
+    def _start_pending_verifications(domain, client):
+        retryable = {None, 'NotStarted', 'VerificationFailed'}
+        domain_status = (
+            domain.verification_states.get('Domain') or {}
+        ).get('status')
+        if domain_status in retryable:
+            client.initiate_verification(domain.domain, 'Domain')
+            return
+        if domain_status != 'Verified':
+            return
+        for verification_type in ('SPF', 'DKIM', 'DKIM2'):
+            status = (
+                domain.verification_states.get(verification_type) or {}
+            ).get('status')
+            if status in retryable:
+                client.initiate_verification(
+                    domain.domain, verification_type
+                )
+
     def get(self, request, *args, **kwargs):
         return Response(self._payload())
 
@@ -232,26 +252,14 @@ class TenantEmailDomainView(generics.GenericAPIView):
             client = AzureEmailDomainClient()
             if action == 'refresh':
                 self._sync(domain, client)
+                self._start_pending_verifications(domain, client)
+                self._sync(domain, client)
                 self._finish_setup_if_verified(domain, client)
                 return Response(self._payload(domain))
 
             if action == 'verify':
                 self._sync(domain, client)
-                domain_status = (
-                    domain.verification_states.get('Domain') or {}
-                ).get('status')
-                retryable = {None, 'NotStarted', 'VerificationFailed'}
-                if domain_status in retryable:
-                    client.initiate_verification(domain.domain, 'Domain')
-                elif domain_status == 'Verified':
-                    for verification_type in ('SPF', 'DKIM', 'DKIM2'):
-                        status = (
-                            domain.verification_states.get(verification_type) or {}
-                        ).get('status')
-                        if status in retryable:
-                            client.initiate_verification(
-                                domain.domain, verification_type
-                            )
+                self._start_pending_verifications(domain, client)
                 self._sync(domain, client)
                 self._finish_setup_if_verified(domain, client)
                 return Response({
