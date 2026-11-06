@@ -169,6 +169,7 @@ function actionLabel(action) {
     'tenant.suspend': 'Suspended tenant',
     'tenant.unsuspend': 'Unsuspended tenant',
     'tenant.feature_locks': 'Changed feature locks',
+    'tenant.email_domains': 'Changed custom email domain access',
     'tenant.plan': 'Changed plan / quotas',
   }
   return map[action] || action
@@ -201,6 +202,7 @@ export default function TenantDetail() {
           is_active: data.is_active,
           is_suspended: data.is_suspended,
           suspension_message: data.suspension_message || '',
+          custom_email_domains_enabled: Boolean(data.custom_email_domains_enabled),
           plan: data.plan || 'trial',
           billing_status: data.billing_status || 'trialing',
           trial_ends_at: isoToDateInput(data.trial_ends_at),
@@ -255,6 +257,7 @@ export default function TenantDetail() {
         is_active: form.is_active,
         is_suspended: form.is_suspended,
         suspension_message: form.suspension_message,
+        custom_email_domains_enabled: form.custom_email_domains_enabled,
         feature_locks: modesToLocks(form.featureModes),
         plan: form.plan,
         billing_status: form.billing_status,
@@ -280,6 +283,7 @@ export default function TenantDetail() {
         max_courses: updated.max_courses ?? '',
         max_admins: updated.max_admins ?? '',
         origins_text: (updated.allowed_origins || []).join('\n'),
+        custom_email_domains_enabled: Boolean(updated.custom_email_domains_enabled),
         featureModes: locksToModes(updated.available_features || [], updated.feature_locks || {}),
       }))
       loadLogs()
@@ -411,6 +415,15 @@ export default function TenantDetail() {
               onChange={(v) => set('show_name', v)}
               label="Show name alongside logo"
             />
+            <Toggle
+              checked={form.custom_email_domains_enabled}
+              onChange={(v) => set('custom_email_domains_enabled', v)}
+              label="Enable custom email domains"
+            />
+            <p className="text-[11px] text-slate-400">
+              Lets this tenant provision and use a verified Azure sender domain.
+              Keep disabled until the tenant has been approved for rollout.
+            </p>
           </div>
         </div>
 

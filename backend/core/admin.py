@@ -1,5 +1,8 @@
 from django.contrib import admin
-from .models import Tenant, DemoBooking, ContactMessage, JobApplication, PaymentGateway, ZoomIntegration, LandingPage, LegalDocument
+from .models import (
+    Tenant, DemoBooking, ContactMessage, JobApplication, PaymentGateway,
+    TenantEmailDomain, ZoomIntegration, LandingPage, LegalDocument,
+)
 
 
 @admin.register(Tenant)
@@ -29,6 +32,22 @@ class ZoomIntegrationAdmin(admin.ModelAdmin):
     exclude = ('client_secret_encrypted', 'webhook_secret_token_encrypted')
     readonly_fields = ('id', 'is_configured', 'last_verified_at', 'last_error',
                        'created_at', 'updated_at')
+
+
+@admin.register(TenantEmailDomain)
+class TenantEmailDomainAdmin(admin.ModelAdmin):
+    list_display = (
+        'tenant', 'domain', 'from_email', 'is_active', 'is_verified',
+        'sender_provisioned', 'is_linked', 'last_synced_at',
+    )
+    list_filter = ('is_active', 'is_linked')
+    search_fields = ('tenant__name', 'domain', 'sender_username')
+    readonly_fields = (
+        'id', 'from_email', 'is_verified', 'is_ready', 'azure_resource_id',
+        'provisioning_state', 'verification_records', 'verification_states',
+        'sender_provisioned', 'is_linked', 'last_synced_at', 'last_error',
+        'created_at', 'updated_at',
+    )
 
 
 @admin.register(DemoBooking)

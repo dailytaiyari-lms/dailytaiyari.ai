@@ -36,6 +36,7 @@ User = get_user_model()
 _AUDITED_FIELDS = [
     'name', 'tagline', 'subdomain', 'theme', 'show_name', 'is_active',
     'is_suspended', 'suspension_message', 'features', 'feature_locks',
+    'custom_email_domains_enabled',
     'request_enrollment_free', 'request_enrollment_paid',
     'plan', 'billing_status', 'trial_ends_at', 'current_period_end',
     'max_students', 'max_courses', 'max_admins',
@@ -262,6 +263,8 @@ class TenantDetailView(generics.RetrieveUpdateAPIView):
                 action = 'tenant.plan'
             elif changed_keys == {'allowed_origins'}:
                 action = 'tenant.origins'
+            elif changed_keys == {'custom_email_domains_enabled'}:
+                action = 'tenant.email_domains'
             _record_audit(request, action, tenant, changes)
         return Response(TenantDetailSerializer(tenant).data)
 

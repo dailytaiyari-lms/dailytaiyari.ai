@@ -3,7 +3,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.validators import validate_email
 from rest_framework import serializers
 
-from .models import Tenant, PaymentGateway, ZoomIntegration
+from .models import Tenant, PaymentGateway, TenantEmailDomain, ZoomIntegration
 
 
 class TenantSettingsSerializer(serializers.ModelSerializer):
@@ -29,9 +29,11 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
             'show_name', 'features', 'feature_labels', 'advanced_settings',
             'registration_settings', 'auth_panel',
             'request_enrollment_free', 'request_enrollment_paid',
-            'notification_email',
+            'notification_email', 'custom_email_domains_enabled',
         ]
-        read_only_fields = ['id', 'subdomain']
+        read_only_fields = [
+            'id', 'subdomain', 'custom_email_domains_enabled',
+        ]
 
     def validate_notification_email(self, value):
         """Accept a comma/newline/semicolon-separated list of email addresses."""
@@ -380,6 +382,104 @@ class PaymentGatewaySerializer(serializers.ModelSerializer):
             setattr(instance, attr, value)
         instance.save()
         return instance
+
+
+class TenantEmailDomainSerializer(serializers.ModelSerializer):
+    """Tenant-owned Azure email domain and its DNS verification state."""
+
+    from_email = serializers.CharField(read_only=True)
+    is_verified = serializers.BooleanField(read_only=True)
+    is_ready = serializers.BooleanField(read_only=True)
+    verification_records = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TenantEmailDomain
+        fields = [
+            'id', 'domain', 'sender_username', 'sender_name', 'from_email',
+            'is_active', 'is_verified', 'is_ready', 'sender_provisioned',
+            'is_linked',
+            'provisioning_state', 'verification_records', 'verification_states',
+            'last_synced_at', 'last_error',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'from_email', 'is_verified', 'is_ready',
+            'sender_provisioned', 'is_linked',
+            'provisioning_state', 'verification_records', 'verification_states',
+            'last_synced_at', 'last_error',
+            'created_at', 'updated_at',
+        ]
+
+    def validate_domain(self, value):
+        domain = (value or '').strip().lower().rstrip('.')
+        if (
+            not domain
+            or len(domain) > 253
+            or '.' not in domain
+            or domain.startswith('-')
+            or domain.endswith('-')
+        ):
+            raise serializers.ValidationError('Enter a valid domain name.')
+        labels = domain.split('.')
+        if any(
+            not label
+            or len(label) > 63
+            or label.startswith('-')
+            or label.endswith('-')
+            or not all(ch.isalnum() or ch == '-' for ch in label)
+            for label in labels
+        ):
+            raise serializers.ValidationError('Enter a valid domain name.')
+        return domain
+
+    def validate_sender_username(self, value):
+        username = (value or '').strip().lower()
+        allowed = set(
+            'abcdefghijklmnopqrstuvwxyz0123456789.!#$%&\'*+-/=?^_`{|}~'
+        )
+        if (
+            not username
+            or len(username) > 64
+            or username.startswith('.')
+            or username.endswith('.')
+            or '..' in username
+            or any(ch not in allowed for ch in username)
+        ):
+            raise serializers.ValidationError(
+                'Enter only the part before @ in a valid email address.'
+            )
+        return username
+
+    def get_verification_records(self, instance):
+        records = instance.verification_records or {}
+        domain = instance.domain.strip().lower().rstrip('.')
+        normalized = {}
+        for key, raw_record in records.items():
+            record = dict(raw_record or {})
+            name = str(record.get('name') or '').strip().rstrip('.')
+            if not name or name == '@':
+                name = domain
+            elif name != domain and not name.lower().endswith(f'.{domain}'):
+                name = f'{name}.{domain}'
+            record['name'] = name
+            normalized[key] = record
+        return normalized
+
+    def validate(self, attrs):
+        if self.instance and 'domain' in attrs:
+            if attrs['domain'] != self.instance.domain:
+                raise serializers.ValidationError({
+                    'domain': (
+                        'Remove the existing domain before configuring a different one.'
+                    )
+                })
+        if attrs.get('is_active') and (
+            self.instance is None or not self.instance.is_ready
+        ):
+            raise serializers.ValidationError({
+                'is_active': 'The domain must be fully verified before it can be enabled.'
+            })
+        return attrs
 
 
 class ZoomIntegrationSerializer(serializers.ModelSerializer):
