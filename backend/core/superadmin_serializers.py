@@ -125,6 +125,7 @@ class TenantDetailSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'tagline', 'subdomain', 'theme', 'show_name',
             'is_active', 'is_suspended', 'suspension_message',
+            'custom_email_domains_enabled',
             'features', 'feature_locks',
             'request_enrollment_free', 'request_enrollment_paid',
             'plan', 'billing_status', 'trial_ends_at', 'current_period_end',

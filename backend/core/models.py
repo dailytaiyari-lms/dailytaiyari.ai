@@ -175,6 +175,12 @@ class Tenant(models.Model):
     auth_panel = models.JSONField(default=dict, blank=True)
     is_active = models.BooleanField(default=True)
 
+    # Platform-controlled capability for provisioning tenant-owned sender
+    # domains in Azure. This is deliberately separate from ``features``:
+    # generic feature keys default to enabled and may be tenant-controlled,
+    # while Azure resource management must stay opt-in and super-admin-only.
+    custom_email_domains_enabled = models.BooleanField(default=False)
+
     # Per-tenant feature toggles: {feature_key: bool}. Missing keys default to
     # enabled so newly introduced features are on until an admin turns them off.
     features = models.JSONField(default=dict, blank=True)
@@ -608,6 +614,64 @@ class PaymentGateway(models.Model):
     def is_configured(self):
         """True once both the id and secret are present."""
         return bool(self.key_id and self.key_secret_encrypted)
+
+
+class TenantEmailDomain(models.Model):
+    """A tenant-owned sender domain provisioned through Azure Email.
+
+    Tenants prove domain ownership with DNS records; no mailbox password or
+    OAuth token is stored. Once Azure verifies the domain and sender alias, the
+    platform email backend can send as that tenant. The platform address remains
+    the automatic fallback.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.OneToOneField(
+        Tenant, on_delete=models.CASCADE, related_name='email_domain'
+    )
+    domain = models.CharField(max_length=253, unique=True)
+    sender_username = models.CharField(max_length=64, default='notifications')
+    sender_name = models.CharField(max_length=255, blank=True, default='')
+    is_active = models.BooleanField(default=False)
+
+    azure_resource_id = models.TextField(blank=True, default='')
+    provisioning_state = models.CharField(max_length=32, blank=True, default='')
+    verification_records = models.JSONField(default=dict, blank=True)
+    verification_states = models.JSONField(default=dict, blank=True)
+    sender_provisioned = models.BooleanField(default=False)
+    is_linked = models.BooleanField(default=False)
+    last_synced_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Tenant Email Domain'
+        verbose_name_plural = 'Tenant Email Domains'
+
+    def __str__(self):
+        return f'{self.tenant.name} — {self.domain}'
+
+    @property
+    def from_email(self):
+        return f'{self.sender_username}@{self.domain}'
+
+    @property
+    def is_verified(self):
+        required = ('Domain', 'SPF', 'DKIM', 'DKIM2')
+        return all(
+            (self.verification_states.get(key) or {}).get('status') == 'Verified'
+            for key in required
+        )
+
+    @property
+    def is_ready(self):
+        return bool(
+            self.is_verified
+            and self.sender_provisioned
+            and self.is_linked
+            and self.sender_username
+        )
 
 
 class ZoomIntegration(models.Model):

@@ -14,6 +14,7 @@ from email.utils import formataddr, parseaddr
 from urllib.parse import urlparse
 
 from django.conf import settings
+from django.core.exceptions import ObjectDoesNotExist
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.utils.html import escape, strip_tags
@@ -141,22 +142,32 @@ def tenant_link(tenant, path, request=None):
     return f"{origin}/{path.lstrip('/')}" if origin else path
 
 
-def from_address(tenant, display_name=None):
+def from_address(tenant, display_name=None, email_domain=None):
     """Sender address showing the tenant's name as the display name.
 
-    The mailbox itself must stay on the platform's verified sending domain
-    (Azure Communication Services only signs that domain), so only the display
-    name is tenant-specific: ``CodeMinors <DoNotReply@dailytaiyari.in>``.
-    Falls back to the configured address unchanged when no tenant name exists.
+    A ready tenant domain uses its verified sender address. Platform fallback
+    keeps the platform's verified mailbox while preserving the tenant name.
     """
-    configured = getattr(settings, 'DEFAULT_FROM_EMAIL', '') or ''
+    configured = (
+        getattr(email_domain, 'from_email', '')
+        if email_domain is not None
+        else getattr(settings, 'DEFAULT_FROM_EMAIL', '')
+    ) or ''
     default_name, addr = parseaddr(configured)
     if not addr:
         return configured or None
     display = (
         str(display_name).strip()
         if display_name is not None
-        else (getattr(tenant, 'name', '') or '').strip()
+        else (
+            (
+                getattr(email_domain, 'sender_name', '')
+                or getattr(tenant, 'name', '')
+                or ''
+            ).strip()
+            if email_domain is not None
+            else (getattr(tenant, 'name', '') or '').strip()
+        )
     ) or default_name
     return formataddr((display, addr)) if display else addr
 
@@ -196,7 +207,8 @@ def celebration_body_html(tenant, body_html, *, badge='🎂', banner_text=''):
 
 def send_branded_email(tenant, to, subject, heading, body_html,
                        cta_text=None, cta_url=None, preheader=None,
-                       tenant_name_override=None, hide_tenant_logo=False):
+                       tenant_name_override=None, hide_tenant_logo=False,
+                       fallback_to_platform=True, force_tenant_domain=False):
     """Render and send one branded HTML email.
 
     Returns True on success, False on failure (never raises to the caller so a
@@ -239,8 +251,16 @@ def send_branded_email(tenant, to, subject, heading, body_html,
         text_parts += ['', f'{cta_text or "Open"}: {cta_url}']
     text_body = '\n'.join(p for p in text_parts if p is not None).strip()
 
-    from_email = from_address(tenant, display_name=tenant_name)
-    try:
+    email_domain = None
+    if tenant is not None and tenant.custom_email_domains_enabled:
+        try:
+            candidate = tenant.email_domain
+            if candidate.is_ready and (candidate.is_active or force_tenant_domain):
+                email_domain = candidate
+        except ObjectDoesNotExist:
+            email_domain = None
+
+    def build_message(from_email):
         msg = EmailMultiAlternatives(
             subject=subject,
             body=text_body,
@@ -248,8 +268,41 @@ def send_branded_email(tenant, to, subject, heading, body_html,
             to=recipients,
         )
         msg.attach_alternative(html_body, 'text/html')
-        msg.send(fail_silently=False)
-        return True
+        return msg
+
+    if email_domain is not None:
+        try:
+            sent_count = build_message(
+                from_address(tenant, email_domain=email_domain),
+            ).send(fail_silently=False)
+            if not sent_count:
+                raise RuntimeError('Azure did not accept the tenant-domain message.')
+            if email_domain.last_error:
+                type(email_domain).objects.filter(pk=email_domain.pk).update(
+                    last_error=''
+                )
+            return True
+        except Exception as exc:  # noqa: BLE001
+            error = str(exc).strip() or exc.__class__.__name__
+            type(email_domain).objects.filter(pk=email_domain.pk).update(
+                last_error=error[:2000]
+            )
+            logger.warning(
+                'Tenant-domain email failed for tenant %s; platform fallback=%s',
+                getattr(tenant, 'id', None),
+                fallback_to_platform,
+                exc_info=True,
+            )
+            if not fallback_to_platform:
+                return False
+    elif not fallback_to_platform:
+        return False
+
+    try:
+        sent_count = build_message(
+            from_address(tenant, display_name=tenant_name)
+        ).send(fail_silently=False)
+        return bool(sent_count)
     except Exception:  # noqa: BLE001
-        logger.exception('Failed to send branded email to %s', recipients)
+        logger.exception('Platform email fallback failed for %s', recipients)
         return False

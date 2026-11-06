@@ -361,6 +361,25 @@ if EMAIL_PROVIDER == 'azure':
     AZURE_COMMUNICATION_CONNECTION_STRING = config(
         'AZURE_COMMUNICATION_CONNECTION_STRING', default=''
     )
+    # Azure Resource Manager credentials used only to provision and verify
+    # tenant-owned email domains. The service principal should have the
+    # Communication and Email Service Contributor roles on these resources.
+    AZURE_TENANT_ID = config('AZURE_TENANT_ID', default='')
+    AZURE_CLIENT_ID = config('AZURE_CLIENT_ID', default='')
+    AZURE_CLIENT_SECRET = config('AZURE_CLIENT_SECRET', default='')
+    AZURE_SUBSCRIPTION_ID = config('AZURE_SUBSCRIPTION_ID', default='')
+    AZURE_EMAIL_RESOURCE_GROUP = config('AZURE_EMAIL_RESOURCE_GROUP', default='')
+    AZURE_EMAIL_SERVICE_NAME = config('AZURE_EMAIL_SERVICE_NAME', default='')
+    AZURE_COMMUNICATION_RESOURCE_GROUP = config(
+        'AZURE_COMMUNICATION_RESOURCE_GROUP',
+        default=AZURE_EMAIL_RESOURCE_GROUP,
+    )
+    AZURE_COMMUNICATION_SERVICE_NAME = config(
+        'AZURE_COMMUNICATION_SERVICE_NAME', default=''
+    )
+    AZURE_COMMUNICATION_API_VERSION = config(
+        'AZURE_COMMUNICATION_API_VERSION', default='2023-03-31'
+    )
 elif EMAIL_PROVIDER == 'smtp':
     EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
     EMAIL_HOST = config('EMAIL_HOST', default='')

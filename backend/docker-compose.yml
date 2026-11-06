@@ -17,6 +17,13 @@ services:
   web:
     build: .
     restart: unless-stopped
+    # Azure Resource Manager credentials can provision tenant-owned email
+    # domains, so keep them outside the bind-mounted repository .env and expose
+    # them only to the API process. The file is optional until the capability is
+    # enabled for a tenant.
+    env_file:
+      - path: ${AZURE_EMAIL_MANAGEMENT_ENV_FILE:-/etc/dailytaiyari/azure-email-management.env}
+        required: false
     volumes:
       - .:/app
       - static_volume:/app/staticfiles
