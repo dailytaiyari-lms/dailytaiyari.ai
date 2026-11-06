@@ -653,6 +653,11 @@ class CourseEnrollmentListView(generics.ListCreateAPIView):
                 {'course': ['Course not found.']},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if course.is_hidden:
+            return Response(
+                {'course': ['This course is not open for enrollment.']},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         # Resolve how this student may join the course given the tenant's flags.
         mode = tenant.enroll_mode_for(course) if tenant else 'request'

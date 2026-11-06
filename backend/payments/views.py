@@ -51,6 +51,11 @@ class CreateOrderView(APIView):
         course = Course.objects.filter(id=course_id, tenant=tenant).first()
         if course is None:
             return Response({'detail': 'Course not found.'}, status=404)
+        if course.is_hidden:
+            return Response(
+                {'detail': 'This course is not open for enrollment.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         # Already enrolled? Nothing to pay for.
         existing = CourseEnrollment.objects.filter(student=student, course=course).first()
