@@ -296,6 +296,53 @@ class TenantEmailDeliveryTests(TestCase):
             activate_response.json()['email_domain']['is_active']
         )
 
+    @patch('core.azure_email_domains.AzureEmailDomainClient')
+    def test_refresh_starts_remaining_checks_after_domain_verification(
+        self, client_class
+    ):
+        states = {
+            'Domain': {'status': 'Verified'},
+            'SPF': {'status': 'NotStarted'},
+            'DKIM': {'status': 'NotStarted'},
+            'DKIM2': {'status': 'NotStarted'},
+        }
+        self.email_domain.verification_states = states
+        self.email_domain.sender_provisioned = False
+        self.email_domain.is_linked = False
+        self.email_domain.save(update_fields=[
+            'verification_states', 'sender_provisioned', 'is_linked',
+            'updated_at',
+        ])
+        azure_client = client_class.return_value
+        azure_client.get_domain.return_value = {
+            'id': self.email_domain.azure_resource_id,
+            'properties': {
+                'provisioningState': 'Succeeded',
+                'verificationRecords': {},
+                'verificationStates': states,
+            },
+        }
+        client = APIClient()
+        token = RefreshToken.for_user(self.admin).access_token
+        client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+
+        response = client.post(
+            '/api/v1/tenant-admin/email-domain/',
+            {'action': 'refresh'},
+            format='json',
+            HTTP_X_TENANT_ID=str(self.tenant.id),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [call.args for call in azure_client.initiate_verification.call_args_list],
+            [
+                ('academy.example', 'SPF'),
+                ('academy.example', 'DKIM'),
+                ('academy.example', 'DKIM2'),
+            ],
+        )
+
     @patch('notifications.emails.EmailMultiAlternatives')
     def test_domain_test_does_not_hide_failure_with_fallback(self, message_class):
         message_class.return_value.send.side_effect = OSError('Sender rejected')
