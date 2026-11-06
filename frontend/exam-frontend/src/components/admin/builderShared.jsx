@@ -354,6 +354,7 @@ export const SCHEMAS = {
             { name: 'duration_minutes', label: 'Duration (min)', type: 'number' },
             { name: 'total_marks', label: 'Total Marks', type: 'number' },
             { name: 'is_featured', label: 'Featured', type: 'checkbox' },
+            { name: 'is_hidden', label: 'Hide from non-enrolled students', type: 'checkbox', full: true, hint: 'Hidden courses disappear from the public catalog. Existing approved students can still access them.' },
             { name: 'negative_marking', label: 'Negative Marking', type: 'checkbox' },
             { name: 'sequential_chapter_unlock', label: 'Lock chapters until previous ones are completed', type: 'checkbox', full: true, hint: 'When on, students must finish each chapter before the next one in the same subject unlocks.' },
             { name: 'pricing_type', label: 'Pricing', type: 'select', options: opt(['free', 'paid']), default: 'free' },

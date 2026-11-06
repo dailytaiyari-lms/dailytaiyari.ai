@@ -38,27 +38,29 @@ class ContentViewSet(TenantAwareReadOnlyViewSet):
         return ContentSerializer
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        tenant = getattr(self.request, 'tenant', None)
+        if tenant is None:
+            return self.queryset.none()
+        queryset = self.queryset.filter(subject__course__tenant=tenant)
+        user = self.request.user
+
+        if user.is_superuser or getattr(user, 'role', None) == 'admin':
+            return queryset
+
+        if getattr(user, 'role', None) == 'instructor':
+            return queryset.filter(subject__course__in=user.instructing_courses.all())
+
         # Scope to every course the student is actively enrolled in, not just
         # their primary course, so multi-course students can open content from
-        # any of their enrolled courses (e.g. a Python topic while primary is
-        # Class XI). Falls back to no course filter when the student has no
-        # enrollments (still tenant-scoped by the base viewset).
-        if self.request.user.is_authenticated:
-            try:
-                student = self.request.user.profile
-                enrolled_course_ids = list(
-                    student.enrollments.filter(
-                        status='approved', is_active=True
-                    ).values_list('course_id', flat=True)
-                )
-                if enrolled_course_ids:
-                    queryset = queryset.filter(
-                        courses__in=enrolled_course_ids
-                    ).distinct()
-            except Exception:
-                pass
-        return queryset
+        # any of their enrolled courses. A student with no approved active
+        # enrollment must receive an empty queryset, never all tenant content.
+        student = getattr(user, 'profile', None)
+        if student is None:
+            return queryset.none()
+        enrolled_course_ids = student.enrollments.filter(
+            status='approved', is_active=True
+        ).values_list('course_id', flat=True)
+        return queryset.filter(courses__in=enrolled_course_ids).distinct()
 
     def retrieve(self, request, *args, **kwargs):
         """Increment view count on retrieve."""
@@ -393,4 +395,3 @@ class StudyPlanItemViewSet(TenantAwareViewSet):
         item.status = 'skipped'
         item.save()
         return Response(StudyPlanItemSerializer(item).data)
-

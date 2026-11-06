@@ -30,6 +30,8 @@ class ValidateCouponView(APIView):
         ).first()
         if course is None:
             return Response({'detail': 'Course not found.'}, status=404)
+        if course.is_hidden:
+            return Response({'detail': 'Course not found.'}, status=404)
 
         student = getattr(request.user, 'profile', None)
         try:

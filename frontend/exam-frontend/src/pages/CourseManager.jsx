@@ -2066,7 +2066,10 @@ const CourseManager = () => {
     /* invalidate the right queries after a change */
     const invalidateFor = (type, extra = {}) => {
         const q = queryClient
-        if (type === 'exam') q.invalidateQueries({ queryKey: ['cb-courses'] })
+        if (type === 'exam') {
+            q.invalidateQueries({ queryKey: ['cb-courses'] })
+            q.invalidateQueries({ queryKey: ['availableCourses'] })
+        }
         if (type === 'subject') q.invalidateQueries({ queryKey: ['cb-subjects', courseId] })
         if (type === 'chapter') q.invalidateQueries({ queryKey: ['cb-chapters', extra.subjectId] })
         if (type === 'topic') q.invalidateQueries({ queryKey: ['cb-topics', extra.chapterId] })

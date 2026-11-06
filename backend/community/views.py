@@ -225,6 +225,11 @@ class PostViewSet(TenantAwareViewSet):
         is_authenticated = request.user.is_authenticated
         is_staff = is_authenticated and _is_staff_user(request.user)
         is_enrolled = is_authenticated and course.id in _student_course_ids(request.user)
+        if course.is_hidden and not (is_staff or is_enrolled):
+            return Response(
+                {'detail': 'Course not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         can_participate = bool(is_staff or is_enrolled)
 
         week_ago = timezone.now() - timedelta(days=7)
