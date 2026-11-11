@@ -9,7 +9,7 @@ Runbook for tenant-level operations on production:
 
 1. **Create a tenant** (a new academy/institute).
 2. **Provision a tenant admin** account.
-3. **Whitelist a tenant's frontend origin** (CORS) and deploy.
+3. **Whitelist a tenant's frontend origin** (CORS) — data only, no deploy.
 4. **Move a course** from one tenant to another (reassign its whole graph).
 5. **Copy a course** into another tenant (deep clone with new keys).
 
@@ -164,31 +164,49 @@ out-of-band with a "rotate on first login" note. Login requires the tenant's
 
 ---
 
-## Recipe 3 — Whitelist a tenant's frontend origin (CORS) + deploy
+## Recipe 3 — Whitelist a tenant's frontend origin (CORS)
 
 Per-tenant frontends hosted off the `dailytaiyari.in` / `.ai` domains (e.g. a
-Netlify deploy) are **not** covered by the existing
-`CORS_ALLOWED_ORIGIN_REGEXES`. Add the exact origin in
-`backend/dailytaiyari/settings.py` (code change → commit → deploy):
+Vercel or Netlify deploy) are **not** covered by `CORS_ALLOWED_ORIGIN_REGEXES`.
+
+This is now **self-serve data, not a code change**. `core/signals.py` hooks
+corsheaders' `check_request_enabled` and allows any origin listed in some active
+tenant's `Tenant.allowed_origins` JSON field. So there is **no settings edit, no
+commit, and no deploy or restart** — just write the row:
 
 ```python
-CORS_ALLOW_CREDENTIALS = True
-# Per-tenant frontends hosted outside the dailytaiyari domains (e.g. Netlify).
-CORS_ALLOWED_ORIGINS += [
-    'https://<tenant-app>.netlify.app',
-]
+# add_tenant_origin.py — idempotent
+from core.models import Tenant
+
+ORIGIN = "https://<tenant-app>.vercel.app"   # exact, no trailing slash
+tenant = Tenant.objects.filter(name="Tesla EV Academy").first()
+assert tenant, "tenant not found"
+
+origins = list(tenant.allowed_origins or [])
+if ORIGIN not in origins:
+    origins.append(ORIGIN)
+    tenant.allowed_origins = origins
+    tenant.save(update_fields=["allowed_origins"])   # post_save busts the cache
+print(f"{tenant.name} origins -> {tenant.allowed_origins}")
 ```
 
-Whitelist the **specific** origin, not a broad `*.netlify.app` regex. Copy the
-origin verbatim (watch for typos in the subdomain — it must match exactly). Then
-ship it via the **deploy-backend** skill: commit + push to `main`, `git pull
---ff-only` on the VM, `docker compose restart web` (a settings-only change needs
-no migration or rebuild).
+Whitelist the **specific** origin, not a broad `*.vercel.app` pattern. Copy it
+verbatim (watch for subdomain typos — matching is exact after stripping a
+trailing slash). The tenant must be `is_active=True` or its origins are ignored.
+
+> **Gotcha — the change is NOT instant in production.** The origin set is cached
+> under `tenant_allowed_origins` for 300s, and the default cache is
+> **`LocMemCache`, which is per-process**. Saving from `manage.py shell` (or from
+> one gunicorn worker) only clears *that* process's copy, so other workers keep
+> serving the stale set for up to 5 minutes. A preflight that fails immediately
+> after the write is expected — retry for ~5 min before concluding it's broken.
+> Confirm the data side independently with
+> `python -c` / shell: `from core import signals; signals._all_allowed_origins()`.
 
 Verify the preflight:
 ```bash
 curl -s -i -X OPTIONS "$DT_API_URL/api/v1/courses/" \
-  -H "Origin: https://<tenant-app>.netlify.app" \
+  -H "Origin: https://<tenant-app>.vercel.app" \
   -H "Access-Control-Request-Method: GET" \
   -H "Access-Control-Request-Headers: x-tenant-id" 2>&1 \
   | grep -iE "HTTP/|access-control-allow-origin|access-control-allow-cred"
