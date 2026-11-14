@@ -335,3 +335,9 @@ Thumbs.db
 # rule above would otherwise swallow it and break Netlify builds)
 !frontend/landing-page/main/src/lib/
 !frontend/landing-page/main/src/lib/**
+
+# Operational leftovers that hold secrets or real data. Never commit.
+.env.bak*
+*.env.bak*
+*.conf.bak*
+data_dump/
