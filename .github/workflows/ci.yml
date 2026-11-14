@@ -68,3 +68,35 @@ jobs:
       - name: Dependency audit (report only)
         continue-on-error: true
         run: pip install pip-audit && pip-audit
+
+  frontend:
+    name: frontend (${{ matrix.app }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: exam-frontend
+            path: frontend/exam-frontend
+          - app: superadmin-frontend
+            path: frontend/superadmin-frontend
+          - app: landing-page
+            path: frontend/landing-page/main
+    defaults:
+      run:
+        working-directory: ${{ matrix.path }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ${{ matrix.path }}/package-lock.json
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Build
+        run: npm run build
