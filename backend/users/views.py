@@ -398,6 +398,9 @@ class ExistingStudentComplianceView(APIView):
                     {'error': 'Could not send the approval email. Please try again.'},
                     status=status.HTTP_502_BAD_GATEWAY,
                 )
+            # _issue_guardian_consent wrote a new row; drop the cached
+            # relation so the response reflects the freshly saved guardian.
+            user.refresh_from_db()
             return Response(_existing_student_compliance(user))
 
         return Response({'error': 'Unknown action.'}, status=status.HTTP_400_BAD_REQUEST)
