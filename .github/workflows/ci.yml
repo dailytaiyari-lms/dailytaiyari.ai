@@ -7,7 +7,7 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -32,7 +32,7 @@ jobs:
           --health-retries 10
     env:
       DEBUG: "True"
-      SECRET_KEY: ci-only-not-a-secret
+      SECRET_KEY: ci-not-secret
       DB_NAME: dailytaiyari
       DB_USER: postgres
       DB_PASSWORD: postgres
