@@ -124,3 +124,24 @@ jobs:
         run: |
           docker run --rm --entrypoint python dailytaiyari-backend:ci manage.py check
           docker run --rm --entrypoint sh dailytaiyari-backend:ci -c 'test ! -e /app/.env'
+
+  secret-scan:
+    name: secret scan
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        run: |
+          V=8.18.4
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${V}/gitleaks_${V}_linux_x64.tar.gz" | tar -xz gitleaks
+          ./gitleaks version
+
+      - name: Scan the commits this PR adds
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: ./gitleaks detect --source . --log-opts "origin/${BASE_REF}..HEAD" --redact --no-banner --verbose
